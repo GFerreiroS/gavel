@@ -1,0 +1,27 @@
+[package]
+name = "app-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Domain layer. Owns the application's types and its *ports* (the traits that
+# describe what it needs from the outside world). It depends on no adapter:
+# not on SQLx, not on Axum, not on reqwest, not on cluster-local.
+
+[features]
+default = ["argon2"]
+argon2 = ["dep:argon2", "dep:getrandom"]
+
+[dependencies]
+cluster-core = { workspace = true, features = ["std"] }
+serde = { workspace = true, features = ["std"] }
+thiserror = { workspace = true, features = ["std"] }
+argon2 = { workspace = true, optional = true }
+getrandom = { workspace = true, optional = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["rt", "macros"] }

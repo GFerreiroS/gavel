@@ -1,0 +1,51 @@
+<div class="stat-grid">
+  <div class="stat"><span class="label">Workload</span><span class="value">{{ detail.job.description }}</span></div>
+  <div class="stat"><span class="label">State</span><span class="value state-{{ detail.job.state }}">{{ detail.job.state }}</span></div>
+  <div class="stat"><span class="label">Progress</span><span class="value">{{ detail.job.tasks_done }} / {{ detail.job.tasks_total }}</span></div>
+  <div class="stat"><span class="label">Failed tasks</span><span class="value {% if detail.job.tasks_failed > 0 %}bad{% endif %}">{{ detail.job.tasks_failed }}</span></div>
+  <div class="stat"><span class="label">Created</span><span class="value">{{ detail.job.created }}</span></div>
+  <div class="stat"><span class="label">Duration</span><span class="value">{{ detail.job.duration }}</span></div>
+</div>
+
+<h2>Tasks</h2>
+<table class="table">
+  <thead>
+    <tr><th>#</th><th>Task</th><th>Work</th><th>State</th><th>Node</th><th>Attempt</th><th>Result</th></tr>
+  </thead>
+  <tbody>
+    {% for task in detail.tasks %}
+    <tr>
+      <td>{{ task.index }}</td>
+      <td>{{ task.id }}</td>
+      <td>{{ task.description }}</td>
+      <td><span class="badge state-{{ task.state }}">{{ task.state }}</span></td>
+      <td>{{ task.node }}</td>
+      <td>{{ task.attempt }}</td>
+      <td class="output">{{ task.output }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<h2>Failures</h2>
+{% if detail.failures.is_empty() %}
+<p class="muted">No failures recorded.</p>
+{% else %}
+<table class="table">
+  <thead>
+    <tr><th>When</th><th>Task</th><th>Node</th><th>Attempt</th><th>Reason</th><th>Detail</th></tr>
+  </thead>
+  <tbody>
+    {% for failure in detail.failures %}
+    <tr class="severity-error">
+      <td>{{ failure.time }}</td>
+      <td>{{ failure.task }}</td>
+      <td>{{ failure.node }}</td>
+      <td>{{ failure.attempt }}</td>
+      <td>{{ failure.reason }}</td>
+      <td>{{ failure.detail }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}

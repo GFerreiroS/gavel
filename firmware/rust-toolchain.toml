@@ -1,0 +1,4 @@
+# The Xtensa backend is not in upstream rustc; ESP32-S3 needs Espressif's fork.
+# Install with:  cargo install espup && espup install
+[toolchain]
+channel = "esp"

@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ layout.title }} · {{ layout.app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css?v={{ layout.css_version }}">
+  <script src="/static/htmx.min.js?v={{ layout.htmx_version }}" defer></script>
+  <script src="/static/live.js?v={{ layout.live_version }}" defer></script>
+</head>
+<body hx-headers='{"X-CSRF-Token": "{{ layout.csrf }}"}'>
+  <header class="topbar">
+    <a class="brand" href="/">{{ layout.app_name }}</a>
+    <nav>
+      {% for item in layout.nav %}
+      <a href="{{ item.href }}"{% if item.active %} class="active"{% endif %}>{{ item.label }}</a>
+      {% endfor %}
+    </nav>
+    <div class="who">
+      {% if layout.signed_in %}<span class="user">{{ layout.username }}</span>
+      {% else %}<a href="/account">Sign in</a>{% endif %}
+    </div>
+  </header>
+
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer>
+    <span>V0 · running on simulated nodes</span>
+    {% if layout.debug_controls %}<span class="tag warn">debug controls enabled</span>{% endif %}
+  </footer>
+</body>
+</html>

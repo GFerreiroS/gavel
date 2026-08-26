@@ -1,0 +1,25 @@
+<article class="character">
+  <header>
+    <h2>{{ character.name }}</h2>
+    <span class="muted">{{ character.realm }} · {{ character.region }}</span>
+    {% if character.cached %}<span class="tag">cached</span>{% endif %}
+    <span class="tag">via {{ character.source }}</span>
+  </header>
+
+  {% if let Some(thumb) = character.thumbnail_url %}
+  <img class="portrait" src="{{ thumb }}" alt="" width="84" height="84" loading="lazy">
+  {% endif %}
+
+  <dl class="caps">
+    <dt>Class</dt><dd>{{ character.class }}</dd>
+    <dt>Race</dt><dd>{{ character.race }}</dd>
+    <dt>Spec</dt><dd>{{ character.spec }}</dd>
+    <dt>Faction</dt><dd>{{ character.faction }}</dd>
+    <dt>Item level</dt><dd>{{ character.item_level }}</dd>
+    <dt>Mythic+ score</dt><dd>{{ character.mythic_plus_score }}</dd>
+    <dt>Fetched</dt><dd>{{ character.fetched_at }}</dd>
+  </dl>
+  {% if let Some(url) = character.profile_url %}
+  <p><a href="{{ url }}" rel="noopener noreferrer" target="_blank">View full profile on {{ character.source }}</a></p>
+  {% endif %}
+</article>

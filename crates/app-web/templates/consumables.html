@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Raid consumables</h1>
+<p class="hint">
+  {{ market.season }} · prices are the 5th-percentile unit price, which ignores
+  a single joke listing while still reflecting what you would actually pay.
+  Consumables are <strong>commodities</strong>, so these are region-wide prices —
+  every realm in {{ market.region }} sees the same market.
+</p>
+
+<div id="consumables"
+     {% if !market.archived %}
+     hx-get="/partials/consumables"
+     hx-trigger="cluster-changed from:body, every {{ layout.fallback_poll_ms }}ms"
+     hx-swap="innerHTML"
+     {% endif %}>
+  {% include "partials/consumables.html" %}
+</div>
+{% endblock %}

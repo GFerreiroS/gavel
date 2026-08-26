@@ -1,0 +1,27 @@
+<div id="job-list" hx-get="/partials/jobs" hx-trigger="cluster-changed from:body"
+     hx-swap="outerHTML">
+  {% if jobs.is_empty() %}
+  <p class="muted">No jobs yet. Submit one above.</p>
+  {% else %}
+  <table class="table">
+    <thead>
+      <tr><th>Job</th><th>Workload</th><th>State</th><th>Progress</th><th>Failed</th><th>Duration</th></tr>
+    </thead>
+    <tbody>
+      {% for job in jobs %}
+      <tr>
+        <td><a href="/jobs/{{ job.raw_id }}">{{ job.id }}</a></td>
+        <td>{{ job.description }}</td>
+        <td><span class="badge state-{{ job.state }}">{{ job.state }}</span></td>
+        <td>
+          <div class="bar small"><span style="width: {{ job.progress }}%"></span></div>
+          {{ job.tasks_done }} / {{ job.tasks_total }}
+        </td>
+        <td class="{% if job.tasks_failed > 0 %}bad{% endif %}">{{ job.tasks_failed }}</td>
+        <td>{{ job.duration }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>

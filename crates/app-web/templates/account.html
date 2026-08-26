@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Account</h1>
+
+{% if signed_in %}
+<section class="panel">
+  <h2>Signed in as {{ username }}</h2>
+  <form hx-post="/account/logout">
+    <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
+    <button type="submit">Sign out</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Linked accounts</h2>
+  {% if linked.is_empty() %}
+  <p class="muted">No linked accounts.</p>
+  {% else %}
+  <ul>{% for account in linked %}<li>{{ account }}</li>{% endfor %}</ul>
+  {% endif %}
+  <p class="hint">
+    Battle.net linking is not implemented in V0. The architecture is in place
+    (see <code>app-integrations/src/battlenet.rs</code>); the real OAuth flow
+    will be written against the current official documentation.
+  </p>
+</section>
+
+{% else %}
+<div class="two-col">
+  <section class="panel">
+    <h2>Sign in</h2>
+    <form hx-post="/account/login" hx-target="#auth-error" hx-swap="innerHTML">
+      <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
+      <label>Username <input type="text" name="username" autocomplete="username" required></label>
+      <label>Password <input type="password" name="password" autocomplete="current-password" required></label>
+      <button type="submit">Sign in</button>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Register</h2>
+    <form hx-post="/account/register" hx-target="#auth-error" hx-swap="innerHTML">
+      <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
+      <label>Username <input type="text" name="username" autocomplete="username" required minlength="3" maxlength="32"></label>
+      <label>Password <input type="password" name="password" autocomplete="new-password" required minlength="8"></label>
+      <button type="submit">Create account</button>
+    </form>
+  </section>
+</div>
+<div id="auth-error"></div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,30 @@
+<div class="stat-grid">
+  <div class="stat">
+    <span class="label">Requests served</span>
+    <span class="value">{{ metrics.requests_total }}</span>
+  </div>
+  <div class="stat">
+    <span class="label">Mean latency</span>
+    <span class="value">{{ metrics.mean_latency }}</span>
+  </div>
+  <div class="stat">
+    <span class="label">In flight</span>
+    <span class="value">{{ metrics.in_flight }}</span>
+  </div>
+  <div class="stat">
+    <span class="label">Peak in flight</span>
+    <span class="value">{{ metrics.peak_in_flight }}</span>
+  </div>
+  <div class="stat">
+    <span class="label">4xx</span>
+    <span class="value">{{ metrics.client_errors }}</span>
+  </div>
+  <div class="stat">
+    <span class="label">5xx</span>
+    <span class="value {% if metrics.server_errors > 0 %}bad{% endif %}">{{ metrics.server_errors }}</span>
+  </div>
+</div>
+<p class="hint">
+  These are the request-side signals a future autoscaler reads; queue depth,
+  worker load and running jobs come from the cluster snapshot above.
+</p>

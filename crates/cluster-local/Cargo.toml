@@ -1,0 +1,25 @@
+[package]
+name = "cluster-local"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The PC implementation of the cluster runtime: one Tokio task per simulated
+# node, one supervisor task holding cluster state.
+#
+# It depends on `cluster-core` and nothing else in the workspace. It knows
+# nothing about HTTP, SQLite, users or WoW. Replacing it with a QEMU or
+# Wi-Fi runtime means writing another implementor of `ClusterControl`.
+
+[dependencies]
+cluster-core = { workspace = true, features = ["std"] }
+futures-core = { workspace = true, features = ["std"] }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tokio-stream = { workspace = true }

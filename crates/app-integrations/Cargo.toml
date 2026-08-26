@@ -1,0 +1,20 @@
+[package]
+name = "app-integrations"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Adapters for external providers. Provider-shaped JSON exists only inside this
+# crate; everything it hands out is an `app_core` domain type.
+
+[dependencies]
+app-core = { workspace = true }
+cluster-core = { workspace = true, features = ["std"] }
+httpdate = "1.0.3"
+reqwest = { workspace = true }
+tokio = { workspace = true, features = ["sync"] }
+serde = { workspace = true, features = ["std"] }
+serde_json = { workspace = true }
+tracing = { workspace = true }

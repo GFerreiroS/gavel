@@ -1,0 +1,57 @@
+<div id="node-list" class="node-grid"
+     hx-get="/partials/nodes" hx-trigger="cluster-changed from:body"
+     hx-swap="outerHTML">
+  {% for node in nodes %}
+  <article class="node status-{{ node.status }}">
+    <header>
+      <h3>{{ node.id }}</h3>
+      <span class="badge {{ node.status }}">{{ node.status }}</span>
+      {% if node.is_leader %}<span class="badge leader">coordinator</span>{% endif %}
+      {% if node.is_gateway %}<span class="badge gateway">gateway</span>{% endif %}
+    </header>
+
+    <dl class="caps">
+      <dt>CPU</dt><dd>{{ node.cpu_class }} · {{ node.cores }} core(s)</dd>
+      <dt>RAM</dt><dd>{{ node.memory }}{% if node.psram != "none" %} + {{ node.psram }} PSRAM{% endif %}</dd>
+      <dt>Flash</dt><dd>{{ node.flash }}</dd>
+      <dt>Last seen</dt><dd>{{ node.last_seen }}</dd>
+    </dl>
+
+    <div class="load">
+      <div class="bar"><span style="width: {{ node.load_percent }}%"></span></div>
+      <span class="load-text">
+        load {{ node.load_percent }}% · {{ node.running_tasks }} task(s) · free {{ node.free_memory }}
+        {% if node.simulated %}<em class="sim" title="These values are generated, not measured">simulated</em>{% endif %}
+      </span>
+    </div>
+
+    <div class="roles">
+      {% for chip in node.roles %}
+      <button class="chip {% if chip.held %}on{% endif %}"
+              hx-post="/nodes/{{ node.raw_id }}/roles"
+              hx-vals='{"role": "{{ chip.role }}", "enabled": {% if chip.held %}false{% else %}true{% endif %}}'
+              hx-target="#node-list"
+              hx-swap="outerHTML">{{ chip.role }}</button>
+      {% endfor %}
+    </div>
+
+    {% if debug_controls %}
+    <div class="controls">
+      {% if node.online %}
+      <button class="danger" hx-post="/debug/nodes/{{ node.raw_id }}/stop"
+              hx-target="#node-list" hx-swap="outerHTML">stop</button>
+      <button hx-post="/debug/nodes/{{ node.raw_id }}/heartbeat?paused=true"
+              hx-target="#node-list" hx-swap="outerHTML">pause heartbeat</button>
+      <button hx-post="/debug/nodes/{{ node.raw_id }}/heartbeat?paused=false"
+              hx-target="#node-list" hx-swap="outerHTML">resume</button>
+      <button hx-post="/debug/nodes/{{ node.raw_id }}/fail"
+              hx-target="#node-list" hx-swap="outerHTML">fail next task</button>
+      {% else %}
+      <button hx-post="/debug/nodes/{{ node.raw_id }}/start"
+              hx-target="#node-list" hx-swap="outerHTML">start</button>
+      {% endif %}
+    </div>
+    {% endif %}
+  </article>
+  {% endfor %}
+</div>

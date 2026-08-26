@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block content %}
+<p class="crumbs">
+  <a href="/wow/consumables">Consumables</a> ›
+  <a href="/wow/expansion/{{ item.catalog_id }}">{{ item.expansion }}</a> ›
+  {{ item.name }}
+</p>
+
+<header class="item-head">
+  {% if let Some(icon) = item.icon %}
+  <img class="item-icon lg" src="{{ icon }}" alt="" width="56" height="56" loading="lazy">
+  {% endif %}
+  <div>
+    <h1>{{ item.name }}</h1>
+    <p class="muted">
+      {{ item.category }} · {{ item.audience }}
+      {% if item.stat != "none" %} · {{ item.stat }}{% endif %}
+      {% if item.ranks_total > 1 %} · rank {{ item.rank }} of {{ item.ranks_total }}{% endif %}
+      · region {{ item.region }} · item {{ item.item_id }}
+    </p>
+  </div>
+</header>
+
+{% if item.archived %}
+<div class="alert alert-archived" role="status">
+  <strong>{{ item.expansion }} is archived.</strong>
+  These figures are final; this market is no longer collected.
+</div>
+{% endif %}
+
+{% if !item.has_data %}
+<div class="alert alert-archived" role="status">
+  No observations recorded for this market yet. Statistics appear once the
+  collector has run.
+</div>
+{% else %}
+
+<div class="stat-grid">
+  <div class="stat"><span class="label">Price now</span><span class="value">{{ item.current }}</span></div>
+  <div class="stat"><span class="label">Average</span><span class="value">{{ item.mean }}</span></div>
+  <div class="stat"><span class="label">Median</span><span class="value">{{ item.median }}</span></div>
+  <div class="stat">
+    <span class="label">Lowest ever</span>
+    <span class="value good">{{ item.low }}</span>
+    <span class="when muted">{{ item.low_when }}</span>
+  </div>
+  <div class="stat">
+    <span class="label">Highest ever</span>
+    <span class="value bad">{{ item.high }}</span>
+    <span class="when muted">{{ item.high_when }}</span>
+  </div>
+  <div class="stat"><span class="label">In stock</span><span class="value">{{ item.quantity }}</span></div>
+  <div class="stat"><span class="label">Swing</span><span class="value">{{ item.volatility_percent }}%</span></div>
+  <div class="stat">
+    <span class="label">Observations</span>
+    <span class="value">{{ item.samples }}</span>
+    <span class="when muted">since {{ item.first_seen }}</span>
+  </div>
+</div>
+
+<section class="panel">
+  <h2>Change</h2>
+  <div class="trend-row">
+    {% for trend in item.trends %}
+    <div class="trend">
+      <span class="label">{{ trend.label }}</span>
+      {% if trend.known %}
+      <span class="value {% if trend.cheaper %}good{% else if trend.percent > 0 %}bad{% endif %}">
+        {% if trend.percent > 0 %}+{% endif %}{{ trend.percent }}%
+      </span>
+      {% else %}
+      <span class="value muted">not enough history</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="panel viz-root">
+  <h2>Price over time</h2>
+  {% if item.series_labels.len() > 1 %}
+  <p class="legend">
+    {% for label in item.series_labels %}
+    <span class="key"><i class="swatch s{{ loop.index }}"></i>{{ label }}</span>
+    {% endfor %}
+  </p>
+  {% endif %}
+  {{ item.price_chart|safe }}
+  <p class="hint">Hover the chart for the exact value at a point in time.</p>
+</section>
+
+<section class="panel viz-root">
+  <h2>Units listed over time</h2>
+  <p class="hint">
+    Supply, on its own axis. A price drop with supply collapsing is somebody
+    undercutting an empty market, not the market getting cheaper.
+  </p>
+  {{ item.stock_chart|safe }}
+</section>
+
+<div class="two-col">
+  <section class="panel viz-root">
+    <h2>Average by hour (UTC)</h2>
+    {% if let Some(best) = item.best_hour %}
+    <p class="hint">Cheapest around <strong>{{ best }}</strong>.</p>
+    {% else %}
+    <p class="hint">Needs a few observations in every hour before this is meaningful.</p>
+    {% endif %}
+    {{ item.hour_chart|safe }}
+  </section>
+
+  <section class="panel viz-root">
+    <h2>Average by weekday</h2>
+    {% if let Some(best) = item.best_weekday %}
+    <p class="hint">Cheapest on <strong>{{ best }}</strong>.</p>
+    {% else %}
+    <p class="hint">Needs a few observations on every weekday.</p>
+    {% endif %}
+    {{ item.weekday_chart|safe }}
+  </section>
+</div>
+
+<section class="panel">
+  <h2>By patch</h2>
+  <div class="scroll-x">
+    <table class="table">
+      <thead><tr><th>Patch</th><th>Average</th><th>Low</th><th>High</th><th>Observations</th></tr></thead>
+      <tbody>
+        {% for patch in item.patches %}
+        <tr>
+          <td title="{{ patch.label }}">{{ patch.patch }}</td>
+          <td>{% if patch.has_data %}<b>{{ patch.mean }}</b>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td class="muted">{{ patch.low }}</td>
+          <td class="muted">{{ patch.high }}</td>
+          <td class="muted">{{ patch.samples }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

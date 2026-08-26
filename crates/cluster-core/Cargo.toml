@@ -1,0 +1,31 @@
+[package]
+name = "cluster-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# PORTABILITY CONTRACT
+# --------------------
+# This crate is `no_std + alloc` and MUST stay that way: it is the layer that
+# will eventually be compiled for the ESP32 itself. It therefore contains
+# *concepts* only -- ids, roles, capabilities, jobs, tasks, events, scheduling
+# policy, election policy -- and no I/O, no threads, no Tokio, no clocks, no
+# allocation-heavy convenience.
+#
+# Verify with:  cargo check -p cluster-core --no-default-features
+[features]
+default = []
+std = ["serde/std", "thiserror/std", "futures-core/std"]
+
+[dependencies]
+futures-core = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# Test-only: the schedulers are async, so the unit tests need an executor.
+# This does not affect the `no_std` guarantee for real builds, which is
+# checked by `cargo check -p cluster-core --no-default-features`.
+tokio = { workspace = true, features = ["rt", "macros"] }

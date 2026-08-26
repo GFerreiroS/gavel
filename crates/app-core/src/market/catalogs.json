@@ -1,0 +1,468 @@
+{
+  "_note": [
+    "Item ids sourced from Method's Midnight 12.1 consumables guide.",
+    "Audience: mana potions are caster-only (melee specs have no mana bar),",
+    "weapon stones are melee (attack power, weapon-type restricted), oils are",
+    "the caster-side equivalent. Everything else in Midnight is genuinely",
+    "universal because flasks key on secondary stat, not primary stat.",
+    "ARCHIVAL: exactly one catalog is 'active' and is the only one collected.",
+    "When Midnight ends, set its status to 'archived' and add the next",
+    "expansion as a new active catalog. Archived prices are never deleted and",
+    "the page stays browsable at /wow/consumables/{id}, just frozen.",
+    "Ranks discovered from the live EU snapshot: same item name, actually",
+    "trading, ordered by ITEM LEVEL -- which is the real rank discriminator.",
+    "Item ids are NOT ordered by rank, so do not infer rank from the id.",
+    "Six items (foods and the feast) genuinely have a single rank.",
+    "Patch dates are release dates, not raid-opening dates: 12.1 shipped",
+    "2026-08-11 and the Venomous Abyss opened a week later. Windows are",
+    "derived from these starts and are contiguous by construction.",
+    "No Midnight augment rune is tracked: the 'Void-Touched Augment Rune'",
+    "named in guides does not exist in Blizzard's item data, and the only",
+    "augment rune trading on EU is a legacy one (160053)."
+  ],
+  "catalogs": [
+    {
+      "id": "midnight",
+      "expansion": "Midnight",
+      "season": "Midnight 12.1 — Season 2 (The Venomous Abyss)",
+      "status": "active",
+      "patches": [
+        {
+          "patch": "12.0",
+          "name": "Midnight launch",
+          "started": "2026-03-02"
+        },
+        {
+          "patch": "12.0.5",
+          "name": "Patch 12.0.5",
+          "started": "2026-04-21"
+        },
+        {
+          "patch": "12.1",
+          "name": "The Curse of Ula'tek",
+          "started": "2026-08-11"
+        }
+      ],
+      "items": [
+        {
+          "name": "Flask of Thalassian Resistance",
+          "category": "flask",
+          "audience": "common",
+          "stat": "versatility",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241321
+            },
+            {
+              "rank": 2,
+              "item_id": 241320
+            }
+          ],
+          "icon": "7548905.jpg"
+        },
+        {
+          "name": "Flask of the Blood Knights",
+          "category": "flask",
+          "audience": "common",
+          "stat": "haste",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241325
+            },
+            {
+              "rank": 2,
+              "item_id": 241324
+            }
+          ],
+          "icon": "7548904.jpg"
+        },
+        {
+          "name": "Flask of the Magisters",
+          "category": "flask",
+          "audience": "common",
+          "stat": "mastery",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241323
+            },
+            {
+              "rank": 2,
+              "item_id": 241322
+            }
+          ],
+          "icon": "7548902.jpg"
+        },
+        {
+          "name": "Flask of the Shattered Sun",
+          "category": "flask",
+          "audience": "common",
+          "stat": "crit",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241327
+            },
+            {
+              "rank": 2,
+              "item_id": 241326
+            }
+          ],
+          "icon": "7548903.jpg"
+        },
+        {
+          "name": "Light's Potential",
+          "category": "combat_potion",
+          "audience": "common",
+          "stat": "primary",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241309
+            },
+            {
+              "rank": 2,
+              "item_id": 241308
+            }
+          ],
+          "icon": "7548911.jpg"
+        },
+        {
+          "name": "Draught of Rampant Abandon",
+          "category": "combat_potion",
+          "audience": "common",
+          "stat": "primary",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241293
+            },
+            {
+              "rank": 2,
+              "item_id": 241292
+            }
+          ],
+          "icon": "7548915.jpg"
+        },
+        {
+          "name": "Potion of Recklessness",
+          "category": "combat_potion",
+          "audience": "common",
+          "stat": "none",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241289
+            },
+            {
+              "rank": 2,
+              "item_id": 241288
+            }
+          ],
+          "icon": "7548916.jpg"
+        },
+        {
+          "name": "Potion of Zealotry",
+          "category": "combat_potion",
+          "audience": "common",
+          "stat": "none",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241297
+            },
+            {
+              "rank": 2,
+              "item_id": 241296
+            }
+          ],
+          "icon": "7548908.jpg"
+        },
+        {
+          "name": "Silvermoon Health Potion",
+          "category": "healing_potion",
+          "audience": "common",
+          "stat": "none",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241305
+            },
+            {
+              "rank": 2,
+              "item_id": 241304
+            }
+          ],
+          "icon": "7548909.jpg"
+        },
+        {
+          "name": "Refreshing Serum",
+          "category": "healing_potion",
+          "audience": "common",
+          "stat": "none",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241307
+            },
+            {
+              "rank": 2,
+              "item_id": 241306
+            }
+          ],
+          "icon": "2057573.jpg"
+        },
+        {
+          "name": "Light's Preservation",
+          "category": "healing_potion",
+          "audience": "common",
+          "stat": "none",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241287
+            },
+            {
+              "rank": 2,
+              "item_id": 241286
+            }
+          ],
+          "icon": "2057578.jpg"
+        },
+        {
+          "name": "Amani Extract",
+          "category": "healing_potion",
+          "audience": "common",
+          "stat": "none",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241299
+            },
+            {
+              "rank": 2,
+              "item_id": 241298
+            }
+          ],
+          "icon": "236871.jpg"
+        },
+        {
+          "name": "Lightfused Mana Potion",
+          "category": "mana_potion",
+          "audience": "caster",
+          "stat": "none",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241301
+            },
+            {
+              "rank": 2,
+              "item_id": 241300
+            }
+          ],
+          "icon": "7548907.jpg"
+        },
+        {
+          "name": "Potion of Devoured Dreams",
+          "category": "mana_potion",
+          "audience": "caster",
+          "stat": "none",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241295
+            },
+            {
+              "rank": 2,
+              "item_id": 241294
+            }
+          ],
+          "icon": "7548914.jpg"
+        },
+        {
+          "name": "Silvermoon Parade",
+          "category": "feast",
+          "audience": "common",
+          "stat": "primary",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 255845
+            }
+          ],
+          "icon": "1053712.jpg"
+        },
+        {
+          "name": "Royal Roast",
+          "category": "food",
+          "audience": "common",
+          "stat": "primary",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 242275
+            }
+          ],
+          "icon": "4672193.jpg"
+        },
+        {
+          "name": "Warped Wise Wings",
+          "category": "food",
+          "audience": "common",
+          "stat": "mastery",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 242285
+            }
+          ],
+          "icon": "4659335.jpg"
+        },
+        {
+          "name": "Sun-Seared Lumifin",
+          "category": "food",
+          "audience": "common",
+          "stat": "crit",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 242283
+            }
+          ],
+          "icon": "651600.jpg"
+        },
+        {
+          "name": "Null and Void Plate",
+          "category": "food",
+          "audience": "common",
+          "stat": "haste",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 242282
+            }
+          ],
+          "icon": "4621591.jpg"
+        },
+        {
+          "name": "Void-Kissed Fish Rolls",
+          "category": "food",
+          "audience": "common",
+          "stat": "versatility",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 242284
+            }
+          ],
+          "icon": "2066016.jpg"
+        },
+        {
+          "name": "Refulgent Weightstone",
+          "category": "weapon_stone",
+          "audience": "melee",
+          "stat": "none",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 237367
+            },
+            {
+              "rank": 2,
+              "item_id": 237369
+            }
+          ],
+          "icon": "7548938.jpg"
+        },
+        {
+          "name": "Refulgent Whetstone",
+          "category": "weapon_stone",
+          "audience": "melee",
+          "stat": "none",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 237370
+            },
+            {
+              "rank": 2,
+              "item_id": 237371
+            }
+          ],
+          "icon": "7548941.jpg"
+        },
+        {
+          "name": "Thalassian Phoenix Oil",
+          "category": "weapon_oil",
+          "audience": "caster",
+          "stat": "crit",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 243733
+            },
+            {
+              "rank": 2,
+              "item_id": 243734
+            }
+          ],
+          "icon": "7548987.jpg"
+        },
+        {
+          "name": "Oil of Dawn",
+          "category": "weapon_oil",
+          "audience": "caster",
+          "stat": "none",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 243735
+            },
+            {
+              "rank": 2,
+              "item_id": 243736
+            }
+          ],
+          "icon": "7548985.jpg"
+        },
+        {
+          "name": "Smuggler's Enchanted Edge",
+          "category": "weapon_oil",
+          "audience": "caster",
+          "stat": "none",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 243737
+            },
+            {
+              "rank": 2,
+              "item_id": 243738
+            }
+          ],
+          "icon": "7548986.jpg"
+        },
+        {
+          "name": "Void-Shrouded Tincture",
+          "category": "utility",
+          "audience": "common",
+          "stat": "none",
+          "ranks": [
+            {
+              "rank": 1,
+              "item_id": 241303
+            },
+            {
+              "rank": 2,
+              "item_id": 241302
+            }
+          ],
+          "icon": "7548917.jpg"
+        }
+      ]
+    }
+  ]
+}

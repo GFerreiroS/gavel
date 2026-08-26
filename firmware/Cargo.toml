@@ -1,0 +1,29 @@
+[package]
+name = "node-firmware"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "ESP32-S3 cluster node. Runs under QEMU; the same binary targets real silicon."
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+# A panic on a node should be loud and land in the backtrace handler.
+overflow-checks = true
+debug = 2
+
+[profile.dev]
+opt-level = "s"
+
+
+# Standalone: see `exclude` in the root manifest.
+[workspace]
+
+[dependencies]
+# The whole point: the device links the same domain crate the server does.
+cluster-core = { path = "../crates/cluster-core", default-features = false }
+esp-backtrace = { version = "0.20.0", features = ["esp32s3", "panic-handler", "println"] }
+esp-bootloader-esp-idf = { version = "0.5.0", features = ["esp32s3"] }
+esp-hal = { version = "1.1.2", features = ["esp32s3"] }
+esp-println = { version = "0.18.0", default-features = false, features = ["esp32s3", "uart"] }

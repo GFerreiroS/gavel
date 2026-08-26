@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Jobs</h1>
+
+<section class="panel">
+  <h2>Submit a job</h2>
+  <form class="job-form" hx-post="/jobs" hx-target="#job-list" hx-swap="outerHTML">
+    <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
+    <label>
+      Workload
+      <select name="kind">
+        <option value="sleep">Sleep (scheduling demo)</option>
+        <option value="primes">Primes (CPU)</option>
+      </select>
+    </label>
+    <label>
+      Size
+      <input type="number" name="size" value="4000" min="1" required>
+      <small>milliseconds, or prime upper bound</small>
+    </label>
+    <label>
+      Tasks
+      <input type="number" name="tasks" value="8" min="1" max="64" required>
+    </label>
+    <button type="submit">Submit</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Recent jobs</h2>
+  {% include "partials/jobs.html" %}
+</section>
+{% endblock %}

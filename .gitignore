@@ -1,0 +1,8 @@
+/target
+/firmware/target
+# Espressif QEMU, fetched by scripts/fetch-qemu.sh
+/tools
+/data/*.db
+/data/*.db-shm
+/data/*.db-wal
+.env

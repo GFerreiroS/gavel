@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Dashboard</h1>
+
+<div id="stats" hx-get="/partials/stats" hx-trigger="cluster-changed from:body, every {{ layout.fallback_poll_ms }}ms" hx-swap="innerHTML">
+  {% include "partials/stats.html" %}
+</div>
+
+<section class="panel">
+  <h2>Request metrics</h2>
+  <div id="metrics" hx-get="/partials/metrics"
+       hx-trigger="cluster-changed from:body, every {{ layout.fallback_poll_ms }}ms"
+       hx-swap="innerHTML">
+    {% include "partials/metrics.html" %}
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Recent cluster events</h2>
+  <div id="events" hx-get="/partials/events" hx-trigger="cluster-changed from:body, every {{ layout.fallback_poll_ms }}ms" hx-swap="innerHTML">
+    {% include "partials/events.html" %}
+  </div>
+</section>
+{% endblock %}

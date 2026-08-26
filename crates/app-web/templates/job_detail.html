@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ detail.job.id }}</h1>
+<p><a href="/jobs">&larr; all jobs</a></p>
+
+<div id="job-detail"
+     hx-get="/partials/jobs/{{ detail.job.raw_id }}"
+     {% if !detail.job.finished %}hx-trigger="cluster-changed from:body, every {{ layout.fallback_poll_ms }}ms"{% endif %}
+     hx-swap="innerHTML">
+  {% include "partials/job_detail.html" %}
+</div>
+{% endblock %}

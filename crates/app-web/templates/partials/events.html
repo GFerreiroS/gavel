@@ -1,0 +1,13 @@
+{% if events.is_empty() %}
+<p class="muted">No events yet.</p>
+{% else %}
+<ol class="event-log">
+  {% for event in events %}
+  <li class="severity-{{ event.severity }}">
+    <time>{{ event.time }}</time>
+    <span class="kind">{{ event.kind }}</span>
+    <span class="message">{{ event.message }}</span>
+  </li>
+  {% endfor %}
+</ol>
+{% endif %}

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>World of Warcraft</h1>
+<p class="hint">
+  One vertical slice: look up a character, normalise the upstream response into
+  our own model, cache it briefly, render it.
+</p>
+
+<section class="panel">
+  <form class="job-form"
+        hx-get="/wow/character"
+        hx-target="#character"
+        hx-swap="innerHTML"
+        hx-indicator="#character-loading">
+    <label>Region
+      <select name="region">
+        <option value="eu">EU</option>
+        <option value="us">US</option>
+        <option value="kr">KR</option>
+        <option value="tw">TW</option>
+      </select>
+    </label>
+    <label>Realm <input type="text" name="realm" placeholder="Silvermoon" required></label>
+    <label>Character <input type="text" name="name" placeholder="Name" required></label>
+    <button type="submit">Search</button>
+  </form>
+  <span id="character-loading" class="htmx-indicator">searching…</span>
+</section>
+
+<div id="character">
+  <p class="muted">No character loaded yet.</p>
+</div>
+{% endblock %}
