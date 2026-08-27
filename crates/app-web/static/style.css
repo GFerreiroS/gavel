@@ -354,11 +354,20 @@ input, select {
   }
 }
 
-.chart { width: 100%; height: 240px; display: block; }
+/* `height: auto` with uniform scaling: a fixed height plus a stretched
+   viewBox distorted every glyph horizontally. */
+.chart { width: 100%; height: auto; display: block; }
 .chart .grid { stroke: var(--grid-line); stroke-width: 1; }
-.chart .axis { fill: var(--axis-ink); font-size: 10px; font-family: inherit; }
+.chart .axis {
+  fill: var(--axis-ink);
+  font-size: 10px;
+  font-family: inherit;
+  /* Ticks align vertically, so equal-width digits help here. */
+  font-variant-numeric: tabular-nums;
+}
 .chart .bar { fill: var(--series-1); }
 .chart .bar.best { fill: var(--series-2); }
+.chart path.bar { stroke: none; }
 .chart .hit { fill: transparent; }
 .chart .hit:hover { fill: var(--grid-line); fill-opacity: .35; }
 .chart-empty { padding: 2rem 0; text-align: center; font-size: .85rem; }

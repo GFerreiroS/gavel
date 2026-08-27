@@ -12,7 +12,7 @@ use axum::http::HeaderMap;
 use axum::response::Html;
 use cluster_core::Millis;
 
-use crate::chart::{self, Series};
+use crate::chart::{self, Series, Unit};
 use crate::csrf::Csrf;
 use crate::error::WebResult;
 use crate::render::page;
@@ -111,6 +111,7 @@ async fn build<E: Ports>(
 
     let price_chart = chart::line_chart(
         &series,
+        Unit::Gold,
         "Not enough history yet — the chart appears after a few collections.",
     );
 
@@ -130,6 +131,7 @@ async fn build<E: Ports>(
             points: &stock_points,
             slot: 0,
         }],
+        Unit::Count,
         "Not enough history yet.",
     );
 
