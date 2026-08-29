@@ -115,18 +115,22 @@ fn by_region(realms: &[Realm]) -> Vec<AdminRegion> {
             let mut languages: Vec<AdminLanguage> = tags
                 .into_iter()
                 .map(|tag| {
-                    let realms: Vec<AdminRealm> = mine
+                    // One entry per *realm*, not per connected realm: a
+                    // player looks for "C'Thun", not for "Dun Modr, C'Thun".
+                    // They share a switch because they share a market, which
+                    // each entry says.
+                    let mut realms: Vec<AdminRealm> = mine
                         .iter()
                         .filter(|r| r.locale == tag)
-                        .map(|realm| AdminRealm {
-                            id: realm.id.get(),
-                            name: realm.name.clone(),
-                            enabled: realm.enabled,
-                        })
+                        .flat_map(|realm| entries(realm))
                         .collect();
+                    realms.sort_by(|a, b| a.name.cmp(&b.name));
                     AdminLanguage {
                         label: language_name(tag),
-                        enabled: realms.iter().filter(|r| r.enabled).count(),
+                        // Counted by market, not by name: three realms sharing
+                        // one auction house are one thing being collected.
+                        enabled: mine.iter().filter(|r| r.locale == tag && r.enabled).count(),
+                        markets: mine.iter().filter(|r| r.locale == tag).count(),
                         realms,
                     }
                 })
@@ -145,6 +149,37 @@ fn by_region(realms: &[Realm]) -> Vec<AdminRegion> {
                 total: mine.len(),
                 languages,
             }
+        })
+        .collect()
+}
+
+/// One switch per realm name, all pointing at the connected realm they share.
+///
+/// A connected realm with no members recorded yet -- one stored before the
+/// column existed -- still offers its joined name, so the page works before
+/// the next startup refreshes it.
+fn entries(realm: &Realm) -> Vec<AdminRealm> {
+    if realm.members.is_empty() {
+        return vec![AdminRealm {
+            id: realm.id.get(),
+            name: realm.name.clone(),
+            shared_with: Vec::new(),
+            enabled: realm.enabled,
+        }];
+    }
+    realm
+        .members
+        .iter()
+        .map(|name| AdminRealm {
+            id: realm.id.get(),
+            name: name.clone(),
+            shared_with: realm
+                .members
+                .iter()
+                .filter(|other| *other != name)
+                .cloned()
+                .collect(),
+            enabled: realm.enabled,
         })
         .collect()
 }

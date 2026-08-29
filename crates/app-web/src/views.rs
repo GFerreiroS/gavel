@@ -411,13 +411,21 @@ pub struct AdminLanguage {
     /// "Deutsch", or the raw locale tag when we have no name for it.
     pub label: &'static str,
     pub realms: Vec<AdminRealm>,
+    /// Counted by market rather than by name: three realms sharing one
+    /// auction house are one thing being collected.
     pub enabled: usize,
+    pub markets: usize,
 }
 
 #[derive(Debug, Clone)]
 pub struct AdminRealm {
     pub id: u32,
+    /// One realm's own name. A connected realm contributes one of these per
+    /// realm it contains, each with its own switch.
     pub name: String,
+    /// The other realms sharing its auction house, if any. Shown because the
+    /// switch moves all of them at once: they are one market.
+    pub shared_with: Vec<String>,
     pub enabled: bool,
 }
 

@@ -395,6 +395,26 @@ td > .rank-link { margin: 0; }
 .switch { display: contents; }
 .switch .chip { width: auto; }
 
+/* Realms read as a list, not as a wall of chips: one name per line, flowing
+   into as many columns as the width allows. Two hundred and fifty realms in a
+   wrapping row is a paragraph of proper nouns; in columns it is a directory
+   you can run an eye down. */
+.realm-columns {
+  columns: 15rem auto;
+  column-gap: var(--pico-block-spacing-horizontal);
+}
+.realm-switch { display: block; }
+.realm-columns .chip {
+  /* `break-inside` on the button, because the form has no box of its own. */
+  display: block;
+  width: 100%;
+  margin-bottom: .25rem;
+  text-align: left;
+  break-inside: avoid;
+}
+/* Who it moves with, when it shares an auction house. */
+.realm-shared { display: block; font-size: .85em; }
+
 /* --- definition lists ----------------------------------------------------
    Pico stacks <dt> above <dd>, which is right for a glossary. These are
    label/value pairs in a card, so they read as two columns. */

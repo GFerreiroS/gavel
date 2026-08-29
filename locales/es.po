@@ -11,6 +11,10 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
+#: crates/app-web/templates/admin.html:73
+msgid "+{} realms"
+msgstr "+{} reinos"
+
 #: crates/app-web/src/i18n.rs
 msgid "24h"
 msgstr "24 h"
@@ -248,7 +252,7 @@ msgstr "Capa"
 msgid "Cluster"
 msgstr "Clúster"
 
-#: crates/app-web/templates/admin.html:64
+#: crates/app-web/templates/admin.html:67
 msgid "Collected. Click to stop."
 msgstr "Se recoge. Pulsa para detenerlo."
 
@@ -779,7 +783,7 @@ msgstr "Nodos en línea"
 msgid "None seen at this item level."
 msgstr "No se ha visto ninguno en este nivel de objeto."
 
-#: crates/app-web/templates/admin.html:64
+#: crates/app-web/templates/admin.html:67
 msgid "Not collected. Click to start."
 msgstr "No se recoge. Pulsa para empezar."
 
@@ -1001,6 +1005,10 @@ msgstr "Proporción"
 #: crates/app-web/src/i18n.rs
 msgid "Shared reagents"
 msgstr "Materiales compartidos"
+
+#: crates/app-web/templates/admin.html:67
+msgid "Shares an auction house with {}, so they collect together."
+msgstr "Comparte casa de subastas con {}, así que se recogen juntos."
 
 #: crates/app-web/src/i18n.rs
 msgid "Shoulder"
@@ -1591,6 +1599,10 @@ msgstr "versatilidad"
 msgid "via {}"
 msgstr "vía {}"
 
+#: crates/app-web/templates/admin.html:75
+msgid "with {}"
+msgstr "con {}"
+
 #: crates/app-web/src/i18n.rs
 msgid "{} ago"
 msgstr "hace {}"
@@ -1674,6 +1686,10 @@ msgstr "{} de {} encantamientos coinciden."
 #: crates/app-web/src/i18n.rs
 msgid "{} of {} gems match."
 msgstr "{} de {} gemas coinciden."
+
+#: crates/app-web/templates/admin.html:56
+msgid "{} of {} markets"
+msgstr "{} de {} mercados"
 
 #: crates/app-web/templates/partials/reagents.html:6
 msgid "{} of {} reagents match."

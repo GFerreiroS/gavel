@@ -50,6 +50,9 @@ pub struct Realm {
     pub region: Region,
     /// "Dentarg, Tarren Mill" -- a connected realm can be several.
     pub name: String,
+    /// The individual realms sharing this auction house: `["Dun Modr",
+    /// "C'Thun"]`. A player looks for one of these, not for the joined name.
+    pub members: Vec<String>,
     /// The language it is played in, as Blizzard's tag: `enGB`, `deDE`, `ruRU`.
     ///
     /// EU shares one region between seven languages, and a reader looking for

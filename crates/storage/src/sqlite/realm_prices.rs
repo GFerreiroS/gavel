@@ -217,14 +217,17 @@ impl RealmPriceRepository for SqliteRealmPrices {
     /// index mentions it again tomorrow.
     async fn record_realm(&self, realm: &Realm) -> RepoResult<()> {
         sqlx::query(
-            "INSERT INTO realms (realm_id, region, name, locale, enabled) VALUES (?, ?, ?, ?, ?)
+            "INSERT INTO realms (realm_id, region, name, members, locale, enabled)
+             VALUES (?, ?, ?, ?, ?, ?)
              ON CONFLICT(realm_id, region) DO UPDATE SET
                     name = excluded.name,
+                    members = excluded.members,
                     locale = excluded.locale",
         )
         .bind(realm.id.get() as i64)
         .bind(realm.region.as_str())
         .bind(&realm.name)
+        .bind(serde_json::to_string(&realm.members).unwrap_or_else(|_| "[]".into()))
         .bind(&realm.locale)
         .bind(realm.enabled as i64)
         .execute(&self.pool)
@@ -251,8 +254,8 @@ impl RealmPriceRepository for SqliteRealmPrices {
 
     async fn realms(&self) -> RepoResult<Vec<Realm>> {
         let rows = sqlx::query(
-            "SELECT realm_id, region, name, locale, enabled
-                   FROM realms ORDER BY region, name",
+            "SELECT realm_id, region, name, members, locale, enabled
+               FROM realms ORDER BY region, name",
         )
         .fetch_all(&self.pool)
         .await
@@ -264,6 +267,10 @@ impl RealmPriceRepository for SqliteRealmPrices {
                     id: RealmId(row.get::<i64, _>("realm_id") as u32),
                     region: Region::parse(&region).ok_or_else(|| corrupt("region", region))?,
                     name: row.get("name"),
+                    // A realm recorded before this column existed has none
+                    // until the next startup; the joined name still shows.
+                    members: serde_json::from_str(&row.get::<String, _>("members"))
+                        .unwrap_or_default(),
                     locale: row.get("locale"),
                     enabled: row.get::<i64, _>("enabled") != 0,
                 })

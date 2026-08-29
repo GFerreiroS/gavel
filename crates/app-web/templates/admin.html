@@ -53,15 +53,28 @@
   {% for language in region.languages %}
   <section class="admin-language">
     <span class="rank-label">{{ language.label }}
-      <span class="muted">· {{ language.enabled }}/{{ language.realms.len() }}</span></span>
-    <div class="roles">
+      <span class="muted">· {{ "{} of {} markets"|t|fill(language.enabled)|fill(language.markets) }}</span></span>
+    {# A column, and every realm on its own line under its own name. Realms
+       sharing an auction house share a switch -- they are one market -- so
+       each says who it moves with rather than pretending to be independent. #}
+    <div class="realm-columns">
       {% for realm in language.realms %}
-      <form method="post" action="/admin" class="switch">
+      <form method="post" action="/admin" class="switch realm-switch">
         <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
         <input type="hidden" name="switch" value="realm:{{ region.code }}:{{ realm.id }}">
         <input type="hidden" name="enabled" value="{% if realm.enabled %}false{% else %}true{% endif %}">
-        <button type="submit" class="chip{% if !realm.enabled %} outline secondary{% endif %}"
-                title="{% if realm.enabled %}{{ "Collected. Click to stop."|t }}{% else %}{{ "Not collected. Click to start."|t }}{% endif %}">{{ realm.name }}</button>
+        <button type="submit" class="chip realm-chip{% if !realm.enabled %} outline secondary{% endif %}"
+                title="{% if realm.enabled %}{{ "Collected. Click to stop."|t }}{% else %}{{ "Not collected. Click to start."|t }}{% endif %}{% if !realm.shared_with.is_empty() %} {{ "Shares an auction house with {}, so they collect together."|t|fill(realm.shared_with.join(", ")) }}{% endif %}">
+          {{ realm.name }}
+          {# Named while the list is short enough to read; counted after that.
+             A realm sharing a market with nine others would otherwise print a
+             paragraph under its own name. The full list is on the title. #}
+          {% if realm.shared_with.len() > 2 %}
+          <span class="muted realm-shared">{{ "+{} realms"|t|fill(realm.shared_with.len()) }}</span>
+          {% else if !realm.shared_with.is_empty() %}
+          <span class="muted realm-shared">{{ "with {}"|t|fill(realm.shared_with.join(", ")) }}</span>
+          {% endif %}
+        </button>
       </form>
       {% endfor %}
     </div>

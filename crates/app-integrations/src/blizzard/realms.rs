@@ -209,6 +209,7 @@ impl<C: Clock + Clone + 'static> RealmAuctionProvider for BlizzardRealms<C> {
                 id: RealmId(id),
                 region,
                 name: detail.display_name(id),
+                members: detail.member_names(),
                 locale: detail.locale(),
                 // What the upstream says exists; whether we collect it is our
                 // decision, and it lives in the store.
@@ -309,6 +310,14 @@ impl ConnectedRealm {
     /// Its realms share one, in practice: Blizzard groups by language before
     /// it groups by population. The first is taken rather than a vote, so the
     /// answer does not change when a realm is added to the group.
+    /// Each realm sharing this auction house, in the order Blizzard lists it.
+    fn member_names(&self) -> Vec<String> {
+        self.realms
+            .iter()
+            .filter_map(|r| r.name.text().map(str::to_string))
+            .collect()
+    }
+
     fn locale(&self) -> String {
         self.realms
             .iter()

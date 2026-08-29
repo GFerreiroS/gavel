@@ -1,0 +1,13 @@
+-- The individual realms behind a connected realm.
+--
+-- "Dun Modr, C'Thun" is one auction house and two realms, and until now only
+-- the joined name was stored. A player looking for their own realm is looking
+-- for one of those names, not for the pair, so the parts are kept as well.
+--
+-- They still share a market: collecting is per *connected* realm, because that
+-- is the granularity the API sells. Storing the members lets the page offer
+-- each name its own switch while being honest that the switch moves both.
+--
+-- A JSON array, like job specs elsewhere in this schema. Empty until the next
+-- startup refreshes it from the upstream.
+ALTER TABLE realms ADD COLUMN members TEXT NOT NULL DEFAULT '[]';
