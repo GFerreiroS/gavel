@@ -11,14 +11,6 @@
   </form>
 </article>
 
-{% if is_admin %}
-<article>
-  <h2>{{ "Collection"|t }}</h2>
-  <p class="hint">{{ "Choose what this instance follows: which categories, and which of the 184 connected realms."|t }}</p>
-  <a class="rank-link outline secondary" role="button" href="/admin">{{ "Collection settings"|t }} →</a>
-</article>
-{% endif %}
-
 <article>
   <h2>{{ "Linked accounts"|t }}</h2>
   {% if linked.is_empty() %}

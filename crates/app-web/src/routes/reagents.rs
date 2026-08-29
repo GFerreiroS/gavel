@@ -80,7 +80,7 @@ pub async fn page_handler<E: Ports>(
                 "Reagents",
                 "/wow/auctions",
                 &uri,
-                user.map(|u| u.username),
+                user.as_ref(),
                 csrf.0.clone(),
             ),
             reagents,

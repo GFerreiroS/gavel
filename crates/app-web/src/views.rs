@@ -8,6 +8,7 @@ use app_core::WebConfig;
 use app_core::item::ItemTooltip;
 use app_core::locale::{ALL_LOCALES, Locale};
 use app_core::market::Region;
+use app_core::model::User;
 use app_core::wow::Character;
 use axum::http::Uri;
 use cluster_core::{
@@ -454,18 +455,26 @@ impl Layout {
         title: impl Into<String>,
         current: &'static str,
         request_uri: &Uri,
-        username: Option<String>,
+        user: Option<&User>,
         csrf: String,
     ) -> Self {
-        const NAV: [(&str, &str); 7] = [
-            ("Dashboard", "/"),
+        // What the app is for. Everyone sees these.
+        const NAV: [(&str, &str); 3] = [
             ("Auction House", "/wow/auctions"),
             ("WoW", "/wow"),
+            ("Account", "/account"),
+        ];
+        // How the app is running. Only an administrator has any use for them,
+        // and a nav full of pages most visitors cannot open is a worse
+        // greeting than a short one.
+        const ADMIN_NAV: [(&str, &str); 5] = [
+            ("Dashboard", "/"),
             ("Cluster", "/cluster"),
             ("Nodes", "/nodes"),
             ("Jobs", "/jobs"),
-            ("Account", "/account"),
+            ("Collection", "/admin"),
         ];
+        let is_admin = user.is_some_and(|u| u.is_admin);
         let title = title.into();
         Self {
             lang: locale.bcp47(),
@@ -487,14 +496,15 @@ impl Layout {
             language_label: locale.label(),
             nav: NAV
                 .iter()
+                .chain(if is_admin { &ADMIN_NAV[..] } else { &[] })
                 .map(|(label, href)| NavItem {
                     label,
                     href,
                     active: *href == current,
                 })
                 .collect(),
-            signed_in: username.is_some(),
-            username: username.unwrap_or_default(),
+            signed_in: user.is_some(),
+            username: user.map(|u| u.username.clone()).unwrap_or_default(),
             fallback_poll_ms: config.poll_interval_ms * 10,
             csrf,
             debug_controls: config.debug_controls,

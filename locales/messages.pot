@@ -5,7 +5,7 @@
 # renders as English rather than as a missing key.
 msgid ""
 msgstr ""
-"Project-Id-Version: wow-auction-tracker 0ddc361-dirty\n"
+"Project-Id-Version: wow-auction-tracker 0c8c3d2-dirty\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -126,7 +126,7 @@ msgstr ""
 msgid "Battle.net credentials are not configured, so no prices are being collected. Set BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET and restart."
 msgstr ""
 
-#: crates/app-web/templates/account.html:30
+#: crates/app-web/templates/account.html:22
 msgid "Battle.net linking is not implemented in V0. The architecture is in place (see {}); the real OAuth flow will be written against the current official documentation."
 msgstr ""
 
@@ -191,10 +191,6 @@ msgstr ""
 msgid "Chest"
 msgstr ""
 
-#: crates/app-web/templates/account.html:17
-msgid "Choose what this instance follows: which categories, and which of the 184 connected realms."
-msgstr ""
-
 #: crates/app-web/templates/partials/character.html:14
 msgid "Class"
 msgstr ""
@@ -217,13 +213,8 @@ msgstr ""
 msgid "Collected. Click to stop."
 msgstr ""
 
-#: crates/app-web/templates/account.html:16
 #: crates/app-web/templates/admin.html:3
 msgid "Collection"
-msgstr ""
-
-#: crates/app-web/templates/account.html:18
-msgid "Collection settings"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
@@ -251,7 +242,7 @@ msgstr ""
 msgid "Crafting reagents"
 msgstr ""
 
-#: crates/app-web/templates/account.html:52
+#: crates/app-web/templates/account.html:44
 msgid "Create account"
 msgstr ""
 
@@ -560,7 +551,7 @@ msgstr ""
 msgid "Legs"
 msgstr ""
 
-#: crates/app-web/templates/account.html:23
+#: crates/app-web/templates/account.html:15
 msgid "Linked accounts"
 msgstr ""
 
@@ -646,7 +637,7 @@ msgstr ""
 msgid "No jobs yet. Submit one above."
 msgstr ""
 
-#: crates/app-web/templates/account.html:25
+#: crates/app-web/templates/account.html:17
 msgid "No linked accounts."
 msgstr ""
 
@@ -733,8 +724,8 @@ msgstr ""
 msgid "Open"
 msgstr ""
 
-#: crates/app-web/templates/account.html:41
-#: crates/app-web/templates/account.html:51
+#: crates/app-web/templates/account.html:33
+#: crates/app-web/templates/account.html:43
 msgid "Password"
 msgstr ""
 
@@ -859,7 +850,7 @@ msgstr ""
 msgid "Region-wide market"
 msgstr ""
 
-#: crates/app-web/templates/account.html:47
+#: crates/app-web/templates/account.html:39
 msgid "Register"
 msgstr ""
 
@@ -906,8 +897,8 @@ msgstr ""
 msgid "Showing {} alone. Prices are the cheapest listing there."
 msgstr ""
 
-#: crates/app-web/templates/account.html:37
-#: crates/app-web/templates/account.html:42
+#: crates/app-web/templates/account.html:29
+#: crates/app-web/templates/account.html:34
 #: crates/app-web/templates/base.html:57
 msgid "Sign in"
 msgstr ""
@@ -1063,8 +1054,8 @@ msgstr ""
 msgid "Units listed over time"
 msgstr ""
 
-#: crates/app-web/templates/account.html:40
-#: crates/app-web/templates/account.html:50
+#: crates/app-web/templates/account.html:32
+#: crates/app-web/templates/account.html:42
 msgid "Username"
 msgstr ""
 

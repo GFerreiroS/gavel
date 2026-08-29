@@ -85,7 +85,7 @@ pub async fn page_handler<E: Ports>(
                 "Collection",
                 "/admin",
                 &uri,
-                Some(user.username),
+                Some(&user),
                 csrf.0.clone(),
             ),
             admin,

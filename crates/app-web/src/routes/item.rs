@@ -57,7 +57,7 @@ pub async fn detail<E: Ports>(
                 &detail.name,
                 "/wow/auctions",
                 &uri,
-                user.map(|u| u.username),
+                user.as_ref(),
                 csrf.0.clone(),
             ),
             item: detail,

@@ -49,18 +49,47 @@ pub fn router<E: Ports>(env: E) -> Router {
         Router::new()
     };
 
-    Router::new()
-        // pages
+    // How the app is *running*: the cluster, its nodes, the jobs on it, the
+    // request metrics, and what the tracker collects. Operations, not the
+    // product -- somebody came for auction-house prices and has no use for a
+    // node's heartbeat, and the deployment's health is not theirs to read.
+    //
+    // Gated by a layer rather than a check inside each handler: eleven
+    // handlers each remembering to ask is eleven chances to forget, and the
+    // one that forgets is the one that leaks.
+    let operations = Router::new()
         .route("/", get(pages::dashboard::<E>))
         .route("/cluster", get(pages::cluster::<E>))
         .route("/nodes", get(pages::nodes::<E>))
         .route("/jobs", get(pages::jobs::<E>).post(jobs::submit::<E>))
         .route("/jobs/{id}", get(pages::job_detail::<E>))
-        .route("/account", get(pages::account::<E>))
         .route(
             "/admin",
             get(admin::page_handler::<E>).post(admin::toggle::<E>),
         )
+        .route("/nodes/{id}/roles", post(cluster::set_role::<E>))
+        // The fragments behind those pages, which would otherwise answer the
+        // same questions to anyone who asked them directly.
+        .route("/partials/stats", get(partials::stats::<E>))
+        .route("/partials/nodes", get(partials::nodes::<E>))
+        .route("/partials/events", get(partials::events::<E>))
+        .route("/partials/metrics", get(partials::metrics::<E>))
+        .route("/partials/jobs", get(partials::jobs::<E>))
+        .route("/partials/jobs/{id}", get(partials::job_detail::<E>))
+        // JSON for scripts; the browser uses the fragments above.
+        .route("/api/cluster", get(pages::snapshot_json::<E>))
+        .route("/api/metrics", get(pages::metrics_json::<E>))
+        .merge(debug_routes)
+        .route_layer(axum::middleware::from_fn_with_state(
+            env.clone(),
+            crate::session::admin_only::<E>,
+        ));
+
+    Router::new()
+        .merge(operations)
+        // The product: what the auction house costs, and what the game's API
+        // says about a character.
+        .route("/account", get(pages::account::<E>))
         .route("/wow", get(pages::wow::<E>))
         .route("/wow/auctions", get(market::index::<E>))
         .route("/wow/consumables", get(market::page_handler::<E>))
@@ -84,10 +113,6 @@ pub fn router<E: Ports>(env: E) -> Router {
         .route("/wow/item/{item_id}", get(item::detail::<E>))
         .route("/wow/item/{item_id}/tooltip", get(tooltip::tooltip::<E>))
         // HTMX fragments
-        .route("/partials/stats", get(partials::stats::<E>))
-        .route("/partials/nodes", get(partials::nodes::<E>))
-        .route("/partials/events", get(partials::events::<E>))
-        .route("/partials/metrics", get(partials::metrics::<E>))
         .route("/partials/consumables", get(market::fragment::<E>))
         .route("/partials/reagents", get(reagents::fragment::<E>))
         .route(
@@ -97,24 +122,16 @@ pub fn router<E: Ports>(env: E) -> Router {
         .route("/partials/gems", get(enhancements::gems_fragment::<E>))
         .route("/partials/gear", get(gear::fragment::<E>))
         .route("/partials/recipes", get(gear::recipes_fragment::<E>))
-        .route("/partials/jobs", get(partials::jobs::<E>))
-        .route("/partials/jobs/{id}", get(partials::job_detail::<E>))
         .route("/wow/character", get(wow::character::<E>))
-        // JSON is for scripts and future non-browser clients; the browser
-        // uses the HTML fragments above.
-        .route("/api/cluster", get(pages::snapshot_json::<E>))
-        .route("/api/metrics", get(pages::metrics_json::<E>))
         // Live updates. The fragments above keep a slow poll as a fallback.
         .route("/events/stream", get(stream::events::<E>))
         // Container/readiness probe. No port call and therefore no database
         // dependency: it only proves the HTTP process can answer.
         .route("/healthz", get(healthz))
         // actions
-        .route("/nodes/{id}/roles", post(cluster::set_role::<E>))
         .route("/account/register", post(account::register::<E>))
         .route("/account/login", post(account::login::<E>))
         .route("/account/logout", post(account::logout::<E>))
-        .merge(debug_routes)
         // assets
         .route("/static/pico.css", get(assets::pico))
         .route("/static/style.css", get(assets::style))

@@ -4,10 +4,14 @@
 //! is fixed.
 
 use app_core::auth::{AuthService, SESSION_COOKIE, SESSION_TTL_MS};
+use app_core::error::AppError;
 use app_core::model::User;
 use app_core::repo::Store;
 use app_core::{Ports, WebConfig};
+use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, header};
+use axum::middleware::Next;
+use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::error::WebResult;
 
@@ -32,6 +36,33 @@ pub async fn current_user<E: Ports>(env: &E, headers: &HeaderMap) -> WebResult<O
     let store = env.store();
     let auth = AuthService::new(store.users(), store.sessions(), env.hasher(), env.tokens());
     Ok(auth.authenticate(&token, env.now()).await?)
+}
+
+/// Refuse anything but an administrator.
+///
+/// **Not found, not forbidden.** A 403 confirms the page exists to whoever
+/// asked, and these pages describe how the deployment is doing; a visitor who
+/// was guessing learns nothing from a 404.
+///
+/// The one exception is `/`, which everybody visits: rather than a 404 on the
+/// front door, a non-admin is sent to the auction house, which is what they
+/// came for.
+pub async fn admin_only<E: Ports>(State(env): State<E>, request: Request, next: Next) -> Response {
+    let admin = match current_user(&env, request.headers()).await {
+        Ok(user) => user.is_some_and(|u| u.is_admin),
+        // A store that cannot answer is not an authorisation to proceed.
+        Err(e) => {
+            tracing::warn!(error = ?e, "could not resolve the session; refusing admin access");
+            false
+        }
+    };
+    if admin {
+        return next.run(request).await;
+    }
+    if request.uri().path() == "/" {
+        return Redirect::to("/wow/auctions").into_response();
+    }
+    crate::error::WebError::from(AppError::NotFound).into_response()
 }
 
 pub fn session_cookie(token: &str, config: &WebConfig) -> HeaderValue {

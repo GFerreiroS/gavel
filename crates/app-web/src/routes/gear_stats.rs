@@ -202,7 +202,7 @@ async fn render<E: Ports>(
                 title,
                 "/wow/auctions",
                 &uri,
-                user.map(|u| u.username),
+                user.as_ref(),
                 csrf.0.clone(),
             ),
             stats,
