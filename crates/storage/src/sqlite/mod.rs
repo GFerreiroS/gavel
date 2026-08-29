@@ -8,6 +8,7 @@ mod kv;
 mod prices;
 mod realm_prices;
 mod sessions;
+mod settings;
 mod users;
 
 use std::path::{Path, PathBuf};
@@ -26,6 +27,7 @@ pub use kv::SqliteKv;
 pub use prices::SqlitePrices;
 pub use realm_prices::SqliteRealmPrices;
 pub use sessions::SqliteSessions;
+pub use settings::SqliteSettings;
 pub use users::SqliteUsers;
 
 /// Translate a backend error without letting SQLx types escape the crate.
@@ -106,6 +108,7 @@ pub struct SqliteStore {
     kv: SqliteKv,
     prices: SqlitePrices,
     realm_prices: SqliteRealmPrices,
+    settings: SqliteSettings,
 }
 
 impl SqliteStore {
@@ -171,6 +174,7 @@ impl SqliteStore {
             kv: SqliteKv::new(pool.clone()),
             prices: SqlitePrices::new(pool.clone()),
             realm_prices: SqliteRealmPrices::new(pool.clone()),
+            settings: SqliteSettings::new(pool.clone()),
             pool,
         })
     }
@@ -197,6 +201,7 @@ impl Store for SqliteStore {
     type Kv = SqliteKv;
     type Prices = SqlitePrices;
     type RealmPrices = SqliteRealmPrices;
+    type Settings = SqliteSettings;
 
     fn users(&self) -> &Self::Users {
         &self.users
@@ -221,5 +226,8 @@ impl Store for SqliteStore {
     }
     fn realm_prices(&self) -> &Self::RealmPrices {
         &self.realm_prices
+    }
+    fn settings(&self) -> &Self::Settings {
+        &self.settings
     }
 }

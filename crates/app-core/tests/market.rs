@@ -458,6 +458,10 @@ impl PriceRepository for FakePrices {
             .collect())
     }
 
+    async fn downsample_before(&self, _before: Millis) -> RepoResult<u64> {
+        Ok(0)
+    }
+
     async fn prune_before(&self, _before: Millis) -> RepoResult<u64> {
         Ok(0)
     }

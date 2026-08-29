@@ -11,8 +11,8 @@ use cluster_core::Millis;
 
 use crate::error::AppResult;
 use crate::market::{
-    Alert, AlertRule, Catalog, CommodityProvider, Copper, ItemId, Listing, PriceSample, Region,
-    Snapshot, alerts, summarise,
+    Alert, AlertRule, Catalog, CommodityProvider, Copper, ItemId, ItemKind, Listing, PriceSample,
+    Region, Snapshot, alerts, summarise,
 };
 use crate::repo::PriceRepository;
 
@@ -60,6 +60,13 @@ pub struct Collector<'a, P, R, S> {
     sink: &'a S,
     catalog: &'a Catalog,
     rule: AlertRule,
+    /// Categories an administrator has switched off.
+    ///
+    /// This changes what is *kept*, not what is fetched: the commodity
+    /// snapshot is one request for the whole region however few items are
+    /// wanted from it. Turning a category off therefore saves storage and
+    /// keeps the page honest, and costs the upstream nothing either way.
+    skip: &'a [ItemKind],
 }
 
 impl<'a, P, R, S> Collector<'a, P, R, S>
@@ -75,17 +82,35 @@ where
         catalog: &'a Catalog,
         rule: AlertRule,
     ) -> Self {
+        Self::with_skipped(provider, prices, sink, catalog, rule, &[])
+    }
+
+    pub fn with_skipped(
+        provider: &'a P,
+        prices: &'a R,
+        sink: &'a S,
+        catalog: &'a Catalog,
+        rule: AlertRule,
+        skip: &'a [ItemKind],
+    ) -> Self {
         Self {
             provider,
             prices,
             sink,
             catalog,
             rule,
+            skip,
         }
     }
 
     pub async fn collect(&self, region: Region, now: Millis) -> AppResult<Report> {
-        let tracked = self.catalog.tracked_ids();
+        let tracked: Vec<ItemId> = self
+            .catalog
+            .items
+            .iter()
+            .filter(|i| i.kind.is_commodity() && !self.skip.contains(&i.kind))
+            .flat_map(|i| i.item_ids())
+            .collect();
         let since = self.prices.last_observed(region).await?;
 
         let snapshot = self.provider.commodities(region, &tracked, since).await?;

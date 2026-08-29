@@ -111,14 +111,17 @@ pub struct Cli {
     pub market_regions: Vec<String>,
 
     /// Connected realms to collect gear prices from, as `region:id`, comma
-    /// separated -- for example `eu:1403,us:60`. Gear is not a commodity: it
-    /// is auctioned per realm, so each one is a separate fetch of roughly
-    /// 20 MB. The default is three FULL-population realms in each of EU and
-    /// US; an empty value collects no gear at all.
+    /// separated -- for example `eu:1403,us:60`.
+    ///
+    /// Empty, the default, means **every** connected realm in every collected
+    /// region: 184 of them across EU, US, KR and TW. Gear is not a commodity,
+    /// so each realm is its own ~20 MB fetch; they run as many at a time as
+    /// the cluster has nodes. Which realms are actually collected can then be
+    /// changed at runtime from the admin page -- this flag only seeds it.
     #[arg(
         long,
         env = "APP_MARKET_REALMS",
-        default_value = "eu:1403,eu:1084,eu:1329,us:60,us:57,us:76",
+        default_value = "",
         value_delimiter = ','
     )]
     pub market_realms: Vec<String>,
@@ -128,9 +131,16 @@ pub struct Cli {
     #[arg(long, env = "APP_MARKET_INTERVAL_MIN", default_value_t = 30)]
     pub market_interval_minutes: u64,
 
-    /// How long price history is kept, in days.
-    #[arg(long, env = "APP_MARKET_RETAIN_DAYS", default_value_t = 90)]
+    /// How long price history is kept, in days. Zero keeps it forever, which
+    /// is what the archive is for -- growth is handled by downsampling.
+    #[arg(long, env = "APP_MARKET_RETAIN_DAYS", default_value_t = 0)]
     pub market_retain_days: u64,
+
+    /// How long samples stay at full resolution, in days. Older days are
+    /// collapsed to one row each: the archive survives, its resolution does
+    /// not. Zero disables it.
+    #[arg(long, env = "APP_MARKET_DOWNSAMPLE_DAYS", default_value_t = 14)]
+    pub market_downsample_days: u64,
 
     /// Tracing filter, e.g. `info`, `debug`, `server=debug,cluster_local=trace`.
     #[arg(

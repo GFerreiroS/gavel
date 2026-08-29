@@ -440,6 +440,66 @@ async fn price_history_round_trips_and_deduplicates() {
     );
 }
 
+/// A day of snapshots becomes one row, and the archive keeps saying what the
+/// day was worth. This is what lets retention stay at "keep forever" now the
+/// catalogue is hundreds of items rather than twenty-six.
+#[tokio::test]
+async fn old_history_is_downsampled_to_one_row_a_day() {
+    use app_core::market::{Copper, ItemId, PriceSample, Region};
+    use app_core::repo::PriceRepository;
+
+    const DAY: u64 = 86_400_000;
+    let store = store().await;
+    let prices = store.prices();
+    let item = ItemId(212283);
+
+    let sample = |at: u64, p05: u64, quantity: u64| PriceSample {
+        item,
+        region: Region::Eu,
+        observed_at: Millis(at),
+        min_unit_price: Copper(p05 - 10),
+        p05_unit_price: Copper(p05),
+        median_unit_price: Copper(p05 + 50),
+        quantity,
+        listings: 12,
+    };
+
+    // Three snapshots on day 10, one on day 11.
+    prices
+        .record_samples(&[
+            sample(10 * DAY, 900, 400),
+            sample(10 * DAY + 3_600_000, 700, 600),
+            sample(10 * DAY + 7_200_000, 800, 500),
+            sample(11 * DAY + 3_600_000, 1_000, 100),
+        ])
+        .await
+        .unwrap();
+
+    // Collapse everything before day 11.
+    assert_eq!(
+        prices.downsample_before(Millis(11 * DAY)).await.unwrap(),
+        2,
+        "two of day 10's three rows are folded away"
+    );
+
+    let history = prices.history(item, Region::Eu, Millis(0)).await.unwrap();
+    assert_eq!(history.len(), 2, "one row for day 10, and day 11 untouched");
+
+    let day = &history[0];
+    assert_eq!(day.observed_at, Millis(10 * DAY), "sits on midnight");
+    assert_eq!(
+        day.min_unit_price,
+        Copper(690),
+        "the day's cheapest survives as a true minimum"
+    );
+    assert_eq!(day.p05_unit_price, Copper(800), "the day's average price");
+    assert_eq!(day.quantity, 500, "the day's average depth");
+    assert_eq!(history[1].observed_at, Millis(11 * DAY + 3_600_000));
+
+    // Running it again finds nothing left to do.
+    assert_eq!(prices.downsample_before(Millis(11 * DAY)).await.unwrap(), 0);
+}
+
 #[tokio::test]
 async fn alerts_round_trip_and_support_the_cooldown() {
     use app_core::market::{Alert, AlertSeverity, Copper, ItemId, Region};

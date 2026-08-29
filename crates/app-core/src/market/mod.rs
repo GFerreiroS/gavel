@@ -242,11 +242,19 @@ pub struct MarketConfig {
     /// which is the default: the point of this feature is the archive, and a
     /// retention window would quietly delete the oldest expansion first.
     ///
-    /// Volume is not a reason to prune here -- 26 items at hourly resolution
-    /// is roughly 230k rows a year, which SQLite handles comfortably. If the
-    /// catalogue grows substantially, downsample old samples rather than
-    /// silently discarding whole expansion histories.
+    /// Volume is handled by [`Self::downsample_after_ms`] instead, which keeps
+    /// the archive and drops only its resolution.
     pub retain_ms: u64,
+    /// How long samples stay at full resolution before each day of them is
+    /// collapsed into a single row. Zero disables it.
+    ///
+    /// This is the answer to growth, rather than pruning. The catalogue is no
+    /// longer the twenty-six items the retention note above was written for:
+    /// six hundred commodity ids across four regions, plus gear and recipes on
+    /// every connected realm, is millions of rows a year at hourly
+    /// resolution. A day-old price is worth knowing; the fact that it was
+    /// collected at 14:00 rather than 15:00 is not.
+    pub downsample_after_ms: u64,
 }
 
 impl Default for MarketConfig {
@@ -257,6 +265,7 @@ impl Default for MarketConfig {
             rule: AlertRule::default(),
             collect_interval_ms: 30 * 60 * 1000,
             retain_ms: 0,
+            downsample_after_ms: 14 * 24 * 60 * 60 * 1000,
         }
     }
 }

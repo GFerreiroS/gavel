@@ -50,6 +50,9 @@ pub struct Realm {
     pub region: Region,
     /// "Dentarg, Tarren Mill" -- a connected realm can be several.
     pub name: String,
+    /// Whether prices are collected from it. A realm switched off keeps every
+    /// sample it already has and simply stops gaining more.
+    pub enabled: bool,
 }
 
 /// A single gear auction.
@@ -185,11 +188,11 @@ pub trait RealmAuctionProvider: Send + Sync + 'static {
         if_modified_since: Option<Millis>,
     ) -> impl std::future::Future<Output = crate::AppResult<RealmSnapshot>> + Send;
 
-    /// Name the given connected realms.
+    /// Name connected realms.
     ///
-    /// Only the configured ones: a region has ninety-odd connected realms and
-    /// naming them all costs a request each, at every startup, to answer a
-    /// question about six of them.
+    /// An empty `wanted` means *every* realm in the region, discovered from
+    /// the index. Naming them costs one small request each, at startup only,
+    /// and the names are stored so a later start can skip it.
     fn realms(
         &self,
         region: Region,

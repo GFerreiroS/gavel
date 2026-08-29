@@ -5,7 +5,7 @@
 # renders as English rather than as a missing key.
 msgid ""
 msgstr ""
-"Project-Id-Version: wow-auction-tracker 3b2a9ea-dirty\n"
+"Project-Id-Version: wow-auction-tracker 7d19431-dirty\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -28,6 +28,10 @@ msgstr ""
 
 #: crates/app-web/src/i18n.rs
 msgid "7d"
+msgstr ""
+
+#: crates/app-web/templates/admin.html:24
+msgid "A commodity category is one request per region per cycle. A per-realm one is a request per realm, so it is the expensive kind."
 msgstr ""
 
 #: crates/app-web/templates/gear_stats.html:85
@@ -61,7 +65,7 @@ msgid "All realms"
 msgstr ""
 
 #: crates/app-web/templates/auctions.html:56
-#: crates/app-web/templates/gear.html:47
+#: crates/app-web/templates/gear.html:63
 #: crates/app-web/templates/gear_stats.html:53
 msgid "Apply"
 msgstr ""
@@ -122,7 +126,7 @@ msgstr ""
 msgid "Battle.net credentials are not configured, so no prices are being collected. Set BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET and restart."
 msgstr ""
 
-#: crates/app-web/templates/account.html:22
+#: crates/app-web/templates/account.html:30
 msgid "Battle.net linking is not implemented in V0. The architecture is in place (see {}); the real OAuth flow will be written against the current official documentation."
 msgstr ""
 
@@ -154,6 +158,10 @@ msgstr ""
 msgid "Caster — caster DPS and healers"
 msgstr ""
 
+#: crates/app-web/templates/admin.html:22
+msgid "Categories"
+msgstr ""
+
 #: crates/app-web/templates/item.html:65
 msgid "Change"
 msgstr ""
@@ -183,6 +191,10 @@ msgstr ""
 msgid "Chest"
 msgstr ""
 
+#: crates/app-web/templates/account.html:17
+msgid "Choose what this instance follows: which categories, and which of the 184 connected realms."
+msgstr ""
+
 #: crates/app-web/templates/partials/character.html:14
 msgid "Class"
 msgstr ""
@@ -199,6 +211,15 @@ msgstr ""
 #: crates/app-web/templates/cluster.html:3
 #: crates/app-web/templates/partials/stats.html:3
 msgid "Cluster"
+msgstr ""
+
+#: crates/app-web/templates/account.html:16
+#: crates/app-web/templates/admin.html:3
+msgid "Collection"
+msgstr ""
+
+#: crates/app-web/templates/account.html:18
+msgid "Collection settings"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
@@ -226,7 +247,7 @@ msgstr ""
 msgid "Crafting reagents"
 msgstr ""
 
-#: crates/app-web/templates/account.html:44
+#: crates/app-web/templates/account.html:52
 msgid "Create account"
 msgstr ""
 
@@ -252,7 +273,7 @@ msgstr ""
 msgid "Duration"
 msgstr ""
 
-#: crates/app-web/templates/gear.html:53
+#: crates/app-web/templates/gear.html:69
 msgid "Each region summarises its own realms: the headline is the median of what a realm's cheapest copy costs, with the cheapest and dearest realm named. Regions are never mixed -- you cannot buy across one."
 msgstr ""
 
@@ -457,6 +478,7 @@ msgid "Item level"
 msgstr ""
 
 #: crates/app-web/templates/enhancements.html:28
+#: crates/app-web/templates/gear.html:55
 #: crates/app-web/templates/reagents.html:33
 msgid "Item name"
 msgstr ""
@@ -534,7 +556,7 @@ msgstr ""
 msgid "Legs"
 msgstr ""
 
-#: crates/app-web/templates/account.html:15
+#: crates/app-web/templates/account.html:23
 msgid "Linked accounts"
 msgstr ""
 
@@ -620,7 +642,7 @@ msgstr ""
 msgid "No jobs yet. Submit one above."
 msgstr ""
 
-#: crates/app-web/templates/account.html:17
+#: crates/app-web/templates/account.html:25
 msgid "No linked accounts."
 msgstr ""
 
@@ -673,6 +695,7 @@ msgid "Not listed."
 msgstr ""
 
 #: crates/app-web/templates/partials/enhancements.html:15
+#: crates/app-web/templates/partials/gear.html:11
 #: crates/app-web/templates/partials/reagents.html:15
 msgid "Nothing matches that search."
 msgstr ""
@@ -702,8 +725,8 @@ msgstr ""
 msgid "Open"
 msgstr ""
 
-#: crates/app-web/templates/account.html:33
-#: crates/app-web/templates/account.html:43
+#: crates/app-web/templates/account.html:41
+#: crates/app-web/templates/account.html:51
 msgid "Password"
 msgstr ""
 
@@ -793,6 +816,10 @@ msgstr ""
 msgid "Realm"
 msgstr ""
 
+#: crates/app-web/templates/admin.html:10
+msgid "Realms collected"
+msgstr ""
+
 #: crates/app-web/templates/partials/job_detail.html:39
 msgid "Reason"
 msgstr ""
@@ -824,7 +851,7 @@ msgstr ""
 msgid "Region-wide market"
 msgstr ""
 
-#: crates/app-web/templates/account.html:39
+#: crates/app-web/templates/account.html:47
 msgid "Register"
 msgstr ""
 
@@ -841,6 +868,7 @@ msgid "Result"
 msgstr ""
 
 #: crates/app-web/templates/enhancements.html:24
+#: crates/app-web/templates/gear.html:53
 #: crates/app-web/templates/reagents.html:27
 #: crates/app-web/templates/wow.html:23
 msgid "Search"
@@ -866,12 +894,12 @@ msgstr ""
 msgid "Showing {} alone."
 msgstr ""
 
-#: crates/app-web/templates/gear.html:51
+#: crates/app-web/templates/gear.html:67
 msgid "Showing {} alone. Prices are the cheapest listing there."
 msgstr ""
 
-#: crates/app-web/templates/account.html:29
-#: crates/app-web/templates/account.html:34
+#: crates/app-web/templates/account.html:37
+#: crates/app-web/templates/account.html:42
 #: crates/app-web/templates/base.html:57
 msgid "Sign in"
 msgstr ""
@@ -1023,8 +1051,8 @@ msgstr ""
 msgid "Units listed over time"
 msgstr ""
 
-#: crates/app-web/templates/account.html:32
-#: crates/app-web/templates/account.html:42
+#: crates/app-web/templates/account.html:40
+#: crates/app-web/templates/account.html:50
 msgid "Username"
 msgstr ""
 
@@ -1062,6 +1090,10 @@ msgstr ""
 
 #: crates/app-web/templates/gear_stats.html:77
 msgid "What it has cost"
+msgstr ""
+
+#: crates/app-web/templates/admin.html:5
+msgid "What this instance follows. Turning something off stops it being collected; nothing already recorded is ever deleted, so switching a market off and on again costs only the gap."
 msgstr ""
 
 #: crates/app-web/templates/partials/consumables.html:33
@@ -1297,6 +1329,10 @@ msgstr ""
 
 #: crates/app-web/templates/partials/nodes.html:50
 msgid "pause heartbeat"
+msgstr ""
+
+#: crates/app-web/templates/admin.html:36
+msgid "per realm"
 msgstr ""
 
 #: crates/app-web/templates/consumables.html:12

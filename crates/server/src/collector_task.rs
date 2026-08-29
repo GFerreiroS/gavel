@@ -12,9 +12,13 @@ use std::time::Duration;
 use app_core::Ports;
 use app_core::item::ItemDetailProvider;
 use app_core::locale::{ALL_LOCALES, DEFAULT_LOCALE};
-use app_core::market::{Collector, Outcome, RealmAuctionProvider, RealmSnapshot, summarise_realm};
-use app_core::repo::{PriceRepository, RealmPriceRepository, Store};
+use app_core::market::{
+    Collector, ItemId, ItemKind as ItemKindT, Outcome as CollectOutcome, Realm,
+    RealmAuctionProvider, RealmSnapshot, summarise_realm,
+};
+use app_core::repo::{PriceRepository, RealmPriceRepository, SettingsRepository, Store};
 use app_core::service::{Freshness, ItemTooltipService};
+use cluster_core::ClusterControl;
 use cluster_core::Millis;
 
 pub fn spawn<E: Ports>(env: E) -> tokio::task::JoinHandle<()> {
@@ -50,6 +54,7 @@ async fn run<E: Ports>(env: E) {
         collect_once(&env).await;
         collect_realms(&env).await;
         warm_tooltips(&env).await;
+        downsample(&env).await;
         prune(&env).await;
     }
 }
@@ -60,25 +65,34 @@ async fn collect_once<E: Ports>(env: &E) {
     let Some(catalog) = env.active_catalog() else {
         return;
     };
-    let collector = Collector::new(
+    // Categories an administrator has switched off are not stored. The
+    // snapshot is one request for the region either way, so this is about
+    // what the pages show, not about what the upstream is asked for.
+    let skip: Vec<ItemKindT> = disabled_kinds(env)
+        .await
+        .iter()
+        .filter_map(|name| ItemKindT::ALL.into_iter().find(|k| k.as_str() == name))
+        .collect();
+    let collector = Collector::with_skipped(
         env.commodities(),
         env.store().prices(),
         env.alert_sink(),
         catalog,
         market.rule,
+        &skip,
     );
 
     for region in &market.regions {
         match collector.collect(*region, env.now()).await {
             Ok(report) => match report.outcome {
-                Outcome::NotModified => {
+                CollectOutcome::NotModified => {
                     tracing::debug!(region = %region, "commodity snapshot unchanged")
                 }
-                Outcome::AlreadyRecorded => {
+                CollectOutcome::AlreadyRecorded => {
                     tracing::debug!(region = %region, "commodity snapshot already stored")
                 }
-                Outcome::NoActiveCatalog => {}
-                Outcome::Collected {
+                CollectOutcome::NoActiveCatalog => {}
+                CollectOutcome::Collected {
                     samples,
                     written,
                     alerts,
@@ -97,87 +111,178 @@ async fn collect_once<E: Ports>(env: &E) {
     }
 }
 
-/// Gear prices, one connected realm at a time.
+/// Which categories an administrator has switched off.
 ///
-/// A plain loop rather than cluster work, at six realms. It is deliberately
-/// shaped so each realm is an independent unit -- its own timestamp, its own
-/// failure -- because the moment this covers every realm it becomes 175
-/// independent fetches, which is a job with one task per realm and exactly
-/// what the scheduler upstairs is for.
+/// Absent means on: a category added by a later release starts collected
+/// rather than being ignored because nobody had a row for it.
+async fn disabled_kinds<E: Ports>(env: &E) -> Vec<String> {
+    match env.store().settings().disabled().await {
+        Ok(names) => names,
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read collection settings; collecting everything");
+            Vec::new()
+        }
+    }
+}
+
+/// Gear prices, realm by realm, as many at a time as the cluster is wide.
+///
+/// One node collects them in sequence; five nodes collect five at a time. The
+/// fetching itself stays on this process, and that is a deliberate limit
+/// rather than an oversight: `cluster_core::workload::run_task` is documented
+/// as pure -- no async, no platform calls -- which is what makes "the same
+/// code runs in every worker" true, and a worker has neither Battle.net
+/// credentials nor a database. Handing a realm fetch to a remote worker means
+/// giving workers both, which is a change to the cluster's contract and not
+/// one to make in passing.
+///
+/// What the cluster does decide today is *how much* work is in flight, which
+/// is the part that makes 184 realms possible at all.
 async fn collect_realms<E: Ports>(env: &E) {
-    let market = env.market();
-    if market.realms.is_empty() || !env.realm_auctions().is_configured() {
+    if !env.realm_auctions().is_configured() {
         return;
     }
     let Some(catalog) = env.active_catalog() else {
         return;
     };
-    let wanted = catalog.realm_tracked_ids();
+    let disabled = disabled_kinds(env).await;
+    let wanted: Vec<ItemId> = catalog
+        .items
+        .iter()
+        .filter(|i| !i.kind.is_commodity() && !disabled.contains(&i.kind.as_str().to_string()))
+        .flat_map(|i| i.item_ids())
+        .collect();
     if wanted.is_empty() {
         return;
     }
 
-    let prices = env.store().realm_prices();
-    for (region, realm) in &market.realms {
-        // Per realm, because realms regenerate on their own schedules: one
-        // region-wide timestamp would re-fetch realms that had not moved and
-        // skip ones that had.
-        let since = match prices.last_observed(*region, *realm).await {
-            Ok(at) => at,
-            Err(e) => {
-                tracing::warn!(region = %region, realm = %realm, error = %e,
-                    "could not read the last realm snapshot; fetching in full");
-                None
-            }
-        };
+    // The store is the source of truth for which realms to collect, not the
+    // flag: the admin page changes it while the server runs.
+    let realms: Vec<Realm> = match env.store().realm_prices().realms().await {
+        Ok(realms) => realms.into_iter().filter(|r| r.enabled).collect(),
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the realm list");
+            return;
+        }
+    };
+    if realms.is_empty() {
+        return;
+    }
 
-        match env
-            .realm_auctions()
-            .auctions(*region, *realm, &wanted, since)
-            .await
-        {
-            Ok(RealmSnapshot::NotModified) => {
-                tracing::debug!(region = %region, realm = %realm, "realm snapshot unchanged")
+    let width = fan_out(env).await;
+    let started = std::time::Instant::now();
+    let mut queue = realms.into_iter();
+    let mut running = tokio::task::JoinSet::new();
+    let (mut collected, mut unchanged, mut failed) = (0u32, 0u32, 0u32);
+
+    loop {
+        // Top the set back up to the cluster's width, then wait for one to
+        // finish. A fixed-size window rather than a batch: a slow realm holds
+        // up one slot instead of the whole cycle.
+        while running.len() < width {
+            let Some(realm) = queue.next() else { break };
+            let env = env.clone();
+            let wanted = wanted.clone();
+            running.spawn(async move { collect_one_realm(&env, &realm, &wanted).await });
+        }
+        let Some(finished) = running.join_next().await else {
+            break;
+        };
+        match finished {
+            Ok(Outcome::Collected) => collected += 1,
+            Ok(Outcome::Unchanged) => unchanged += 1,
+            Ok(Outcome::Failed) => failed += 1,
+            // A panicking task must not take the cycle with it.
+            Err(e) => {
+                failed += 1;
+                tracing::warn!(error = %e, "a realm collection task panicked");
             }
-            Ok(RealmSnapshot::Fresh {
-                generated_at,
-                listings,
-            }) => {
-                let found = listings.len();
-                let samples = summarise_realm(listings, *region, *realm, generated_at);
-                match prices.record_samples(&samples).await {
-                    Ok(written) => tracing::info!(
-                        region = %region,
-                        realm = %realm,
-                        listings = found,
-                        variants = samples.len(),
-                        written,
-                        "collected gear prices"
-                    ),
-                    Err(e) => {
-                        tracing::warn!(region = %region, realm = %realm, error = %e,
-                            "storing gear prices failed")
-                    }
+        }
+    }
+
+    tracing::info!(
+        realms = collected + unchanged + failed,
+        collected,
+        unchanged,
+        failed,
+        in_flight = width,
+        seconds = started.elapsed().as_secs_f32(),
+        "gear collection cycle finished"
+    );
+}
+
+/// What one realm's collection did, for the cycle summary.
+enum Outcome {
+    Collected,
+    Unchanged,
+    Failed,
+}
+
+/// How many realms to have in flight: one per node in the cluster.
+///
+/// A single-node instance collects in sequence, which is the honest shape for
+/// one machine. Capped, because the far end is somebody else's API and the
+/// budget is shared with every other request this process makes.
+async fn fan_out<E: Ports>(env: &E) -> usize {
+    const CAP: usize = 16;
+    let nodes = env.cluster().snapshot().await.nodes_online;
+    (nodes as usize).clamp(1, CAP)
+}
+
+async fn collect_one_realm<E: Ports>(env: &E, realm: &Realm, wanted: &[ItemId]) -> Outcome {
+    let prices = env.store().realm_prices();
+    // Per realm, because realms regenerate on their own schedules: one
+    // region-wide timestamp would re-fetch realms that had not moved and skip
+    // ones that had.
+    let since = match prices.last_observed(realm.region, realm.id).await {
+        Ok(at) => at,
+        Err(e) => {
+            tracing::warn!(realm = %realm.name, error = %e,
+                "could not read the last realm snapshot; fetching in full");
+            None
+        }
+    };
+
+    match env
+        .realm_auctions()
+        .auctions(realm.region, realm.id, wanted, since)
+        .await
+    {
+        Ok(RealmSnapshot::NotModified) => Outcome::Unchanged,
+        Ok(RealmSnapshot::Fresh {
+            generated_at,
+            listings,
+        }) => {
+            let samples = summarise_realm(listings, realm.region, realm.id, generated_at);
+            match prices.record_samples(&samples).await {
+                Ok(written) => {
+                    tracing::debug!(realm = %realm.name, written, "collected gear prices");
+                    Outcome::Collected
+                }
+                Err(e) => {
+                    tracing::warn!(realm = %realm.name, error = %e, "storing gear prices failed");
+                    Outcome::Failed
                 }
             }
-            // One realm failing must not stop the others: they are separate
-            // markets and separate requests.
-            Err(e) => {
-                tracing::warn!(region = %region, realm = %realm, error = %e,
-                    "gear collection failed")
-            }
+        }
+        // One realm failing must not stop the others: they are separate
+        // markets and separate requests.
+        Err(e) => {
+            tracing::warn!(realm = %realm.name, error = %e, "gear collection failed");
+            Outcome::Failed
         }
     }
 }
 
-/// Learn the configured realms' names, once, at startup.
+/// Learn which realms exist, once, at startup.
 ///
-/// Stored rather than looked up per request so the UI can say "Draenor"
-/// without an upstream call, and so a realm dropped from the configuration
-/// keeps its history readable instead of showing a bare number.
+/// With no realms configured this discovers every connected realm in every
+/// collected region -- 184 of them across EU, US, KR and TW -- and records
+/// them. Recording never overrides `enabled`, so a realm switched off in the
+/// admin page stays off when discovery meets it again tomorrow.
 async fn name_realms<E: Ports>(env: &E) {
     let market = env.market();
-    if market.realms.is_empty() || !env.realm_auctions().is_configured() {
+    if !env.realm_auctions().is_configured() {
         return;
     }
     let prices = env.store().realm_prices();
@@ -188,25 +293,23 @@ async fn name_realms<E: Ports>(env: &E) {
             .filter(|(r, _)| r == region)
             .map(|(_, realm)| *realm)
             .collect();
-        if wanted.is_empty() {
+        // An explicit list is honoured; otherwise every realm in the region.
+        if !market.realms.is_empty() && wanted.is_empty() {
             continue;
         }
         match env.realm_auctions().realms(*region, &wanted).await {
             Ok(realms) => {
                 for realm in &realms {
                     if let Err(e) = prices.record_realm(realm).await {
-                        tracing::warn!(realm = %realm.id, error = %e, "could not store realm name");
+                        tracing::warn!(realm = %realm.name, error = %e,
+                            "could not store realm name");
                     }
                 }
-                tracing::info!(
-                    region = %region,
-                    realms = ?realms.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
-                    "gear realms configured"
-                );
+                tracing::info!(region = %region, realms = realms.len(), "gear realms known");
             }
             Err(e) => {
                 tracing::warn!(region = %region, error = %e,
-                    "could not name the configured realms; the UI will show ids")
+                    "could not list the region's realms; using whatever is already stored")
             }
         }
     }
@@ -280,6 +383,29 @@ async fn warm_tooltips<E: Ports>(env: &E) {
             languages = ALL_LOCALES.len(),
             "warmed item tooltips"
         );
+    }
+}
+
+/// Collapse old days into single rows.
+///
+/// Runs before pruning, and usually instead of it: keeping the archive at one
+/// row per day is what makes "keep forever" affordable now that the catalogue
+/// is hundreds of items across four regions and every connected realm.
+async fn downsample<E: Ports>(env: &E) {
+    let after = env.market().downsample_after_ms;
+    if after == 0 {
+        return;
+    }
+    let cutoff = Millis(env.now().get().saturating_sub(after));
+    match env.store().prices().downsample_before(cutoff).await {
+        Ok(0) => {}
+        Ok(rows) => tracing::info!(rows, "downsampled commodity history to daily"),
+        Err(e) => tracing::warn!(error = %e, "could not downsample commodity history"),
+    }
+    match env.store().realm_prices().downsample_before(cutoff).await {
+        Ok(0) => {}
+        Ok(rows) => tracing::info!(rows, "downsampled gear history to daily"),
+        Err(e) => tracing::warn!(error = %e, "could not downsample gear history"),
     }
 }
 

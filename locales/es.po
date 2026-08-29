@@ -31,11 +31,19 @@ msgstr "5xx"
 msgid "7d"
 msgstr "7 d"
 
-#: crates/app-web/templates/gear_stats.html:80
+#: crates/app-web/templates/admin.html:24
+msgid ""
+"A commodity category is one request per region per cycle. A per-realm one is "
+"a request per realm, so it is the expensive kind."
+msgstr "Una categoría de mercancías es una petición por región y ciclo. Una por reino es una petición por reino, así que es la cara."
+
+#: crates/app-web/templates/gear_stats.html:85
 msgid ""
 "A price with two listings behind it is a different fact from the same price "
 "with forty."
-msgstr "Un precio con dos subastas detrás no dice lo mismo que el mismo precio con cuarenta."
+msgstr ""
+"Un precio con dos subastas detrás no dice lo mismo que el mismo precio con "
+"cuarenta."
 
 #: crates/app-web/src/i18n.rs crates/app-web/templates/account.html:3
 msgid "Account"
@@ -58,13 +66,13 @@ msgid "All patches"
 msgstr "Todos los parches"
 
 #: crates/app-web/templates/gear.html:41
-#: crates/app-web/templates/gear_stats.html:42
+#: crates/app-web/templates/gear_stats.html:47
 msgid "All realms"
 msgstr "Todos los reinos"
 
 #: crates/app-web/templates/auctions.html:56
-#: crates/app-web/templates/gear.html:47
-#: crates/app-web/templates/gear_stats.html:48
+#: crates/app-web/templates/gear.html:63
+#: crates/app-web/templates/gear_stats.html:53
 msgid "Apply"
 msgstr "Aplicar"
 
@@ -137,7 +145,7 @@ msgstr ""
 "Las credenciales de Battle.net no están configuradas, así que no se recogen "
 "precios. Define BLIZZARD_CLIENT_ID y BLIZZARD_CLIENT_SECRET y reinicia."
 
-#: crates/app-web/templates/account.html:22
+#: crates/app-web/templates/account.html:30
 msgid ""
 "Battle.net linking is not implemented in V0. The architecture is in place "
 "(see {}); the real OAuth flow will be written against the current official "
@@ -147,7 +155,7 @@ msgstr ""
 "ya existe (véase {}); el flujo OAuth real se escribirá siguiendo la "
 "documentación oficial vigente."
 
-#: crates/app-web/src/i18n.rs crates/app-web/templates/gear_stats.html:7
+#: crates/app-web/src/i18n.rs
 msgid "Bind-on-equip gear"
 msgstr "Equipo de vinculación al equipar"
 
@@ -155,7 +163,7 @@ msgstr "Equipo de vinculación al equipar"
 msgid "Blacksmithing"
 msgstr "Herrería"
 
-#: crates/app-web/templates/gear_stats.html:91
+#: crates/app-web/templates/gear_stats.html:96
 msgid "Bonus"
 msgstr "Bonus"
 
@@ -179,6 +187,10 @@ msgstr ""
 msgid "Caster — caster DPS and healers"
 msgstr "Lanzadores — DPS a distancia y sanadores"
 
+#: crates/app-web/templates/admin.html:22
+msgid "Categories"
+msgstr "Categorías"
+
 #: crates/app-web/templates/item.html:65
 msgid "Change"
 msgstr "Variación"
@@ -187,8 +199,8 @@ msgstr "Variación"
 msgid "Character"
 msgstr "Personaje"
 
-#: crates/app-web/templates/gear_stats.html:63
-#: crates/app-web/templates/partials/gear.html:54
+#: crates/app-web/templates/gear_stats.html:68
+#: crates/app-web/templates/partials/gear.html:66
 msgid "Cheapest"
 msgstr "Más barato"
 
@@ -200,13 +212,19 @@ msgstr "Más barato hacia las"
 msgid "Cheapest on"
 msgstr "Más barato el"
 
-#: crates/app-web/templates/gear_stats.html:65
+#: crates/app-web/templates/gear_stats.html:70
 msgid "Cheapest seen"
 msgstr "Más barato visto"
 
 #: crates/app-web/src/i18n.rs
 msgid "Chest"
 msgstr "Pecho"
+
+#: crates/app-web/templates/account.html:17
+msgid ""
+"Choose what this instance follows: which categories, and which of the 184 "
+"connected realms."
+msgstr "Elige lo que sigue esta instancia: qué categorías y cuáles de los 184 reinos conectados."
 
 #: crates/app-web/templates/partials/character.html:14
 msgid "Class"
@@ -225,6 +243,15 @@ msgstr "Capa"
 #: crates/app-web/templates/partials/stats.html:3
 msgid "Cluster"
 msgstr "Clúster"
+
+#: crates/app-web/templates/account.html:16
+#: crates/app-web/templates/admin.html:3
+msgid "Collection"
+msgstr "Recogida"
+
+#: crates/app-web/templates/account.html:18
+msgid "Collection settings"
+msgstr "Ajustes de recogida"
 
 #: crates/app-web/src/i18n.rs
 msgid "Combat potions"
@@ -250,7 +277,7 @@ msgstr "Coordinador"
 msgid "Crafting reagents"
 msgstr "Materiales de artesanía"
 
-#: crates/app-web/templates/account.html:44
+#: crates/app-web/templates/account.html:52
 msgid "Create account"
 msgstr "Crear cuenta"
 
@@ -275,7 +302,7 @@ msgstr "Descuento"
 msgid "Duration"
 msgstr "Duración"
 
-#: crates/app-web/templates/gear.html:53
+#: crates/app-web/templates/gear.html:69
 msgid ""
 "Each region summarises its own realms: the headline is the median of what a "
 "realm's cheapest copy costs, with the cheapest and dearest realm named. "
@@ -343,7 +370,7 @@ msgstr ""
 "comunes ni el puñado de gemas épicas; cada rango de calidad es un mercado "
 "propio."
 
-#: crates/app-web/templates/gear_stats.html:54
+#: crates/app-web/templates/gear_stats.html:59
 msgid "Every realm, one line per region."
 msgstr "Todos los reinos, una línea por región."
 
@@ -388,7 +415,7 @@ msgstr "Todos"
 msgid "Expansion"
 msgstr "Expansión"
 
-#: crates/app-web/templates/partials/gear.html:70
+#: crates/app-web/templates/partials/gear.html:78
 msgid "Extras"
 msgstr "Extras"
 
@@ -420,7 +447,7 @@ msgstr "Pies"
 msgid "Fetched"
 msgstr "Obtenido"
 
-#: crates/app-web/templates/gear_stats.html:56
+#: crates/app-web/templates/gear_stats.html:61
 msgid "Figures cover the last {} days."
 msgstr "Las cifras abarcan los últimos {} días."
 
@@ -473,8 +500,8 @@ msgstr "Herboristería"
 msgid "High"
 msgstr "Máx."
 
-#: crates/app-web/templates/gear_stats.html:64
-#: crates/app-web/templates/partials/gear.html:57
+#: crates/app-web/templates/gear_stats.html:69
+#: crates/app-web/templates/partials/gear.html:69
 msgid "Highest"
 msgstr "Más caro"
 
@@ -482,7 +509,7 @@ msgstr "Más caro"
 msgid "Highest ever"
 msgstr "Máximo histórico"
 
-#: crates/app-web/templates/gear_stats.html:66
+#: crates/app-web/templates/gear_stats.html:71
 msgid "Highest seen"
 msgstr "Más caro visto"
 
@@ -490,7 +517,7 @@ msgstr "Más caro visto"
 msgid "Hover the chart for the exact value at a point in time."
 msgstr "Pasa el ratón por la gráfica para ver el valor exacto en cada momento."
 
-#: crates/app-web/templates/gear_stats.html:78
+#: crates/app-web/templates/gear_stats.html:83
 msgid "How many are for sale"
 msgstr "Cuántos están a la venta"
 
@@ -524,6 +551,7 @@ msgid "Item level"
 msgstr "Nivel de objeto"
 
 #: crates/app-web/templates/enhancements.html:28
+#: crates/app-web/templates/gear.html:55
 #: crates/app-web/templates/reagents.html:33
 msgid "Item name"
 msgstr "Nombre del objeto"
@@ -600,12 +628,12 @@ msgstr "Robo de vida"
 msgid "Legs"
 msgstr "Piernas"
 
-#: crates/app-web/templates/account.html:15
+#: crates/app-web/templates/account.html:23
 msgid "Linked accounts"
 msgstr "Cuentas vinculadas"
 
-#: crates/app-web/templates/gear_stats.html:67
-#: crates/app-web/templates/partials/gear.html:60
+#: crates/app-web/templates/gear_stats.html:72
+#: crates/app-web/templates/partials/gear.html:72
 msgid "Listings"
 msgstr "Subastas"
 
@@ -692,16 +720,16 @@ msgstr "No se han registrado fallos."
 msgid "No jobs yet. Submit one above."
 msgstr "Todavía no hay trabajos. Envía uno arriba."
 
-#: crates/app-web/templates/account.html:17
+#: crates/app-web/templates/account.html:25
 msgid "No linked accounts."
 msgstr "No hay cuentas vinculadas."
 
-#: crates/app-web/templates/gear_stats.html:60
-#: crates/app-web/templates/partials/gear.html:34
+#: crates/app-web/templates/gear_stats.html:65
+#: crates/app-web/templates/partials/gear.html:35
 msgid "No listings in this snapshot."
 msgstr "No hay subastas en esta instantánea."
 
-#: crates/app-web/templates/partials/gear.html:41
+#: crates/app-web/templates/partials/gear.html:62
 msgid "No listings."
 msgstr "Sin subastas."
 
@@ -739,7 +767,7 @@ msgstr "Nodos"
 msgid "Nodes online"
 msgstr "Nodos en línea"
 
-#: crates/app-web/templates/gear_stats.html:86
+#: crates/app-web/templates/gear_stats.html:91
 msgid "None seen at this item level."
 msgstr "No se ha visto ninguno en este nivel de objeto."
 
@@ -748,6 +776,7 @@ msgid "Not listed."
 msgstr "No está a la venta."
 
 #: crates/app-web/templates/partials/enhancements.html:15
+#: crates/app-web/templates/partials/gear.html:11
 #: crates/app-web/templates/partials/reagents.html:15
 msgid "Nothing matches that search."
 msgstr "No hay nada que coincida con esa búsqueda."
@@ -764,7 +793,7 @@ msgstr "Todavía no se sigue nada."
 msgid "Observations"
 msgstr "Observaciones"
 
-#: crates/app-web/templates/gear_stats.html:91
+#: crates/app-web/templates/gear_stats.html:96
 msgid "On sale now"
 msgstr "A la venta ahora"
 
@@ -780,8 +809,8 @@ msgstr ""
 msgid "Open"
 msgstr "Abrir"
 
-#: crates/app-web/templates/account.html:33
-#: crates/app-web/templates/account.html:43
+#: crates/app-web/templates/account.html:41
+#: crates/app-web/templates/account.html:51
 msgid "Password"
 msgstr "Contraseña"
 
@@ -886,10 +915,14 @@ msgid "Reagents"
 msgstr "Materiales"
 
 #: crates/app-web/templates/gear.html:33
-#: crates/app-web/templates/gear_stats.html:40
+#: crates/app-web/templates/gear_stats.html:45
 #: crates/app-web/templates/wow.html:21
 msgid "Realm"
 msgstr "Reino"
+
+#: crates/app-web/templates/admin.html:10
+msgid "Realms collected"
+msgstr "Reinos recogidos"
 
 #: crates/app-web/templates/partials/job_detail.html:39
 msgid "Reason"
@@ -922,7 +955,7 @@ msgstr "Región"
 msgid "Region-wide market"
 msgstr "Mercado de toda la región"
 
-#: crates/app-web/templates/account.html:39
+#: crates/app-web/templates/account.html:47
 msgid "Register"
 msgstr "Registrarse"
 
@@ -939,16 +972,17 @@ msgid "Result"
 msgstr "Resultado"
 
 #: crates/app-web/templates/enhancements.html:24
+#: crates/app-web/templates/gear.html:53
 #: crates/app-web/templates/reagents.html:27
 #: crates/app-web/templates/wow.html:23
 msgid "Search"
 msgstr "Buscar"
 
-#: crates/app-web/templates/gear_stats.html:92
+#: crates/app-web/templates/gear_stats.html:97
 msgid "Seen over {} days"
 msgstr "Vistos en {} días"
 
-#: crates/app-web/templates/gear_stats.html:92
+#: crates/app-web/templates/gear_stats.html:97
 msgid "Share"
 msgstr "Proporción"
 
@@ -960,16 +994,16 @@ msgstr "Materiales compartidos"
 msgid "Shoulder"
 msgstr "Hombros"
 
-#: crates/app-web/templates/gear_stats.html:52
+#: crates/app-web/templates/gear_stats.html:57
 msgid "Showing {} alone."
 msgstr "Mostrando solo {}."
 
-#: crates/app-web/templates/gear.html:51
+#: crates/app-web/templates/gear.html:67
 msgid "Showing {} alone. Prices are the cheapest listing there."
 msgstr "Mostrando solo {}. Los precios son la subasta más barata de ese reino."
 
-#: crates/app-web/templates/account.html:29
-#: crates/app-web/templates/account.html:34
+#: crates/app-web/templates/account.html:37
+#: crates/app-web/templates/account.html:42
 #: crates/app-web/templates/base.html:57
 msgid "Sign in"
 msgstr "Iniciar sesión"
@@ -994,11 +1028,11 @@ msgstr "Desuello"
 msgid "Sleep (scheduling demo)"
 msgstr "Espera (demo de planificación)"
 
-#: crates/app-web/templates/gear_stats.html:68
+#: crates/app-web/templates/gear_stats.html:73
 msgid "Snapshot"
 msgstr "Instantánea"
 
-#: crates/app-web/templates/gear_stats.html:84
+#: crates/app-web/templates/gear_stats.html:89
 msgid "Sockets and tertiary stats"
 msgstr "Ranuras y estadísticas terciarias"
 
@@ -1017,7 +1051,7 @@ msgid "State"
 msgstr "Estado"
 
 #: crates/app-web/templates/macros.html:110
-#: crates/app-web/templates/partials/gear.html:76
+#: crates/app-web/templates/partials/gear.html:91
 msgid "Stats & graphs"
 msgstr "Estadísticas y gráficas"
 
@@ -1072,11 +1106,13 @@ msgstr "Tareas en cola"
 msgid "Tasks running"
 msgstr "Tareas en ejecución"
 
-#: crates/app-web/templates/gear_stats.html:74
+#: crates/app-web/templates/gear_stats.html:79
 msgid ""
 "The cheapest copy on sale, at each collection. Hover the chart for the exact "
 "value at a point in time."
-msgstr "La copia más barata a la venta, en cada recogida. Pasa el cursor por la gráfica para ver el valor exacto en un momento dado."
+msgstr ""
+"La copia más barata a la venta, en cada recogida. Pasa el cursor por la "
+"gráfica para ver el valor exacto en un momento dado."
 
 #: crates/app-web/src/i18n.rs
 msgid "The rare-quality cuts -- what a raider actually sockets."
@@ -1091,13 +1127,17 @@ msgstr ""
 "autoescalador; la profundidad de cola, la carga de los trabajadores y los "
 "trabajos en ejecución vienen de la captura del clúster de arriba."
 
-#: crates/app-web/templates/gear_stats.html:111
+#: crates/app-web/templates/gear_stats.html:116
 msgid ""
 "These do not split the market -- a socketed piece is the same piece. "
 "\"Seen\" counts listing observations across {} snapshots, so an auction that "
 "sat unsold for six collections counts six times; it measures how common a "
 "bonus is, not how many were sold."
-msgstr "Estos no dividen el mercado: una pieza con ranura es la misma pieza. «Vistos» cuenta observaciones de subastas en {} instantáneas, así que una subasta que estuvo seis recogidas sin venderse cuenta seis veces; mide lo común que es un bonus, no cuántos se vendieron."
+msgstr ""
+"Estos no dividen el mercado: una pieza con ranura es la misma pieza. "
+"«Vistos» cuenta observaciones de subastas en {} instantáneas, así que una "
+"subasta que estuvo seis recogidas sin venderse cuenta seis veces; mide lo "
+"común que es un bonus, no cuántos se vendieron."
 
 #: crates/app-web/templates/item.html:31
 msgid "These figures are final; this market is no longer collected."
@@ -1143,8 +1183,8 @@ msgstr "Tipo"
 msgid "Units listed over time"
 msgstr "Unidades a la venta a lo largo del tiempo"
 
-#: crates/app-web/templates/account.html:32
-#: crates/app-web/templates/account.html:42
+#: crates/app-web/templates/account.html:40
+#: crates/app-web/templates/account.html:50
 msgid "Username"
 msgstr "Usuario"
 
@@ -1180,9 +1220,16 @@ msgstr "Aceites de arma"
 msgid "Weapon stones"
 msgstr "Piedras de arma"
 
-#: crates/app-web/templates/gear_stats.html:72
+#: crates/app-web/templates/gear_stats.html:77
 msgid "What it has cost"
 msgstr "Lo que ha costado"
+
+#: crates/app-web/templates/admin.html:5
+msgid ""
+"What this instance follows. Turning something off stops it being collected; "
+"nothing already recorded is ever deleted, so switching a market off and on "
+"again costs only the gap."
+msgstr "Lo que sigue esta instancia. Apagar algo detiene su recogida; nunca se borra nada de lo ya registrado, así que apagar y volver a encender un mercado solo cuesta el hueco."
 
 #: crates/app-web/templates/partials/consumables.html:33
 #: crates/app-web/templates/partials/job_detail.html:39
@@ -1312,8 +1359,8 @@ msgid "host"
 msgstr "anfitrión"
 
 #: crates/app-web/templates/gear_stats.html:19
-#: crates/app-web/templates/gear_stats.html:32
-#: crates/app-web/templates/partials/gear.html:49
+#: crates/app-web/templates/gear_stats.html:35
+#: crates/app-web/templates/partials/gear.html:55
 msgid "ilvl {}"
 msgstr "nvo {}"
 
@@ -1409,13 +1456,17 @@ msgstr "no hay histórico suficiente"
 msgid "offline"
 msgstr "desconectado"
 
-#: crates/app-web/templates/partials/gear.html:65
+#: crates/app-web/templates/partials/gear.html:74
 msgid "on {} realms"
 msgstr "en {} reinos"
 
 #: crates/app-web/templates/partials/nodes.html:50
 msgid "pause heartbeat"
 msgstr "pausar latido"
+
+#: crates/app-web/templates/admin.html:36
+msgid "per realm"
+msgstr "por reino"
 
 #: crates/app-web/templates/consumables.html:12
 msgid ""

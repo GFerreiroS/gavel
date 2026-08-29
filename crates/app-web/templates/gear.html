@@ -44,6 +44,22 @@
       {% endfor %}
     </select>
   </label>
+  {% if gear.searchable %}
+  {# Same search as the reagents and enchants pages: live filtering where
+     there is scripting, a plain GET where there is not, one endpoint for
+     both. A grid this long needs it, and a reader who learned it there
+     should find it here. #}
+  <label>
+    <span>{{ "Search"|t }}</span>
+    <input type="search" name="q" value="{{ gear.query }}"
+           placeholder='{{ "Item name"|t }}' autocomplete="off"
+           hx-get="{{ gear.fragment_path }}"
+           hx-include="closest form"
+           hx-trigger="keyup changed delay:250ms, search"
+           hx-target="#gear-list"
+           hx-swap="innerHTML">
+  </label>
+  {% endif %}
   <button type="submit">{{ "Apply"|t }}</button>
 </form>
 <small class="hint toolbar-note">

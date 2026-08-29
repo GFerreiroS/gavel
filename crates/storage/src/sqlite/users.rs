@@ -23,14 +23,19 @@ fn user_from_row(row: &SqliteRow) -> User {
         id: row.get::<i64, _>("id"),
         username: row.get::<String, _>("username"),
         created_at: Millis(row.get::<i64, _>("created_at") as u64),
+        is_admin: row.get::<i64, _>("is_admin") != 0,
     }
 }
 
 impl UserRepository for SqliteUsers {
     async fn create(&self, username: &str, password_hash: &str, now: Millis) -> RepoResult<User> {
         let row = sqlx::query(
-            "INSERT INTO users(username, password_hash, created_at) VALUES(?, ?, ?)
-             RETURNING id, username, created_at",
+            // The first account is the administrator. `NOT EXISTS` rather
+            // than a count read first: two simultaneous registrations on an
+            // empty database would otherwise both believe they were first.
+            "INSERT INTO users(username, password_hash, created_at, is_admin)
+             VALUES(?, ?, ?, NOT EXISTS(SELECT 1 FROM users))
+             RETURNING id, username, created_at, is_admin",
         )
         .bind(username)
         .bind(password_hash)
@@ -43,7 +48,7 @@ impl UserRepository for SqliteUsers {
 
     async fn by_username(&self, username: &str) -> RepoResult<Option<Credentials>> {
         let row = sqlx::query(
-            "SELECT id, username, created_at, password_hash FROM users WHERE username = ?",
+            "SELECT id, username, created_at, is_admin, password_hash FROM users WHERE username = ?",
         )
         .bind(username)
         .fetch_optional(&self.pool)
@@ -56,7 +61,7 @@ impl UserRepository for SqliteUsers {
     }
 
     async fn by_id(&self, id: UserId) -> RepoResult<Option<User>> {
-        let row = sqlx::query("SELECT id, username, created_at FROM users WHERE id = ?")
+        let row = sqlx::query("SELECT id, username, created_at, is_admin FROM users WHERE id = ?")
             .bind(id)
             .fetch_optional(&self.pool)
             .await

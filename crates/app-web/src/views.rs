@@ -190,6 +190,11 @@ pub struct GearView {
     /// Whether the items on this page have upgrade levels at all. Recipes do
     /// not, and explaining a ladder they do not have would be noise.
     pub leveled: bool,
+    /// Whether this page offers a search box. A grid of nine gear cards does
+    /// not need one; a hundred and thirty recipes do.
+    pub searchable: bool,
+    /// What the visitor typed, echoed back into the box.
+    pub query: String,
     /// One realm chosen means one column of figures per card, which fits the
     /// ordinary card width -- the same grid the consumable and reagent pages
     /// use. Two regions side by side need the wider one.
@@ -367,6 +372,41 @@ pub struct GearModifierStat {
     pub seen: u32,
     /// Share of all observations, as a percentage.
     pub share: u32,
+}
+
+/// The collection settings page.
+#[derive(Debug, Clone)]
+pub struct AdminView {
+    pub categories: Vec<AdminCategory>,
+    pub regions: Vec<AdminRegion>,
+    pub realms_enabled: usize,
+    pub realms_total: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct AdminCategory {
+    /// The switch's name, as the form submits it.
+    pub key: &'static str,
+    pub label: &'static str,
+    pub enabled: bool,
+    /// Per-realm categories are the expensive ones: a cycle costs one fetch
+    /// per realm rather than one per region.
+    pub per_realm: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct AdminRegion {
+    pub code: &'static str,
+    pub label: String,
+    pub realms: Vec<AdminRealm>,
+    pub enabled: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct AdminRealm {
+    pub id: u32,
+    pub name: String,
+    pub enabled: bool,
 }
 
 /// One entry in the language menu.

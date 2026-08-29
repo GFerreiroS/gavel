@@ -190,6 +190,59 @@ impl PriceRepository for SqlitePrices {
         self.window_stats_inner(region, since, until).await
     }
 
+    /// One day of a market becomes one row: the day's cheapest price, and the
+    /// average of everything else.
+    ///
+    /// `min_unit` stays a true minimum, because "how cheap did this get" is
+    /// the question the archive is kept for. The percentile and the depth
+    /// become the day's average, which is what a single row can honestly say
+    /// about twenty-four of them.
+    ///
+    /// Idempotent: a second run finds nothing left to collapse, because the
+    /// rows it wrote sit exactly on midnight and every other row older than
+    /// the cutoff has gone.
+    async fn downsample_before(&self, before: Millis) -> RepoResult<u64> {
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        // Written first, so a failure between the two statements leaves the
+        // full-resolution rows in place rather than losing the day.
+        sqlx::query(
+            "INSERT INTO price_samples
+                 (item_id, region, observed_at, min_unit, p05_unit, median_unit,
+                  quantity, listings)
+             SELECT item_id, region, (observed_at / 86400000) * 86400000,
+                    MIN(min_unit),
+                    CAST(AVG(p05_unit) AS INTEGER),
+                    CAST(AVG(median_unit) AS INTEGER),
+                    CAST(AVG(quantity) AS INTEGER),
+                    CAST(AVG(listings) AS INTEGER)
+               FROM price_samples
+              WHERE observed_at < ?
+              GROUP BY item_id, region, (observed_at / 86400000)
+             ON CONFLICT(item_id, region, observed_at) DO UPDATE SET
+                    min_unit    = excluded.min_unit,
+                    p05_unit    = excluded.p05_unit,
+                    median_unit = excluded.median_unit,
+                    quantity    = excluded.quantity,
+                    listings    = excluded.listings",
+        )
+        .bind(before.get() as i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        let removed = sqlx::query(
+            "DELETE FROM price_samples
+              WHERE observed_at < ? AND observed_at % 86400000 != 0",
+        )
+        .bind(before.get() as i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        tx.commit().await.map_err(map_err)?;
+        Ok(removed.rows_affected())
+    }
+
     async fn prune_before(&self, before: Millis) -> RepoResult<u64> {
         let result = sqlx::query("DELETE FROM price_samples WHERE observed_at < ?")
             .bind(before.get() as i64)

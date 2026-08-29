@@ -13,6 +13,10 @@ pub struct User {
     pub id: UserId,
     pub username: String,
     pub created_at: Millis,
+    /// May change what the tracker collects. The first account to register
+    /// gets it: on a one-server instance that is whoever deployed it, and an
+    /// instance nobody can administer needs a database edit to rescue.
+    pub is_admin: bool,
 }
 
 /// A user plus the secret material needed to verify a login. Kept separate

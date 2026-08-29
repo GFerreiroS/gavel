@@ -130,7 +130,15 @@ async fn render<E: Ports>(
     Query(params): Query<SearchParams>,
     headers: HeaderMap,
 ) -> WebResult<Html<String>> {
-    let gear = build(&env, kind, prefs, &chosen, params.expansion.as_deref()).await?;
+    let gear = build(
+        &env,
+        kind,
+        prefs,
+        &chosen,
+        params.expansion.as_deref(),
+        params.q.as_deref(),
+    )
+    .await?;
     let user = current_user(&env, &headers).await?;
     page(
         &GearPage {
@@ -178,7 +186,15 @@ async fn fragment_of<E: Ports>(
 ) -> WebResult<Html<String>> {
     page(
         &GearFragment {
-            gear: build(&env, kind, prefs, &chosen, params.expansion.as_deref()).await?,
+            gear: build(
+                &env,
+                kind,
+                prefs,
+                &chosen,
+                params.expansion.as_deref(),
+                params.q.as_deref(),
+            )
+            .await?,
         },
         prefs.locale,
     )
@@ -190,6 +206,7 @@ async fn build<E: Ports>(
     prefs: MarketPrefs,
     chosen: &RealmChoice,
     expansion: Option<&str>,
+    query: Option<&str>,
 ) -> WebResult<GearView> {
     let catalog = match expansion.filter(|id| !id.is_empty()) {
         Some(id) => env.catalogs().by_id(id),
@@ -235,11 +252,13 @@ async fn build<E: Ports>(
     let observed = samples.iter().map(|s| s.observed_at).max();
     let tooltips = super::tooltip::cached_all(env, prefs, catalog, now).await;
 
+    let needle = super::reagents::normalise(query);
     let mut groups = Vec::new();
     for (label, anchor, entries) in sections(catalog, kind) {
         let mut cards: Vec<GearCard> = entries
             .into_iter()
             .map(|entry| card(entry, &samples, &named, selected, &tooltips, catalog))
+            .filter(|card| matches(card, &needle))
             .collect();
         if cards.is_empty() {
             continue;
@@ -260,6 +279,8 @@ async fn build<E: Ports>(
         fragment_path: text.fragment_path,
         leveled: !matches!(kind, ItemKind::Recipe),
         compact: selected.is_some(),
+        searchable: matches!(kind, ItemKind::Recipe),
+        query: needle.unwrap_or_default(),
         expansion: catalog.expansion.clone(),
         expansion_id: catalog.id.clone(),
         archived: !catalog.is_active(),
@@ -327,6 +348,17 @@ impl Text {
             ItemKind::Recipe => Text::RECIPES,
             _ => Text::GEAR,
         }
+    }
+}
+
+/// Whether a card's name contains the search term.
+///
+/// The same rule as the reagents page, on the localised name: a search matches
+/// what the visitor can actually read on the page.
+fn matches(card: &GearCard, needle: &Option<String>) -> bool {
+    match needle {
+        None => true,
+        Some(needle) => card.name.to_lowercase().contains(needle.as_str()),
     }
 }
 

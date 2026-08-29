@@ -68,6 +68,10 @@ struct AccountPage {
     signed_in: bool,
     username: String,
     linked: Vec<String>,
+    /// The collection settings live behind this, and only an admin sees the
+    /// way in. A nav item for everyone would be a link most people cannot
+    /// use, on every page.
+    is_admin: bool,
 }
 
 #[derive(Template)]
@@ -269,6 +273,7 @@ pub async fn account<E: Ports>(
                 csrf.0.clone(),
             ),
             signed_in: user.is_some(),
+            is_admin: user.as_ref().is_some_and(|u| u.is_admin),
             username: user.map(|u| u.username).unwrap_or_default(),
             linked,
         },

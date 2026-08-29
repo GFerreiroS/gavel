@@ -8,7 +8,7 @@
 </p>
 
 {% if gear.groups.is_empty() %}
-<p class="muted">{{ "Nothing tracked yet."|t }}</p>
+<p class="muted">{% if gear.query.is_empty() %}{{ "Nothing tracked yet."|t }}{% else %}{{ "Nothing matches that search."|t }}{% endif %}</p>
 {% endif %}
 
 {% for group in gear.groups %}

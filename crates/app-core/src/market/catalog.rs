@@ -323,6 +323,18 @@ impl ItemKind {
         }
     }
 
+    /// What to call this kind in the interface.
+    pub const fn label(self) -> &'static str {
+        match self {
+            ItemKind::Consumable => "Consumables",
+            ItemKind::Reagent => "Reagents",
+            ItemKind::Enchant => "Enchants",
+            ItemKind::Gem => "Gems",
+            ItemKind::Boe => "Bind-on-equip gear",
+            ItemKind::Recipe => "Recipes",
+        }
+    }
+
     /// Whether this kind trades on the region-wide commodity market.
     ///
     /// The two markets share nothing: a different endpoint, a different

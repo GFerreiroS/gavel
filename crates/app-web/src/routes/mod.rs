@@ -4,6 +4,7 @@
 //! longer than a screen belongs in `app-core` or in the cluster runtime.
 
 mod account;
+mod admin;
 mod cluster;
 mod debug;
 pub(crate) mod enhancements;
@@ -56,6 +57,10 @@ pub fn router<E: Ports>(env: E) -> Router {
         .route("/jobs", get(pages::jobs::<E>).post(jobs::submit::<E>))
         .route("/jobs/{id}", get(pages::job_detail::<E>))
         .route("/account", get(pages::account::<E>))
+        .route(
+            "/admin",
+            get(admin::page_handler::<E>).post(admin::toggle::<E>),
+        )
         .route("/wow", get(pages::wow::<E>))
         .route("/wow/auctions", get(market::index::<E>))
         .route("/wow/consumables", get(market::page_handler::<E>))

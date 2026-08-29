@@ -168,25 +168,90 @@ impl RealmPriceRepository for SqliteRealmPrices {
         Ok(row.map(|(at,)| Millis(at as u64)).filter(|m| m.get() > 0))
     }
 
+    /// As [`super::prices`], but a gear market is keyed by realm and variant
+    /// too. The cheapest and the dearest of the day both survive: on one realm
+    /// the spread is the only comparison there is.
+    async fn downsample_before(&self, before: Millis) -> RepoResult<u64> {
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        sqlx::query(
+            "INSERT INTO realm_price_samples
+                 (item_id, region, realm_id, variant, observed_at,
+                  min_price, median_price, max_price, listings)
+             SELECT item_id, region, realm_id, variant,
+                    (observed_at / 86400000) * 86400000,
+                    MIN(min_price),
+                    CAST(AVG(median_price) AS INTEGER),
+                    MAX(max_price),
+                    CAST(AVG(listings) AS INTEGER)
+               FROM realm_price_samples
+              WHERE observed_at < ?
+              GROUP BY item_id, region, realm_id, variant, (observed_at / 86400000)
+             ON CONFLICT(item_id, region, realm_id, variant, observed_at) DO UPDATE SET
+                    min_price    = excluded.min_price,
+                    median_price = excluded.median_price,
+                    max_price    = excluded.max_price,
+                    listings     = excluded.listings",
+        )
+        .bind(before.get() as i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        let removed = sqlx::query(
+            "DELETE FROM realm_price_samples
+              WHERE observed_at < ? AND observed_at % 86400000 != 0",
+        )
+        .bind(before.get() as i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        tx.commit().await.map_err(map_err)?;
+        Ok(removed.rows_affected())
+    }
+
+    /// Remember a realm, without overriding whether it is collected.
+    ///
+    /// Discovery runs at every startup and must not undo an operator's choice:
+    /// a realm switched off in the admin page stays off when the upstream
+    /// index mentions it again tomorrow.
     async fn record_realm(&self, realm: &Realm) -> RepoResult<()> {
         sqlx::query(
-            "INSERT INTO realms (realm_id, region, name) VALUES (?, ?, ?)
+            "INSERT INTO realms (realm_id, region, name, enabled) VALUES (?, ?, ?, ?)
              ON CONFLICT(realm_id, region) DO UPDATE SET name = excluded.name",
         )
         .bind(realm.id.get() as i64)
         .bind(realm.region.as_str())
         .bind(&realm.name)
+        .bind(realm.enabled as i64)
         .execute(&self.pool)
         .await
         .map_err(map_err)?;
         Ok(())
     }
 
-    async fn realms(&self) -> RepoResult<Vec<Realm>> {
-        let rows = sqlx::query("SELECT realm_id, region, name FROM realms ORDER BY region, name")
-            .fetch_all(&self.pool)
+    async fn set_realm_enabled(
+        &self,
+        region: Region,
+        realm: RealmId,
+        enabled: bool,
+    ) -> RepoResult<()> {
+        sqlx::query("UPDATE realms SET enabled = ? WHERE realm_id = ? AND region = ?")
+            .bind(enabled as i64)
+            .bind(realm.get() as i64)
+            .bind(region.as_str())
+            .execute(&self.pool)
             .await
             .map_err(map_err)?;
+        Ok(())
+    }
+
+    async fn realms(&self) -> RepoResult<Vec<Realm>> {
+        let rows =
+            sqlx::query("SELECT realm_id, region, name, enabled FROM realms ORDER BY region, name")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(map_err)?;
         rows.iter()
             .map(|row| {
                 let region: String = row.get("region");
@@ -194,6 +259,7 @@ impl RealmPriceRepository for SqliteRealmPrices {
                     id: RealmId(row.get::<i64, _>("realm_id") as u32),
                     region: Region::parse(&region).ok_or_else(|| corrupt("region", region))?,
                     name: row.get("name"),
+                    enabled: row.get::<i64, _>("enabled") != 0,
                 })
             })
             .collect()

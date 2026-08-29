@@ -160,8 +160,35 @@ impl<C: Clock + Clone + 'static> RealmAuctionProvider for BlizzardRealms<C> {
 
     async fn realms(&self, region: Region, wanted: &[RealmId]) -> AppResult<Vec<Realm>> {
         let bearer = self.token.bearer().await?;
+
+        // Empty means every realm in the region. The index is one request and
+        // gives ids as URLs; the names come from a small request each.
+        let ids: Vec<u32> = if wanted.is_empty() {
+            let index: RealmIndex = self
+                .http
+                .get(format!(
+                    "{}/data/wow/connected-realm/index",
+                    region.api_host()
+                ))
+                .bearer_auth(&bearer)
+                .query(&[("namespace", region.namespace().as_str())])
+                .send()
+                .await
+                .map_err(|e| AppError::Integration(format!("connected realm index failed: {e}")))?
+                .json()
+                .await
+                .map_err(|e| AppError::Integration(format!("unexpected realm index: {e}")))?;
+            index
+                .connected_realms
+                .iter()
+                .filter_map(|r| r.id())
+                .collect()
+        } else {
+            wanted.iter().map(|r| r.get()).collect()
+        };
+
         let mut realms = Vec::new();
-        for id in wanted.iter().map(|r| r.get()) {
+        for id in ids {
             // One small request per configured realm, at startup only.
             let detail: ConnectedRealm = self
                 .http
@@ -182,6 +209,9 @@ impl<C: Clock + Clone + 'static> RealmAuctionProvider for BlizzardRealms<C> {
                 id: RealmId(id),
                 region,
                 name: detail.display_name(id),
+                // What the upstream says exists; whether we collect it is our
+                // decision, and it lives in the store.
+                enabled: true,
             });
         }
         Ok(realms)
@@ -224,6 +254,30 @@ struct RawItem {
     /// gear with no upgrades, which is a variant in its own right.
     #[serde(default)]
     bonus_lists: Vec<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RealmIndex {
+    #[serde(default)]
+    connected_realms: Vec<RealmLink>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RealmLink {
+    href: String,
+}
+
+impl RealmLink {
+    /// The index gives URLs, not ids: `.../connected-realm/1403?namespace=...`
+    fn id(&self) -> Option<u32> {
+        self.href
+            .rsplit('/')
+            .next()?
+            .split('?')
+            .next()?
+            .parse()
+            .ok()
+    }
 }
 
 #[derive(Debug, Deserialize)]

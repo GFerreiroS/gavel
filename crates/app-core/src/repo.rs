@@ -128,6 +128,14 @@ pub trait PriceRepository: Send + Sync + 'static {
     /// Drop observations older than `before` when the configured retention
     /// policy asks for it.
     fn prune_before(&self, before: Millis) -> impl Future<Output = RepoResult<u64>> + Send;
+
+    /// Collapse each day of history older than `before` into one row.
+    ///
+    /// The alternative to pruning, and the reason retention can stay at "keep
+    /// forever": an expansion's archive survives, at one row per item per
+    /// region per day, instead of being deleted to save space. Returns the
+    /// number of rows removed.
+    fn downsample_before(&self, before: Millis) -> impl Future<Output = RepoResult<u64>> + Send;
 }
 
 /// Per-realm auction history: gear, which is not a commodity.
@@ -190,7 +198,33 @@ pub trait RealmPriceRepository: Send + Sync + 'static {
     /// history readable.
     fn record_realm(&self, realm: &Realm) -> impl Future<Output = RepoResult<()>> + Send;
 
+    /// Turn collection on or off for one realm, without touching its history.
+    fn set_realm_enabled(
+        &self,
+        region: Region,
+        realm: RealmId,
+        enabled: bool,
+    ) -> impl Future<Output = RepoResult<()>> + Send;
+
     fn realms(&self) -> impl Future<Output = RepoResult<Vec<Realm>>> + Send;
+
+    /// Collapse each day of history older than `before` into one row per
+    /// (item, realm, variant). See [`PriceRepository::downsample_before`].
+    fn downsample_before(&self, before: Millis) -> impl Future<Output = RepoResult<u64>> + Send;
+}
+
+/// What the tracker collects, as switches an administrator can flip.
+///
+/// Absent means on. A category added by a later release starts collected
+/// rather than being silently ignored because no row existed for it, which is
+/// the failure mode of storing "what is enabled" instead of "what was turned
+/// off".
+pub trait SettingsRepository: Send + Sync + 'static {
+    fn set_enabled(&self, name: &str, enabled: bool)
+    -> impl Future<Output = RepoResult<()>> + Send;
+
+    /// Every switch that has been changed from its default.
+    fn disabled(&self) -> impl Future<Output = RepoResult<Vec<String>>> + Send;
 }
 
 /// Bundles the repositories so callers take one type parameter instead of six.
@@ -203,6 +237,7 @@ pub trait Store: Send + Sync + 'static {
     type Kv: KeyValueStore;
     type Prices: PriceRepository;
     type RealmPrices: RealmPriceRepository;
+    type Settings: SettingsRepository;
 
     fn users(&self) -> &Self::Users;
     fn sessions(&self) -> &Self::Sessions;
@@ -213,4 +248,6 @@ pub trait Store: Send + Sync + 'static {
     fn prices(&self) -> &Self::Prices;
     /// Gear prices, which are per connected realm.
     fn realm_prices(&self) -> &Self::RealmPrices;
+    /// What the tracker collects.
+    fn settings(&self) -> &Self::Settings;
 }

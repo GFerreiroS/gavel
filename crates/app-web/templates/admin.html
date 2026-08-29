@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ "Collection"|t }}</h1>
+<p class="hint">
+  {{ "What this instance follows. Turning something off stops it being collected; nothing already recorded is ever deleted, so switching a market off and on again costs only the gap."|t }}
+</p>
+
+<div class="stat-grid">
+  <div class="stat">
+    <span class="label">{{ "Realms collected"|t }}</span>
+    <span class="value">{{ admin.realms_enabled }} / {{ admin.realms_total }}</span>
+  </div>
+  {% for region in admin.regions %}
+  <div class="stat">
+    <span class="label">{{ region.label }}</span>
+    <span class="value">{{ region.enabled }} / {{ region.realms.len() }}</span>
+  </div>
+  {% endfor %}
+</div>
+
+<article>
+  <h2>{{ "Categories"|t }}</h2>
+  <p class="hint">
+    {{ "A commodity category is one request per region per cycle. A per-realm one is a request per realm, so it is the expensive kind."|t }}
+  </p>
+  <div class="roles">
+    {% for category in admin.categories %}
+    {# A form per switch: 184 checkboxes in one form post nothing for the ones
+       that are off, which makes a lost checkbox and a deliberate "off"
+       indistinguishable. #}
+    <form method="post" action="/admin" class="switch">
+      <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
+      <input type="hidden" name="switch" value="category:{{ category.key }}">
+      <input type="hidden" name="enabled" value="{% if category.enabled %}false{% else %}true{% endif %}">
+      <button type="submit" class="chip{% if !category.enabled %} outline secondary{% endif %}">
+        {{ category.label|t }}{% if category.per_realm %} <span class="muted">· {{ "per realm"|t }}</span>{% endif %}
+      </button>
+    </form>
+    {% endfor %}
+  </div>
+</article>
+
+{% for region in admin.regions %}
+<article>
+  <h2>{{ region.label }} <span class="muted">({{ region.enabled }} / {{ region.realms.len() }})</span></h2>
+  <div class="roles">
+    {% for realm in region.realms %}
+    <form method="post" action="/admin" class="switch">
+      <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
+      <input type="hidden" name="switch" value="realm:{{ region.code }}:{{ realm.id }}">
+      <input type="hidden" name="enabled" value="{% if realm.enabled %}false{% else %}true{% endif %}">
+      <button type="submit" class="chip{% if !realm.enabled %} outline secondary{% endif %}">{{ realm.name }}</button>
+    </form>
+    {% endfor %}
+  </div>
+</article>
+{% endfor %}
+{% endblock %}
