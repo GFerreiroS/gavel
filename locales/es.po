@@ -35,7 +35,9 @@ msgstr "7 d"
 msgid ""
 "A commodity category is one request per region per cycle. A per-realm one is "
 "a request per realm, so it is the expensive kind."
-msgstr "Una categoría de mercancías es una petición por región y ciclo. Una por reino es una petición por reino, así que es la cara."
+msgstr ""
+"Una categoría de mercancías es una petición por región y ciclo. Una por "
+"reino es una petición por reino, así que es la cara."
 
 #: crates/app-web/templates/gear_stats.html:85
 msgid ""
@@ -224,7 +226,9 @@ msgstr "Pecho"
 msgid ""
 "Choose what this instance follows: which categories, and which of the 184 "
 "connected realms."
-msgstr "Elige lo que sigue esta instancia: qué categorías y cuáles de los 184 reinos conectados."
+msgstr ""
+"Elige lo que sigue esta instancia: qué categorías y cuáles de los 184 reinos "
+"conectados."
 
 #: crates/app-web/templates/partials/character.html:14
 msgid "Class"
@@ -243,6 +247,10 @@ msgstr "Capa"
 #: crates/app-web/templates/partials/stats.html:3
 msgid "Cluster"
 msgstr "Clúster"
+
+#: crates/app-web/templates/admin.html:64
+msgid "Collected. Click to stop."
+msgstr "Se recoge. Pulsa para detenerlo."
 
 #: crates/app-web/templates/account.html:16
 #: crates/app-web/templates/admin.html:3
@@ -771,6 +779,10 @@ msgstr "Nodos en línea"
 msgid "None seen at this item level."
 msgstr "No se ha visto ninguno en este nivel de objeto."
 
+#: crates/app-web/templates/admin.html:64
+msgid "Not collected. Click to start."
+msgstr "No se recoge. Pulsa para empezar."
+
 #: crates/app-web/templates/macros.html:112
 msgid "Not listed."
 msgstr "No está a la venta."
@@ -1229,7 +1241,10 @@ msgid ""
 "What this instance follows. Turning something off stops it being collected; "
 "nothing already recorded is ever deleted, so switching a market off and on "
 "again costs only the gap."
-msgstr "Lo que sigue esta instancia. Apagar algo detiene su recogida; nunca se borra nada de lo ya registrado, así que apagar y volver a encender un mercado solo cuesta el hueco."
+msgstr ""
+"Lo que sigue esta instancia. Apagar algo detiene su recogida; nunca se borra "
+"nada de lo ya registrado, así que apagar y volver a encender un mercado solo "
+"cuesta el hueco."
 
 #: crates/app-web/templates/partials/consumables.html:33
 #: crates/app-web/templates/partials/job_detail.html:39
@@ -1647,6 +1662,10 @@ msgstr "{} se ha ido"
 #: crates/app-web/src/i18n.rs
 msgid "{} lost coordinator role"
 msgstr "{} ha perdido el rol de coordinador"
+
+#: crates/app-web/templates/admin.html:47
+msgid "{} of {} collected"
+msgstr "{} de {} recogidos"
 
 #: crates/app-web/src/i18n.rs
 msgid "{} of {} enchants match."

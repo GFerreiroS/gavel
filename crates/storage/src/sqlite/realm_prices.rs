@@ -217,12 +217,15 @@ impl RealmPriceRepository for SqliteRealmPrices {
     /// index mentions it again tomorrow.
     async fn record_realm(&self, realm: &Realm) -> RepoResult<()> {
         sqlx::query(
-            "INSERT INTO realms (realm_id, region, name, enabled) VALUES (?, ?, ?, ?)
-             ON CONFLICT(realm_id, region) DO UPDATE SET name = excluded.name",
+            "INSERT INTO realms (realm_id, region, name, locale, enabled) VALUES (?, ?, ?, ?, ?)
+             ON CONFLICT(realm_id, region) DO UPDATE SET
+                    name = excluded.name,
+                    locale = excluded.locale",
         )
         .bind(realm.id.get() as i64)
         .bind(realm.region.as_str())
         .bind(&realm.name)
+        .bind(&realm.locale)
         .bind(realm.enabled as i64)
         .execute(&self.pool)
         .await
@@ -247,11 +250,13 @@ impl RealmPriceRepository for SqliteRealmPrices {
     }
 
     async fn realms(&self) -> RepoResult<Vec<Realm>> {
-        let rows =
-            sqlx::query("SELECT realm_id, region, name, enabled FROM realms ORDER BY region, name")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(map_err)?;
+        let rows = sqlx::query(
+            "SELECT realm_id, region, name, locale, enabled
+                   FROM realms ORDER BY region, name",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
         rows.iter()
             .map(|row| {
                 let region: String = row.get("region");
@@ -259,6 +264,7 @@ impl RealmPriceRepository for SqliteRealmPrices {
                     id: RealmId(row.get::<i64, _>("realm_id") as u32),
                     region: Region::parse(&region).ok_or_else(|| corrupt("region", region))?,
                     name: row.get("name"),
+                    locale: row.get("locale"),
                     enabled: row.get::<i64, _>("enabled") != 0,
                 })
             })

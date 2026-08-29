@@ -209,6 +209,7 @@ impl<C: Clock + Clone + 'static> RealmAuctionProvider for BlizzardRealms<C> {
                 id: RealmId(id),
                 region,
                 name: detail.display_name(id),
+                locale: detail.locale(),
                 // What the upstream says exists; whether we collect it is our
                 // decision, and it lives in the store.
                 enabled: true,
@@ -302,9 +303,25 @@ impl ConnectedRealm {
     }
 }
 
+impl ConnectedRealm {
+    /// The language the connected realm is played in.
+    ///
+    /// Its realms share one, in practice: Blizzard groups by language before
+    /// it groups by population. The first is taken rather than a vote, so the
+    /// answer does not change when a realm is added to the group.
+    fn locale(&self) -> String {
+        self.realms
+            .iter()
+            .find_map(|r| r.locale.clone())
+            .unwrap_or_default()
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct RealmName {
     name: LocalizedName,
+    #[serde(default)]
+    locale: Option<String>,
 }
 
 /// Realm names come back as a locale map, or as a plain string when a locale

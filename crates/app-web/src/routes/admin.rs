@@ -35,7 +35,7 @@ use crate::i18n::filters;
 use crate::prefs::MarketPrefs;
 use crate::render::page;
 use crate::session::current_user;
-use crate::views::{AdminCategory, AdminRealm, AdminRegion, AdminView, Layout};
+use crate::views::{AdminCategory, AdminLanguage, AdminRealm, AdminRegion, AdminView, Layout};
 
 #[derive(Template)]
 #[template(path = "admin.html")]
@@ -94,31 +94,80 @@ pub async fn page_handler<E: Ports>(
     )
 }
 
-/// Realms grouped by region, in the order the picker shows them.
+/// Realms by region, and within a region by the language they are played in.
+///
+/// Ordered by size, biggest language first: on EU that puts English, German
+/// and French where a reader looks, and the two-realm languages at the end
+/// rather than scattered through an alphabet.
 fn by_region(realms: &[Realm]) -> Vec<AdminRegion> {
     let mut regions: Vec<Region> = realms.iter().map(|r| r.region).collect();
     regions.sort();
     regions.dedup();
     regions
         .into_iter()
-        .map(|region| AdminRegion {
-            code: region.as_str(),
-            label: region.to_string().to_uppercase(),
-            realms: realms
-                .iter()
-                .filter(|r| r.region == region)
-                .map(|realm| AdminRealm {
-                    id: realm.id.get(),
-                    name: realm.name.clone(),
-                    enabled: realm.enabled,
+        .map(|region| {
+            let mine: Vec<&Realm> = realms.iter().filter(|r| r.region == region).collect();
+
+            let mut tags: Vec<&str> = mine.iter().map(|r| r.locale.as_str()).collect();
+            tags.sort_unstable();
+            tags.dedup();
+
+            let mut languages: Vec<AdminLanguage> = tags
+                .into_iter()
+                .map(|tag| {
+                    let realms: Vec<AdminRealm> = mine
+                        .iter()
+                        .filter(|r| r.locale == tag)
+                        .map(|realm| AdminRealm {
+                            id: realm.id.get(),
+                            name: realm.name.clone(),
+                            enabled: realm.enabled,
+                        })
+                        .collect();
+                    AdminLanguage {
+                        label: language_name(tag),
+                        enabled: realms.iter().filter(|r| r.enabled).count(),
+                        realms,
+                    }
                 })
-                .collect(),
-            enabled: realms
-                .iter()
-                .filter(|r| r.region == region && r.enabled)
-                .count(),
+                .collect();
+            languages.sort_by(|a, b| {
+                b.realms
+                    .len()
+                    .cmp(&a.realms.len())
+                    .then(a.label.cmp(b.label))
+            });
+
+            AdminRegion {
+                code: region.as_str(),
+                label: region.to_string().to_uppercase(),
+                enabled: mine.iter().filter(|r| r.enabled).count(),
+                total: mine.len(),
+                languages,
+            }
         })
         .collect()
+}
+
+/// What to call a realm locale, in that language.
+///
+/// Endonyms -- "Deutsch", not "German" -- because the label is for the people
+/// who play there, and it stays right whatever language the page is in.
+fn language_name(tag: &str) -> &'static str {
+    match tag {
+        "enGB" | "enUS" => "English",
+        "deDE" => "Deutsch",
+        "frFR" => "Français",
+        "esES" => "Español",
+        "esMX" => "Español (México)",
+        "ruRU" => "Русский",
+        "itIT" => "Italiano",
+        "ptBR" | "ptPT" => "Português",
+        "koKR" => "한국어",
+        "zhTW" => "繁體中文",
+        "zhCN" => "简体中文",
+        _ => "Other",
+    }
 }
 
 /// What the form submits: one switch, and what to set it to.

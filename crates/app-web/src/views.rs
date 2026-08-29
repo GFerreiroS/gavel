@@ -398,6 +398,18 @@ pub struct AdminCategory {
 pub struct AdminRegion {
     pub code: &'static str,
     pub label: String,
+    /// Realms grouped by the language they are played in. EU is seven
+    /// languages sharing a region, and someone looking for their own realm
+    /// among ninety-two is looking for their language first.
+    pub languages: Vec<AdminLanguage>,
+    pub enabled: usize,
+    pub total: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct AdminLanguage {
+    /// "Deutsch", or the raw locale tag when we have no name for it.
+    pub label: &'static str,
     pub realms: Vec<AdminRealm>,
     pub enabled: usize,
 }

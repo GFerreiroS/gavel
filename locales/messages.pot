@@ -5,7 +5,7 @@
 # renders as English rather than as a missing key.
 msgid ""
 msgstr ""
-"Project-Id-Version: wow-auction-tracker 7d19431-dirty\n"
+"Project-Id-Version: wow-auction-tracker b783485-dirty\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -211,6 +211,10 @@ msgstr ""
 #: crates/app-web/templates/cluster.html:3
 #: crates/app-web/templates/partials/stats.html:3
 msgid "Cluster"
+msgstr ""
+
+#: crates/app-web/templates/admin.html:64
+msgid "Collected. Click to stop."
 msgstr ""
 
 #: crates/app-web/templates/account.html:16
@@ -688,6 +692,10 @@ msgstr ""
 
 #: crates/app-web/templates/gear_stats.html:91
 msgid "None seen at this item level."
+msgstr ""
+
+#: crates/app-web/templates/admin.html:64
+msgid "Not collected. Click to start."
 msgstr ""
 
 #: crates/app-web/templates/macros.html:112
@@ -1506,6 +1514,10 @@ msgstr ""
 
 #: crates/app-web/src/i18n.rs
 msgid "{} lost coordinator role"
+msgstr ""
+
+#: crates/app-web/templates/admin.html:47
+msgid "{} of {} collected"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs

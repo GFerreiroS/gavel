@@ -371,6 +371,30 @@ td > .rank-link { margin: 0; }
   .gear-scopes { display: none; }
 }
 
+/* --- the collection page ------------------------------------------------
+   A hundred and eighty-four switches. What makes that readable is not the
+   switches, it is the headings between them: a region, then a language, then
+   a run of realms short enough to scan. */
+.admin-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: .75rem;
+}
+.admin-head h2 { margin: 0; }
+.admin-language + .admin-language {
+  margin-top: .9rem;
+  padding-top: .7rem;
+  border-top: 1px solid var(--pico-muted-border-color);
+}
+.admin-language .rank-label { display: block; margin-bottom: .4rem; }
+/* Each switch is its own form. `display: contents` drops the form's box so the
+   chips are flex items of the row rather than a column of forms -- and then
+   Pico's `button[type=submit] { width: 100% }` wins over `.chip`'s `auto` and
+   stretches every one of them across the page. Two selectors beat it back. */
+.switch { display: contents; }
+.switch .chip { width: auto; }
+
 /* --- definition lists ----------------------------------------------------
    Pico stacks <dt> above <dd>, which is right for a glossary. These are
    label/value pairs in a card, so they read as two columns. */
