@@ -5,14 +5,10 @@
 # renders as English rather than as a missing key.
 msgid ""
 msgstr ""
-"Project-Id-Version: wow-auction-tracker d529dfc-dirty\n"
+"Project-Id-Version: wow-auction-tracker 0ddc361-dirty\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-
-#: crates/app-web/templates/admin.html:73
-msgid "+{} realms"
-msgstr ""
 
 #: crates/app-web/src/i18n.rs
 msgid "24h"
@@ -217,7 +213,7 @@ msgstr ""
 msgid "Cluster"
 msgstr ""
 
-#: crates/app-web/templates/admin.html:67
+#: crates/app-web/templates/admin.html:72
 msgid "Collected. Click to stop."
 msgstr ""
 
@@ -698,7 +694,7 @@ msgstr ""
 msgid "None seen at this item level."
 msgstr ""
 
-#: crates/app-web/templates/admin.html:67
+#: crates/app-web/templates/admin.html:72
 msgid "Not collected. Click to start."
 msgstr ""
 
@@ -898,10 +894,6 @@ msgstr ""
 msgid "Shared reagents"
 msgstr ""
 
-#: crates/app-web/templates/admin.html:67
-msgid "Shares an auction house with {}, so they collect together."
-msgstr ""
-
 #: crates/app-web/src/i18n.rs
 msgid "Shoulder"
 msgstr ""
@@ -1044,6 +1036,10 @@ msgstr ""
 
 #: crates/app-web/templates/partials/nodes.html:26
 msgid "These values are generated, not measured"
+msgstr ""
+
+#: crates/app-web/templates/admin.html:72
+msgid "These {} realms share one auction house."
 msgstr ""
 
 #: crates/app-web/templates/auctions.html:61
@@ -1449,10 +1445,6 @@ msgstr ""
 
 #: crates/app-web/templates/partials/character.html:6
 msgid "via {}"
-msgstr ""
-
-#: crates/app-web/templates/admin.html:75
-msgid "with {}"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs

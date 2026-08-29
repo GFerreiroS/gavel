@@ -53,32 +53,27 @@
   {% for language in region.languages %}
   <section class="admin-language">
     <span class="rank-label">{{ language.label }}
-      <span class="muted">· {{ "{} of {} markets"|t|fill(language.enabled)|fill(language.markets) }}</span></span>
-    {# A column, and every realm on its own line under its own name. Realms
-       sharing an auction house share a switch -- they are one market -- so
-       each says who it moves with rather than pretending to be independent. #}
-    <div class="realm-columns">
-      {% for realm in language.realms %}
-      <form method="post" action="/admin" class="switch realm-switch">
+      <span class="muted">· {{ "{} of {} markets"|t|fill(language.enabled)|fill(language.markets.len()) }}</span></span>
+
+    {# One box per auction house. Realms sharing one are drawn together
+       because they *are* together: clicking any name switches the market they
+       share. The box says it; no sentence under every name has to. #}
+    <div class="market-grid">
+      {% for market in language.markets %}
+      <form method="post" action="/admin"
+            class="market{% if !market.enabled %} off{% endif %}">
         <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
-        <input type="hidden" name="switch" value="realm:{{ region.code }}:{{ realm.id }}">
-        <input type="hidden" name="enabled" value="{% if realm.enabled %}false{% else %}true{% endif %}">
-        <button type="submit" class="chip realm-chip{% if !realm.enabled %} outline secondary{% endif %}"
-                title="{% if realm.enabled %}{{ "Collected. Click to stop."|t }}{% else %}{{ "Not collected. Click to start."|t }}{% endif %}{% if !realm.shared_with.is_empty() %} {{ "Shares an auction house with {}, so they collect together."|t|fill(realm.shared_with.join(", ")) }}{% endif %}">
-          {{ realm.name }}
-          {# Named while the list is short enough to read; counted after that.
-             A realm sharing a market with nine others would otherwise print a
-             paragraph under its own name. The full list is on the title. #}
-          {% if realm.shared_with.len() > 2 %}
-          <span class="muted realm-shared">{{ "+{} realms"|t|fill(realm.shared_with.len()) }}</span>
-          {% else if !realm.shared_with.is_empty() %}
-          <span class="muted realm-shared">{{ "with {}"|t|fill(realm.shared_with.join(", ")) }}</span>
-          {% endif %}
-        </button>
+        <input type="hidden" name="switch" value="realm:{{ region.code }}:{{ market.id }}">
+        <input type="hidden" name="enabled" value="{% if market.enabled %}false{% else %}true{% endif %}">
+        {# Every name is its own button so any of them can be clicked, and all
+           of them submit the same market. #}
+        {% for name in market.names %}
+        <button type="submit"
+                title="{% if market.enabled %}{{ "Collected. Click to stop."|t }}{% else %}{{ "Not collected. Click to start."|t }}{% endif %}{% if market.names.len() > 1 %} {{ "These {} realms share one auction house."|t|fill(market.names.len()) }}{% endif %}">{{ name }}</button>
+        {% endfor %}
       </form>
       {% endfor %}
     </div>
-  </section>
   {% endfor %}
 </article>
 {% endfor %}

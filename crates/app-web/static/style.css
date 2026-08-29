@@ -395,25 +395,51 @@ td > .rank-link { margin: 0; }
 .switch { display: contents; }
 .switch .chip { width: auto; }
 
-/* Realms read as a list, not as a wall of chips: one name per line, flowing
-   into as many columns as the width allows. Two hundred and fifty realms in a
-   wrapping row is a paragraph of proper nouns; in columns it is a directory
-   you can run an eye down. */
-.realm-columns {
-  columns: 15rem auto;
-  column-gap: var(--pico-block-spacing-horizontal);
+/* One box per auction house, in an even grid: every market is the same kind
+   of object whether it holds one realm or ten, and a grid row makes them the
+   same height. Realms inside a box are lines, not chips, because they are a
+   list of names rather than a row of controls. */
+/* Columns rather than a grid: a market holds one realm or ten, and a grid row
+   stretches every box to the tallest in it -- a two-name box drawn as tall as
+   a ten-name one, mostly empty. Columns let each box be its own size and pack
+   the next one under it. */
+.market-grid {
+  columns: 14rem auto;
+  column-gap: .5rem;
 }
-.realm-switch { display: block; }
-.realm-columns .chip {
-  /* `break-inside` on the button, because the form has no box of its own. */
-  display: block;
-  width: 100%;
-  margin-bottom: .25rem;
-  text-align: left;
+.market {
   break-inside: avoid;
+  margin-bottom: .5rem;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: .15rem;
+  border: 1px solid var(--pico-primary);
+  border-radius: var(--pico-border-radius);
+  background: color-mix(in srgb, var(--pico-primary) 12%, transparent);
 }
-/* Who it moves with, when it shares an auction house. */
-.realm-shared { display: block; font-size: .85em; }
+/* Off is an outline: the market is still there, it is simply not collected. */
+.market.off {
+  border-color: var(--pico-muted-border-color);
+  background: transparent;
+}
+.market button {
+  width: 100%;
+  margin: 0;
+  padding: .15rem .4rem;
+  border: none;
+  border-radius: calc(var(--pico-border-radius) - 1px);
+  background: transparent;
+  color: var(--pico-primary);
+  font-size: .78rem;
+  line-height: 1.5;
+  text-align: left;
+}
+.market.off button { color: var(--pico-muted-color); }
+.market button:hover {
+  background: color-mix(in srgb, var(--pico-primary) 25%, transparent);
+}
 
 /* --- definition lists ----------------------------------------------------
    Pico stacks <dt> above <dd>, which is right for a glossary. These are

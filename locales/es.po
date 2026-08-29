@@ -11,10 +11,6 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: crates/app-web/templates/admin.html:73
-msgid "+{} realms"
-msgstr "+{} reinos"
-
 #: crates/app-web/src/i18n.rs
 msgid "24h"
 msgstr "24 h"
@@ -252,7 +248,7 @@ msgstr "Capa"
 msgid "Cluster"
 msgstr "Clúster"
 
-#: crates/app-web/templates/admin.html:67
+#: crates/app-web/templates/admin.html:72
 msgid "Collected. Click to stop."
 msgstr "Se recoge. Pulsa para detenerlo."
 
@@ -783,7 +779,7 @@ msgstr "Nodos en línea"
 msgid "None seen at this item level."
 msgstr "No se ha visto ninguno en este nivel de objeto."
 
-#: crates/app-web/templates/admin.html:67
+#: crates/app-web/templates/admin.html:72
 msgid "Not collected. Click to start."
 msgstr "No se recoge. Pulsa para empezar."
 
@@ -1006,10 +1002,6 @@ msgstr "Proporción"
 msgid "Shared reagents"
 msgstr "Materiales compartidos"
 
-#: crates/app-web/templates/admin.html:67
-msgid "Shares an auction house with {}, so they collect together."
-msgstr "Comparte casa de subastas con {}, así que se recogen juntos."
-
 #: crates/app-web/src/i18n.rs
 msgid "Shoulder"
 msgstr "Hombros"
@@ -1177,6 +1169,10 @@ msgstr ""
 #: crates/app-web/templates/partials/nodes.html:26
 msgid "These values are generated, not measured"
 msgstr "Estos valores están generados, no medidos"
+
+#: crates/app-web/templates/admin.html:72
+msgid "These {} realms share one auction house."
+msgstr "Estos {} reinos comparten una casa de subastas."
 
 #: crates/app-web/templates/auctions.html:61
 msgid ""
@@ -1599,10 +1595,6 @@ msgstr "versatilidad"
 msgid "via {}"
 msgstr "vía {}"
 
-#: crates/app-web/templates/admin.html:75
-msgid "with {}"
-msgstr "con {}"
-
 #: crates/app-web/src/i18n.rs
 msgid "{} ago"
 msgstr "hace {}"
@@ -1726,6 +1718,15 @@ msgstr "{} — desde {}"
 #: crates/app-web/templates/base.html:45
 msgid "{}% translated"
 msgstr "{} % traducido"
+
+#~ msgid "+{} realms"
+#~ msgstr "+{} reinos"
+
+#~ msgid "Shares an auction house with {}, so they collect together."
+#~ msgstr "Comparte casa de subastas con {}, así que se recogen juntos."
+
+#~ msgid "with {}"
+#~ msgstr "con {}"
 
 #~ msgid ""
 #~ "Prices from the snapshot {}. Blizzard does not publish an item level for "

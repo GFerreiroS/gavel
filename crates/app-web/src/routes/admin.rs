@@ -35,7 +35,7 @@ use crate::i18n::filters;
 use crate::prefs::MarketPrefs;
 use crate::render::page;
 use crate::session::current_user;
-use crate::views::{AdminCategory, AdminLanguage, AdminRealm, AdminRegion, AdminView, Layout};
+use crate::views::{AdminCategory, AdminLanguage, AdminMarket, AdminRegion, AdminView, Layout};
 
 #[derive(Template)]
 #[template(path = "admin.html")]
@@ -115,30 +115,26 @@ fn by_region(realms: &[Realm]) -> Vec<AdminRegion> {
             let mut languages: Vec<AdminLanguage> = tags
                 .into_iter()
                 .map(|tag| {
-                    // One entry per *realm*, not per connected realm: a
-                    // player looks for "C'Thun", not for "Dun Modr, C'Thun".
-                    // They share a switch because they share a market, which
-                    // each entry says.
-                    let mut realms: Vec<AdminRealm> = mine
+                    // One box per auction house, ordered by the first realm
+                    // in it: a player looking for "C'Thun" finds it under C,
+                    // inside the box it shares with Dun Modr.
+                    let mut markets: Vec<AdminMarket> = mine
                         .iter()
                         .filter(|r| r.locale == tag)
-                        .flat_map(|realm| entries(realm))
+                        .map(|realm| market(realm))
                         .collect();
-                    realms.sort_by(|a, b| a.name.cmp(&b.name));
+                    markets.sort_by(|a, b| a.names.cmp(&b.names));
                     AdminLanguage {
                         label: language_name(tag),
-                        // Counted by market, not by name: three realms sharing
-                        // one auction house are one thing being collected.
-                        enabled: mine.iter().filter(|r| r.locale == tag && r.enabled).count(),
-                        markets: mine.iter().filter(|r| r.locale == tag).count(),
-                        realms,
+                        enabled: markets.iter().filter(|m| m.enabled).count(),
+                        markets,
                     }
                 })
                 .collect();
             languages.sort_by(|a, b| {
-                b.realms
+                b.markets
                     .len()
-                    .cmp(&a.realms.len())
+                    .cmp(&a.markets.len())
                     .then(a.label.cmp(b.label))
             });
 
@@ -153,35 +149,23 @@ fn by_region(realms: &[Realm]) -> Vec<AdminRegion> {
         .collect()
 }
 
-/// One switch per realm name, all pointing at the connected realm they share.
+/// One auction house as a box of realm names.
 ///
-/// A connected realm with no members recorded yet -- one stored before the
-/// column existed -- still offers its joined name, so the page works before
-/// the next startup refreshes it.
-fn entries(realm: &Realm) -> Vec<AdminRealm> {
-    if realm.members.is_empty() {
-        return vec![AdminRealm {
-            id: realm.id.get(),
-            name: realm.name.clone(),
-            shared_with: Vec::new(),
-            enabled: realm.enabled,
-        }];
+/// A connected realm recorded before the members column existed has none, and
+/// falls back to its joined name so the page works before the next startup
+/// refreshes it.
+fn market(realm: &Realm) -> AdminMarket {
+    let mut names = if realm.members.is_empty() {
+        vec![realm.name.clone()]
+    } else {
+        realm.members.clone()
+    };
+    names.sort();
+    AdminMarket {
+        id: realm.id.get(),
+        names,
+        enabled: realm.enabled,
     }
-    realm
-        .members
-        .iter()
-        .map(|name| AdminRealm {
-            id: realm.id.get(),
-            name: name.clone(),
-            shared_with: realm
-                .members
-                .iter()
-                .filter(|other| *other != name)
-                .cloned()
-                .collect(),
-            enabled: realm.enabled,
-        })
-        .collect()
 }
 
 /// What to call a realm locale, in that language.
