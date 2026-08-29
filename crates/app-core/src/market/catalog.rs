@@ -507,6 +507,63 @@ impl CatalogItem {
         }
     }
 }
+/// An upgrade track: the axis that actually separates gear prices.
+///
+/// A listing carries one track bonus (13332, 13333, 13334 on Midnight) and one
+/// rank inside it (12825, 12826, …). The **track** is the market -- a Hero
+/// piece and a Veteran piece are different things a buyer chooses between --
+/// and the rank inside it is a range, not four markets nobody could price
+/// separately. That is the same judgement CLAUDE.md §8 already recorded; this
+/// type is what finally makes the pages agree with it.
+///
+/// Ordered weakest to strongest, which is the order a card lists them in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Track {
+    Veteran,
+    Champion,
+    Hero,
+    Myth,
+}
+
+impl Track {
+    /// Every track, in the order a card shows them.
+    ///
+    /// A fixed list rather than "whatever the market happens to hold": a card
+    /// with three rows next to a card with four is a grid that does not line
+    /// up, and "nobody is selling a Myth one" is an answer worth showing.
+    pub const ALL: [Track; 4] = [Track::Veteran, Track::Champion, Track::Hero, Track::Myth];
+
+    /// The English name, which is also the source string the templates
+    /// translate. The game's own word for it in every language.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Track::Veteran => "Veteran",
+            Track::Champion => "Champion",
+            Track::Hero => "Hero",
+            Track::Myth => "Myth",
+        }
+    }
+
+    /// The form that goes in a URL: `/wow/gear/{item}/veteran`.
+    pub const fn slug(self) -> &'static str {
+        match self {
+            Track::Veteran => "veteran",
+            Track::Champion => "champion",
+            Track::Hero => "hero",
+            Track::Myth => "myth",
+        }
+    }
+
+    /// Parse a name or a slug. Case-insensitive, and tolerant of the rank
+    /// being stuck on the end -- `item_levels` stores "Champion 2/6".
+    pub fn parse(raw: &str) -> Option<Track> {
+        let word = raw.split_whitespace().next().unwrap_or(raw);
+        Track::ALL
+            .into_iter()
+            .find(|t| word.eq_ignore_ascii_case(t.as_str()))
+    }
+}
 
 /// What one upgrade bonus id means.
 ///
@@ -598,6 +655,14 @@ pub struct Catalog {
     /// empty page waiting for it.
     #[serde(default)]
     pub item_levels: BTreeMap<String, ItemLevel>,
+    /// Upgrade-track bonus id -> the track it names.
+    ///
+    /// Separate from `item_levels`, which is keyed by the *rank* bonus. Both
+    /// are in every listing, and the track id is the reliable one: the market
+    /// carries rank 12827 that no sync has resolved yet, and its listings
+    /// still group correctly because 13332 is right there beside it.
+    #[serde(default)]
+    pub tracks: BTreeMap<String, Track>,
     /// Optional bonus id -> its name: "Prismatic Socket", "Leech". These do
     /// not divide a market, they are counted within one.
     #[serde(default)]
@@ -708,6 +773,11 @@ impl Catalog {
     /// What an upgrade bonus id means, if this catalog knows.
     pub fn item_level(&self, bonus: u32) -> Option<&ItemLevel> {
         self.item_levels.get(&bonus.to_string())
+    }
+
+    /// The upgrade track a bonus id names, if it names one.
+    pub fn track(&self, bonus: u32) -> Option<Track> {
+        self.tracks.get(&bonus.to_string()).copied()
     }
 
     /// The name of an optional bonus -- "Prismatic Socket", "Leech".

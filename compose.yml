@@ -26,10 +26,18 @@ services:
       # substitutes them here and they stay out of the image and out of `ps`.
       BLIZZARD_CLIENT_ID: ${BLIZZARD_CLIENT_ID:-}
       BLIZZARD_CLIENT_SECRET: ${BLIZZARD_CLIENT_SECRET:-}
+      # What a worker must present to join. Required whenever the worker port
+      # is open: without it, anything that can reach 3001 becomes a node of
+      # this cluster. Same value here and on every worker; the web container
+      # refuses to start if it is missing.
+      APP_CLUSTER_TOKEN: ${APP_CLUSTER_TOKEN:?set APP_CLUSTER_TOKEN in .env, e.g. openssl rand -hex 32}
       APP_LOG: ${APP_LOG:-info,sqlx=warn}
     volumes:
       - data:/data
     ports:
+      # Only 3000, and only on the loopback: the reverse proxy is what faces
+      # the network. 3001 is deliberately not published -- workers reach it on
+      # the compose network, and nothing outside should.
       - "127.0.0.1:3000:3000"
     restart: unless-stopped
     healthcheck:
@@ -44,6 +52,7 @@ services:
     build: .
     command: ["--connect=web:3001"]
     environment:
+      APP_CLUSTER_TOKEN: ${APP_CLUSTER_TOKEN:?set APP_CLUSTER_TOKEN in .env, e.g. openssl rand -hex 32}
       APP_LOG: ${APP_LOG:-info}
     depends_on:
       - web

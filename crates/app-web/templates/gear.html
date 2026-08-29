@@ -16,33 +16,52 @@
 </div>
 {% endif %}
 
-{% if gear.realms.is_empty() %}
+{% if !gear.has_realms %}
 <div class="alert alert-error" role="alert">
-  {{ "No connected realms are configured, so no gear prices are being collected. Start the server with --market-realms eu:1403,us:60 to choose some."|t }}
+  {{ "No connected realms are configured, so no gear prices are being collected. An administrator chooses them at /admin."|t }}
 </div>
 {% else %}
-{# The realm choice sits outside the fragment it changes: a <select> swapped
-   from under the pointer mid-choice is worse than a picker that reloads. #}
+{# The realm choice sits outside the fragment it changes: a picker swapped
+   from under the pointer mid-choice is worse than one that reloads. #}
 <form class="toolbar" method="get" action="{{ gear.path }}">
   <input type="hidden" name="expansion" value="{{ gear.expansion_id }}">
   {# Region rides in the URL beside the realm so a link reads
      `?region=eu&realm=draenor`. Slugs are unique across the realms we
      collect, so it is for the reader rather than for disambiguation. #}
   <input type="hidden" name="region" value="{{ gear.region }}">
+  {# The realm is chosen by the picker above, which navigates. This keeps it
+     when the *search* box below fetches a fragment. #}
+  <input type="hidden" name="realm" value="{{ gear.realm_slug }}">
   <label>
     <span>{{ "Realm"|t }}</span>
-    <select name="realm"
-            hx-get="{{ gear.fragment_path }}"
-            hx-include="closest form"
-            hx-target="#gear-list"
-            hx-swap="innerHTML">
-      {# The empty value is a real choice, not a blank: it is the cross-realm
-         view this page opens on. #}
-      <option value="">{{ "All realms"|t }}</option>
-      {% for realm in gear.realms %}
-      <option value="{{ realm.value }}"{% if realm.selected %} selected{% endif %}>{{ realm.region }} · {{ realm.name }}</option>
-      {% endfor %}
-    </select>
+    {# Our own dropdown, not a <datalist>: the browser draws a datalist's
+       popup wherever it likes -- on a wide window, in a column off to the
+       right of the box it belongs to -- and no styling reaches it. This one
+       opens under its summary because it is part of the page.
+
+       The entries are links, so choosing a realm goes there. There is nothing
+       to press afterwards, and it still works with scripting off; the search
+       box narrows the list on the server. #}
+    <details class="dropdown realm-picker">
+      <summary>{% if gear.realm_name.is_empty() %}{{ "All realms"|t }}{% else %}{{ gear.realm_name }}{% endif %}</summary>
+      <div class="realm-panel">
+        <input type="search" name="q" autocomplete="off"
+               placeholder='{{ "Search a realm"|t }}'
+               aria-label='{{ "Search a realm"|t }}'
+               hx-get="/partials/realms?kind={{ gear.kind }}&expansion={{ gear.expansion_id }}"
+               hx-trigger="keyup changed delay:200ms, search"
+               hx-target="#realm-options"
+               hx-swap="innerHTML">
+        {# Fetched the first time the picker is opened, not with the page: a
+           region is a few hundred links and most visits never open this. #}
+        <div id="realm-options" class="realm-options"
+             hx-get="/partials/realms?kind={{ gear.kind }}&expansion={{ gear.expansion_id }}"
+             hx-trigger="toggle once from:closest details"
+             hx-swap="innerHTML">
+          <span class="muted" aria-busy="true">{{ "Loading…"|t }}</span>
+        </div>
+      </div>
+    </details>
   </label>
   {% if gear.searchable %}
   {# Same search as the reagents and enchants pages: live filtering where
@@ -59,19 +78,36 @@
            hx-target="#gear-list"
            hx-swap="innerHTML">
   </label>
-  {% endif %}
+  {# Only where there is something to apply. The realm picker navigates on
+     its own, so on a page without a search box this button had nothing left
+     to do but sit there looking like it did. #}
   <button type="submit">{{ "Apply"|t }}</button>
+  {% endif %}
 </form>
 <small class="hint toolbar-note">
   {% if let Some(realm) = gear.realm_label %}
   {{ "Showing {} alone. Prices are the cheapest listing there."|t|fill(realm) }}
   {% else %}
-  {{ "Each region summarises its own realms: the headline is the median of what a realm's cheapest copy costs, with the cheapest and dearest realm named. Regions are never mixed -- you cannot buy across one."|t }}
+  {{ "Every realm in {}: the headline is the median of what a realm's cheapest copy costs, with the cheapest and dearest realm named. The region is the one chosen on the Auction House index — regions are separate markets and are never mixed."|t|fill(gear.region_label) }}
   {% endif %}
 </small>
 {% endif %}
 
-<div id="gear-list">
-  {% include "partials/gear.html" %}
+{# The cards arrive in their own request. The shell -- title, realm picker,
+   search -- costs one small query and paints immediately; counting every
+   market in every collected region is what takes the time, and there is no
+   reason for the controls to wait on it. The realm picker and the search box
+   swap into this same target, so the reader only ever learns one behaviour. #}
+<div id="gear-list"
+     hx-get="{{ gear.fragment_href }}"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+  <p class="hint page-meta" aria-busy="true">{{ "Loading prices…"|t }}</p>
+  {# The cards are fetched, so without scripting nothing would arrive. The
+     fragment is a real URL and answers on its own; unstyled, but the prices
+     are all there. #}
+  <noscript>
+    <p><a href="{{ gear.fragment_href }}">{{ "Show the prices"|t }}</a></p>
+  </noscript>
 </div>
 {% endblock %}

@@ -10,6 +10,7 @@ mod realm_prices;
 mod sessions;
 mod settings;
 mod users;
+mod watches;
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -29,6 +30,7 @@ pub use realm_prices::SqliteRealmPrices;
 pub use sessions::SqliteSessions;
 pub use settings::SqliteSettings;
 pub use users::SqliteUsers;
+use watches::SqliteWatches;
 
 /// Translate a backend error without letting SQLx types escape the crate.
 pub(crate) fn map_err(err: sqlx::Error) -> RepoError {
@@ -65,7 +67,11 @@ impl SqliteConfig {
     pub fn new(path: impl AsRef<Path>) -> Self {
         Self {
             path: path.as_ref().to_path_buf(),
-            max_connections: 4,
+            // Readers, mostly. A single page fans out one read per collected
+            // region and WAL lets those run at once; four would make the
+            // second visitor queue behind the first. Writes still serialise on
+            // SQLite's one writer, which is what `busy_timeout` is for.
+            max_connections: 8,
             busy_timeout_ms: 5_000,
             max_lifetime_ms: None,
         }
@@ -109,9 +115,22 @@ pub struct SqliteStore {
     prices: SqlitePrices,
     realm_prices: SqliteRealmPrices,
     settings: SqliteSettings,
+    watches: SqliteWatches,
 }
 
 impl SqliteStore {
+    /// The connection pool, for tests that need to hold a hand-written query
+    /// against what a port returns.
+    ///
+    /// Not for application code: domain code goes through the ports and must
+    /// never see an SQLx type (CLAUDE.md §9). It exists because the fastest
+    /// spelling of the "latest per market" query is SQLite-specific, and the
+    /// thing worth testing is that it still agrees with the portable one.
+    #[cfg(any(test, feature = "test-pool"))]
+    pub fn pool(&self) -> &Pool<Sqlite> {
+        &self.pool
+    }
+
     /// Open (creating if needed), configure and migrate the database.
     pub async fn connect(config: &SqliteConfig) -> RepoResult<Self> {
         let url = if config.is_memory() {
@@ -163,6 +182,8 @@ impl SqliteStore {
             .await
             .map_err(|e| RepoError::Backend(format!("migration failed: {e}")))?;
 
+        analyze_if_never(&pool).await;
+
         tracing::info!(database = %url, "storage ready");
 
         Ok(Self {
@@ -175,6 +196,7 @@ impl SqliteStore {
             prices: SqlitePrices::new(pool.clone()),
             realm_prices: SqliteRealmPrices::new(pool.clone()),
             settings: SqliteSettings::new(pool.clone()),
+            watches: SqliteWatches::new(pool.clone()),
             pool,
         })
     }
@@ -187,8 +209,65 @@ impl SqliteStore {
         SqliteClusterStore::new(self.pool.clone(), self.jobs.clone(), self.events.clone())
     }
 
+    /// Refresh the query planner's statistics incrementally.
+    ///
+    /// `PRAGMA optimize` re-analyses only the tables whose shape has moved
+    /// enough to matter, and `analysis_limit` caps how many rows it looks at
+    /// per index, so this stays bounded however large the archive gets. Called
+    /// from housekeeping: the price tables grow every collection cycle, and a
+    /// plan chosen against last month's statistics is a plan chosen against
+    /// the wrong table.
+    pub async fn optimize(&self) {
+        // The pragma is per connection, so both statements have to run on the
+        // same one; a pool hands out whichever is free.
+        let mut conn = match self.pool.acquire().await {
+            Ok(conn) => conn,
+            Err(e) => {
+                tracing::debug!(error = %e, "no connection free to optimize on");
+                return;
+            }
+        };
+        for sql in ["PRAGMA analysis_limit = 400", "PRAGMA optimize"] {
+            if let Err(e) = sqlx::query(sql).execute(&mut *conn).await {
+                tracing::debug!(error = %e, sql, "optimize step failed");
+                return;
+            }
+        }
+    }
+
     pub async fn close(&self) {
         self.pool.close().await;
+    }
+}
+
+/// Give the query planner statistics, once, if it has never had any.
+///
+/// Not a micro-optimisation. Without `sqlite_stat1` SQLite guesses at how
+/// selective each index is, and on the real archive it guessed wrong: the
+/// category pages took **four times longer** -- 220ms against 53ms for
+/// consumables, 129ms against 32ms for reagents -- purely because the plans
+/// were chosen blind. The whole thing costs 200ms, once, at startup.
+///
+/// Only when there are no statistics at all. After that
+/// [`SqliteStore::optimize`] keeps them current, incrementally, from
+/// housekeeping.
+///
+/// Failure is logged and ignored: an app that will not start because it could
+/// not gather statistics is worse than a slow one.
+async fn analyze_if_never(pool: &Pool<Sqlite>) {
+    let has_stats = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE name = 'sqlite_stat1'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(1);
+
+    if has_stats > 0 {
+        return;
+    }
+    tracing::info!("gathering query planner statistics for the first time");
+    if let Err(e) = sqlx::query("ANALYZE").execute(pool).await {
+        tracing::warn!(error = %e, "ANALYZE failed; queries will use estimated plans");
     }
 }
 
@@ -202,6 +281,7 @@ impl Store for SqliteStore {
     type Prices = SqlitePrices;
     type RealmPrices = SqliteRealmPrices;
     type Settings = SqliteSettings;
+    type Watches = SqliteWatches;
 
     fn users(&self) -> &Self::Users {
         &self.users
@@ -223,6 +303,9 @@ impl Store for SqliteStore {
     }
     fn prices(&self) -> &Self::Prices {
         &self.prices
+    }
+    fn watches(&self) -> &Self::Watches {
+        &self.watches
     }
     fn realm_prices(&self) -> &Self::RealmPrices {
         &self.realm_prices

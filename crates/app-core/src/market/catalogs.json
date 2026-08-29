@@ -7353,6 +7353,11 @@
         "43": "Indestructible",
         "13668": "Prismatic Socket",
         "13695": "Prismatic Socket"
+      },
+      "tracks": {
+        "13332": "veteran",
+        "13333": "champion",
+        "13334": "hero"
       }
     }
   ]

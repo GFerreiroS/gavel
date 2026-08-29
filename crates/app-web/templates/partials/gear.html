@@ -1,7 +1,7 @@
 {% import "macros.html" as tips %}
 <p class="hint page-meta">
   {% if gear.leveled %}
-  {{ "Prices from the snapshot {}. An auction does not carry an item level, only bonus ids; these were resolved from them and each item level is its own market."|t|fill(gear.observed) }}
+  {{ "Prices from the snapshot {}. An auction carries bonus ids rather than an item level; the upgrade track is the market, and the levels inside it are shown as a range."|t|fill(gear.observed) }}
   {% else %}
   {{ "Prices from the snapshot {}."|t|fill(gear.observed) }}
   {% endif %}
@@ -49,11 +49,15 @@
       </div>
       {% endif %}
 
-      {% for level in card.levels %}
+      {% for level in card.tracks %}
       <div class="gear-level">
         {% if level.leveled %}
-        <span class="rank-label gear-level-name">{{ "ilvl {}"|t|fill(level.item_level) }}
-          <span class="muted">· {{ level.upgrade }}</span></span>
+        {# The track leads, because the track is the choice: a Hero piece and
+           a Veteran piece are different things to buy. The item levels behind
+           it are a range, and `ilvl` stays `ilvl` in every language -- it is
+           what the game and every player call it. #}
+        <span class="rank-label gear-level-name">{{ level.track|t }}
+          {% if !level.levels.is_empty() %}<span class="muted">· ilvl {{ level.levels }}</span>{% endif %}</span>
         {% endif %}
         <div class="gear-cells">
           {% for cell in level.cells %}
@@ -65,10 +69,12 @@
             <dl class="rank-stats">
               <dt>{{ "Cheapest"|t }}</dt>
               <dd>{{ cell.cheapest.price }}
-                {% if let Some(realm) = cell.cheapest.realm %}<small class="muted">{{ realm }}</small>{% endif %}</dd>
+                {% if let Some(realm) = cell.cheapest.realm %}<small class="muted realm-name"
+                  {% if !cell.cheapest.realm_full.is_empty() %}title="{{ cell.cheapest.realm_full }}"{% endif %}>{{ realm }}</small>{% endif %}</dd>
               <dt>{{ "Highest"|t }}</dt>
               <dd>{{ cell.highest.price }}
-                {% if let Some(realm) = cell.highest.realm %}<small class="muted">{{ realm }}</small>{% endif %}</dd>
+                {% if let Some(realm) = cell.highest.realm %}<small class="muted realm-name"
+                  {% if !cell.highest.realm_full.is_empty() %}title="{{ cell.highest.realm_full }}"{% endif %}>{{ realm }}</small>{% endif %}</dd>
               <dt>{{ "Listings"|t }}</dt>
               <dd>{{ cell.listings }}
                 {% if cell.realms > 1 %}<small class="muted">{{ "on {} realms"|t|fill(cell.realms) }}</small>{% endif %}</dd>
@@ -86,7 +92,10 @@
           </div>
           {% endfor %}
         </div>
-        {% if !level.href.is_empty() %}
+        {# Only where there is something to show. A track nobody is selling
+           still gets its row, so the grid lines up, but a button leading to an
+           empty page is a promise the page cannot keep. #}
+        {% if !level.href.is_empty() && level.listed %}
         <a class="rank-link outline secondary" role="button"
            href="{{ level.href }}?region={{ gear.region }}{% if !gear.realm_slug.is_empty() %}&realm={{ gear.realm_slug }}{% endif %}">{{ "Stats & graphs"|t }} →</a>
         {% endif %}

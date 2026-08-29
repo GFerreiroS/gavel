@@ -27,13 +27,11 @@ use crate::prefs::MarketPrefs;
 use crate::render::page;
 use crate::session::current_user;
 use crate::views::{
-    AlertRow, AuctionCategory, AuctionsView, BaselineOption, CardGroup, CatalogLink, Layout,
-    MarketPicker, MarketView, PatchCell, PatchColumn, PatchRow,
+    AuctionCategory, AuctionsView, BaselineOption, CardGroup, CatalogLink, Layout, MarketPicker,
+    MarketView, PatchCell, PatchColumn, PatchRow,
 };
 
 /// The window the "vs usual" figure compares against is a visitor preference,
-/// chosen on the Auction House index -- see [`crate::prefs`].
-const ALERT_LIMIT: usize = 20;
 
 #[derive(Template)]
 #[template(path = "auctions.html")]
@@ -169,7 +167,7 @@ pub async fn index<E: Ports>(
                 "/wow/auctions",
                 &uri,
                 user.as_ref(),
-                csrf.0.clone(),
+                csrf.masked(),
             ),
             auctions,
         },
@@ -235,7 +233,7 @@ async fn render_page<E: Ports>(
     uri: &axum::http::Uri,
     id: Option<String>,
 ) -> WebResult<Html<String>> {
-    let market = build(&env, prefs, id.as_deref()).await?;
+    let market = build(&env, prefs, id.as_deref(), super::gear::Detail::Shell).await?;
     let user = current_user(&env, &headers).await?;
     page(
         &ConsumablesPage {
@@ -246,7 +244,7 @@ async fn render_page<E: Ports>(
                 "/wow/auctions",
                 uri,
                 user.as_ref(),
-                csrf.0.clone(),
+                csrf.masked(),
             ),
             market,
         },
@@ -260,7 +258,7 @@ pub async fn fragment<E: Ports>(
 ) -> WebResult<Html<String>> {
     page(
         &ConsumablesFragment {
-            market: build(&env, prefs, None).await?,
+            market: build(&env, prefs, None, super::gear::Detail::Full).await?,
         },
         prefs.locale,
     )
@@ -278,7 +276,12 @@ fn select<'a, E: Ports>(env: &'a E, id: Option<&str>) -> Option<&'a Catalog> {
     }
 }
 
-async fn build<E: Ports>(env: &E, prefs: MarketPrefs, id: Option<&str>) -> WebResult<MarketView> {
+async fn build<E: Ports>(
+    env: &E,
+    prefs: MarketPrefs,
+    id: Option<&str>,
+    detail: super::gear::Detail,
+) -> WebResult<MarketView> {
     let Some(catalog) = select(env, id) else {
         return Err(app_core::AppError::NotFound.into());
     };
@@ -289,30 +292,52 @@ async fn build<E: Ports>(env: &E, prefs: MarketPrefs, id: Option<&str>) -> WebRe
     let prices = env.store().prices();
     let now = env.now();
 
-    let latest: BTreeMap<ItemId, PriceSample> = prices
-        .latest(region)
-        .await?
-        .into_iter()
-        .map(|s| (s.item, s))
-        .collect();
-
-    let recent: BTreeMap<ItemId, WindowStats> = index_stats(
+    // The shell asks for no prices: the heading, the archived notice and the
+    // expansion wording are all that paint first.
+    let shell = detail == super::gear::Detail::Shell;
+    let latest: BTreeMap<ItemId, PriceSample> = if shell {
+        BTreeMap::new()
+    } else {
         prices
-            .window_stats(region, prefs.baseline_since(now), None)
-            .await?,
-    );
+            .latest(region)
+            .await?
+            .into_iter()
+            .map(|s| (s.item, s))
+            .collect()
+    };
+
+    let recent: BTreeMap<ItemId, WindowStats> = if shell {
+        BTreeMap::new()
+    } else {
+        index_stats(
+            prices
+                .window_stats(region, prefs.baseline_since(now), None)
+                .await?,
+        )
+    };
 
     // Extremes are all-time, not windowed: "cheapest ever, and when" only
     // means something across the whole history.
-    let all_time = index_stats(prices.window_stats(region, Millis::ZERO, None).await?);
+    let all_time = if shell {
+        BTreeMap::new()
+    } else {
+        index_stats(prices.window_stats(region, Millis::ZERO, None).await?)
+    };
 
     // Tooltips that are already cached go straight into the page, so hovering
     // an icon costs no request at all (see `routes::tooltip`).
-    let tooltips = super::tooltip::cached_all(env, prefs, catalog, now).await;
+    let tooltips = if shell {
+        Default::default()
+    } else {
+        super::tooltip::cached_all(env, prefs, catalog, now).await
+    };
 
     // --- one card per market, grouped the way the raid is grouped ----------
     let mut groups: Vec<CardGroup> = Vec::new();
     for (audience, label) in ALL_AUDIENCES_LABELS {
+        if shell {
+            break;
+        }
         let mut cards = Vec::new();
         for entry in catalog.by_audience(audience) {
             cards.push(crate::cards::card(
@@ -338,6 +363,11 @@ async fn build<E: Ports>(env: &E, prefs: MarketPrefs, id: Option<&str>) -> WebRe
     let mut columns = Vec::with_capacity(windows.len());
     let mut per_patch: Vec<BTreeMap<ItemId, WindowStats>> = Vec::with_capacity(windows.len());
     for (patch, from, until) in &windows {
+        // Per-patch history is another query per patch, and it is drawn in the
+        // fragment. The shell has no use for it.
+        if shell {
+            break;
+        }
         columns.push(PatchColumn {
             patch: patch.patch.clone(),
             label: patch.label(),
@@ -370,27 +400,6 @@ async fn build<E: Ports>(env: &E, prefs: MarketPrefs, id: Option<&str>) -> WebRe
     }
     patch_rows.sort_by(|a, b| a.category.cmp(b.category).then(a.name.cmp(&b.name)));
 
-    // --- alerts ------------------------------------------------------------
-    let all_items = env.catalogs().index();
-    let alerts = prices
-        .recent_alerts(ALERT_LIMIT)
-        .await?
-        .into_iter()
-        .map(|alert| AlertRow {
-            name: all_items
-                .get(&alert.item)
-                .map(|(_, item)| crate::cards::display_name(&tooltips, item, alert.item))
-                .unwrap_or_else(|| alert.item.to_string()),
-            region: alert.region.to_string().to_uppercase(),
-            severity: alert.severity.as_str(),
-            current: alert.current.to_string(),
-            baseline: alert.baseline.to_string(),
-            discount_percent: alert.discount_percent,
-            quantity: alert.quantity,
-            when: alert.observed_at.to_utc_string(),
-        })
-        .collect();
-
     Ok(MarketView {
         expansion: catalog.expansion.clone(),
         season: catalog.season.clone(),
@@ -399,7 +408,6 @@ async fn build<E: Ports>(env: &E, prefs: MarketPrefs, id: Option<&str>) -> WebRe
         groups,
         patches: columns,
         patch_rows,
-        alerts,
         // One snapshot priced every card on the page, so the age is the
         // page's rather than each card's.
         observed: observed(prefs, now, prices.last_observed(region).await?),

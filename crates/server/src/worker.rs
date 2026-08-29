@@ -33,8 +33,11 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(2);
 /// not a reason to exit. A worker that quit on a dropped connection would need
 /// something else to restart it, which is exactly the babysitting a process
 /// manager should not have to do.
-pub async fn run(address: &str) -> anyhow::Result<()> {
+pub async fn run(address: &str, token: Option<String>) -> anyhow::Result<()> {
     let capabilities = NodeCapabilities::local();
+    if token.is_none() {
+        tracing::warn!("APP_CLUSTER_TOKEN is not set; the coordinator will refuse this worker");
+    }
     tracing::info!(
         coordinator = address,
         cores = capabilities.cores,
@@ -42,7 +45,7 @@ pub async fn run(address: &str) -> anyhow::Result<()> {
     );
 
     loop {
-        match session(address, capabilities).await {
+        match session(address, capabilities, token.as_deref()).await {
             Ok(()) => tracing::info!("coordinator closed the connection"),
             Err(e) => tracing::warn!(error = %e, "connection lost"),
         }
@@ -51,7 +54,11 @@ pub async fn run(address: &str) -> anyhow::Result<()> {
 }
 
 /// One connection, from `Hello` until the socket dies.
-async fn session(address: &str, capabilities: NodeCapabilities) -> anyhow::Result<()> {
+async fn session(
+    address: &str,
+    capabilities: NodeCapabilities,
+    token: Option<&str>,
+) -> anyhow::Result<()> {
     let mut socket = TcpStream::connect(address).await?;
     // Frames are small and latency matters: a heartbeat held back by Nagle's
     // algorithm is a worker that looks slower than it is.
@@ -60,7 +67,7 @@ async fn session(address: &str, capabilities: NodeCapabilities) -> anyhow::Resul
     // Anonymous: the coordinator hands out identity. A worker that chose its
     // own would collide with itself the moment two replicas started from the
     // same configuration.
-    let mut agent = Agent::anonymous(capabilities, 1_000);
+    let mut agent = Agent::anonymous(capabilities, 1_000).with_token(token.map(str::to_string));
 
     let mut out = Vec::with_capacity(256);
     encode_frame(&agent.hello(), &mut out)?;

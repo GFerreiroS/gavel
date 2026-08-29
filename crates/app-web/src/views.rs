@@ -112,6 +112,8 @@ pub struct AuctionCategory {
 /// and searchable because there are 223 of them rather than 26.
 #[derive(Debug, Clone)]
 pub struct ReagentsView {
+    /// Where the cards come from, with the current choices already in it.
+    pub fragment_href: String,
     pub expansion: String,
     /// The catalog id behind `expansion`, so the page's own form can carry the
     /// choice back rather than silently falling back to the live expansion.
@@ -136,6 +138,8 @@ pub struct ReagentsView {
 /// whether the cards divide into sections. See `routes::enhancements`.
 #[derive(Debug, Clone)]
 pub struct EnhancementsView {
+    /// Where the cards come from, with the current choices already in it.
+    pub fragment_href: String,
     /// Source strings, translated by the template.
     pub title: &'static str,
     /// Takes the expansion name.
@@ -169,13 +173,28 @@ pub struct EnhancementsView {
 /// this is one page rather than two.
 #[derive(Debug, Clone)]
 pub struct GearView {
+    /// The chosen realm's own name, echoed into the picker. Empty for the
+    /// cross-realm view.
+    pub realm_name: String,
+    /// The region these prices are from, as the reader would write it: "EU".
+    pub region_label: String,
+    /// `gear` or `recipes`: which page the realm picker's links lead back to.
+    pub kind: &'static str,
+    /// False when this region has no connected realms configured at all,
+    /// which is a deployment to fix rather than an empty page to explain.
+    pub has_realms: bool,
+    /// Where the cards come from, with the current choices already in it.
+    ///
+    /// Built server-side rather than gathered from the form by `hx-include`:
+    /// the element that fetches this is a sibling of the toolbar, not a child,
+    /// and a load-time fetch should not depend on the DOM being wired up yet.
+    pub fragment_href: String,
     pub expansion: String,
     pub expansion_id: String,
     pub archived: bool,
     /// Age of the newest realm snapshot on the page.
     pub observed: String,
     /// Every collected realm, for the picker. Empty when none is configured.
-    pub realms: Vec<RealmOption>,
     /// What the picker currently reads. `None` is "all realms".
     pub realm_label: Option<String>,
     /// Goes in the URL beside the realm slug, so a link reads
@@ -215,11 +234,14 @@ pub struct GearGroup {
 /// One connected realm on the picker.
 #[derive(Debug, Clone)]
 pub struct RealmOption {
-    /// `eu:1403` -- the form value, and what the cookie remembers.
-    pub value: String,
+    /// One realm's own name -- "Sargeras", not "Garona, Sargeras, Ner'zhul".
+    ///
+    /// Several of these share an auction house and all resolve to the same
+    /// market. Listing them separately is what lets a player find the realm
+    /// they play on instead of the joined name Blizzard filed it under; which
+    /// others come with it is said in the note under the picker, once a choice
+    /// has been made, rather than in every line of the list.
     pub name: String,
-    pub region: String,
-    pub selected: bool,
 }
 
 /// One tracked item: a row per item level, a cell per region (or the chosen
@@ -242,27 +264,37 @@ pub struct GearCard {
     pub material: Option<String>,
     /// Column headings: "EU" and "US", or one realm's name.
     pub scopes: Vec<String>,
-    pub levels: Vec<GearLevelRow>,
+    pub tracks: Vec<GearTrackRow>,
     /// True when nothing is listed anywhere we look. The card still appears:
     /// "nobody is selling one" is an answer, and it is a different answer
     /// from "we do not track this".
     pub unlisted: bool,
 }
 
-/// One item level of an item, across every region in view.
+/// One upgrade track of an item.
+///
+/// A row per *track*, not per item level. A card used to carry one row for
+/// every rank the market held -- eight of them, "ilvl 279 · Veteran 1/6" and
+/// so on down -- which is eight markets nobody prices separately and a card
+/// too tall to compare with its neighbour. The track is the choice a buyer
+/// actually makes; the ranks inside it are a range, and the statistics page
+/// is where they are worth breaking apart.
 #[derive(Debug, Clone)]
-pub struct GearLevelRow {
-    /// The item level, say 295. Zero when the catalog has no mapping for the
-    /// bonus: a recipe, or gear the sync script has not resolved yet.
-    pub item_level: u16,
-    /// "Champion 2/6": the track and the rank within it.
-    pub upgrade: String,
-    /// False for recipes, which have exactly one version of themselves and
-    /// would be lied about by a level heading.
+pub struct GearTrackRow {
+    /// The track's English name, translated in the template. Empty for a
+    /// recipe, which has one version of itself and no track at all.
+    pub track: &'static str,
+    /// The item levels listed in this track: "279" or "279–285". Empty when
+    /// the market holds none, or when the catalog cannot name them yet.
+    pub levels: String,
+    /// False for recipes, which would be lied about by a track heading.
     pub leveled: bool,
-    /// Where its own statistics page lives. Empty when there is no level to
-    /// have a page for.
+    /// Its own statistics page. Empty when there is nothing to show there.
     pub href: String,
+    /// Whether any scope has this track listed. A track nobody is selling
+    /// still gets its row -- that is what keeps the grid square -- but it
+    /// must not offer a button to a page with nothing on it.
+    pub listed: bool,
     pub cells: Vec<GearCell>,
 }
 
@@ -289,6 +321,9 @@ pub struct GearCell {
 
 #[derive(Debug, Clone, Default)]
 pub struct GearWhere {
+    /// Every realm sharing this auction house, for the line's `title`. Empty
+    /// where there is nothing more to say than `realm` already says.
+    pub realm_full: String,
     /// `None` on a single realm: there is only one place, and naming it three
     /// times a card is noise.
     pub realm: Option<String>,
@@ -313,26 +348,33 @@ pub struct GearExtra {
 /// helm and a Hero 1/6 helm share an item id and nothing else that matters.
 #[derive(Debug, Clone)]
 pub struct GearStatsView {
+    /// The chosen realm's own name, echoed into the picker.
+    pub realm_name: String,
+    /// `gear` or `recipes`: which page the realm picker's links lead to.
+    pub kind: &'static str,
     pub item_id: u32,
     pub name: String,
     pub icon: Option<String>,
     pub tooltip: Option<TooltipView>,
     pub slot: &'static str,
-    /// The item level, and "Champion 2/6". Both zero/empty for a recipe,
-    /// which has one version of itself.
-    pub item_level: u16,
-    pub upgrade: String,
+    /// The track this page is about -- "Hero". Empty for a recipe, which has
+    /// one version of itself and no track.
+    pub track: &'static str,
+    /// The item levels this track holds in the market: "305–311".
+    pub level_range: String,
     /// The category this belongs to, for the breadcrumb.
     pub section: &'static str,
     pub section_href: &'static str,
-    /// The other item levels of the same item, so the ladder is one click
-    /// wide rather than a trip back to the grid.
+    /// The other tracks of the same item, so the ladder is one click wide
+    /// rather than a trip back to the grid.
     pub siblings: Vec<GearLevelLink>,
+    /// What each item level inside this track is doing, which is the reason
+    /// to open this page: the card gave the range, this gives the breakdown.
+    pub levels: Vec<GearLevelStat>,
     /// Whose prices these are: a realm's name, or every realm.
     pub scope: Option<String>,
     /// The same realm as a slug, for links out of this page.
     pub realm_slug: String,
-    pub realms: Vec<RealmOption>,
     pub region: &'static str,
     pub observed: String,
     /// How far back the figures reach, in days.
@@ -355,10 +397,27 @@ pub struct GearStatsView {
 /// One item level of an item, as a link from another.
 #[derive(Debug, Clone)]
 pub struct GearLevelLink {
-    pub item_level: u16,
-    pub upgrade: String,
+    /// The track's English name, translated in the template.
+    pub track: &'static str,
     pub href: String,
     pub current: bool,
+}
+
+/// One item level inside a track, and what it is doing right now.
+///
+/// The card shows a track as a range because that is the choice a buyer
+/// makes. This is what the range is made of -- and an ilvl 311 selling for
+/// less than an ilvl 305 is exactly the kind of thing worth seeing.
+#[derive(Debug, Clone)]
+pub struct GearLevelStat {
+    pub item_level: u16,
+    /// "Hero 3/6" -- the rank inside the track, as the game words it.
+    pub upgrade: String,
+    pub cheapest: String,
+    pub highest: String,
+    pub listings: u32,
+    /// How many realms had one at all.
+    pub realms: usize,
 }
 
 /// How common an optional bonus is, now and over the window.
@@ -464,6 +523,10 @@ impl Layout {
             ("WoW", "/wow"),
             ("Account", "/account"),
         ];
+        // Only means anything with an account behind it: the page is a list of
+        // what *you* follow. Offering it to a signed-out visitor is offering a
+        // page that can only say "sign in".
+        const SIGNED_IN_NAV: [(&str, &str); 1] = [("Alerts", "/wow/alerts")];
         // How the app is running. Only an administrator has any use for them,
         // and a nav full of pages most visitors cannot open is a worse
         // greeting than a short one.
@@ -496,6 +559,11 @@ impl Layout {
             language_label: locale.label(),
             nav: NAV
                 .iter()
+                .chain(if user.is_some() {
+                    &SIGNED_IN_NAV[..]
+                } else {
+                    &[]
+                })
                 .chain(if is_admin { &ADMIN_NAV[..] } else { &[] })
                 .map(|(label, href)| NavItem {
                     label,
@@ -953,6 +1021,8 @@ pub struct ItemDetail {
     pub section_href: String,
     pub expansion_href: String,
     pub region: String,
+    /// The same region as the code a form posts back, lowercase.
+    pub region_code: &'static str,
     pub archived: bool,
 
     pub has_data: bool,
@@ -990,6 +1060,7 @@ pub struct ItemDetail {
 
 #[derive(Debug, Clone)]
 pub struct AlertRow {
+    pub item_id: u32,
     pub name: String,
     pub region: String,
     pub severity: &'static str,
@@ -998,6 +1069,49 @@ pub struct AlertRow {
     pub discount_percent: u8,
     pub quantity: u64,
     pub when: String,
+}
+
+/// Today's alerts for the items one person follows.
+///
+/// An alert nobody asked for is a feed. This is the whole reason the view has
+/// a shape of its own: `visible` is false for a visitor who is signed out or
+/// who follows nothing, and the summary then renders nothing at all rather
+/// than an empty box explaining itself.
+#[derive(Debug, Clone, Default)]
+pub struct AlertsView {
+    pub visible: bool,
+    pub rows: Vec<AlertRow>,
+}
+
+impl AlertsView {
+    pub fn count(&self) -> usize {
+        self.rows.len()
+    }
+}
+
+/// One followed item, on the alerts page.
+#[derive(Debug, Clone)]
+pub struct WatchRow {
+    pub item_id: u32,
+    pub name: String,
+    pub region: String,
+    /// The region code the form posts back, lowercase.
+    pub region_code: &'static str,
+    pub icon: Option<String>,
+    /// What it costs right now, or `None` when nothing has been recorded.
+    pub current: Option<String>,
+    pub href: String,
+}
+
+/// The alerts page: what you follow.
+///
+/// Today's alerts are *not* in here. They are the same fragment the auction
+/// house index shows, and a shared component with two owners drifts (§7); the
+/// page holds it in its own field so both render the same markup.
+#[derive(Debug, Clone, Default)]
+pub struct WatchlistView {
+    pub signed_in: bool,
+    pub watches: Vec<WatchRow>,
 }
 
 /// One expansion in the selector.
@@ -1064,7 +1178,6 @@ pub struct MarketView {
     pub groups: Vec<CardGroup>,
     pub patches: Vec<PatchColumn>,
     pub patch_rows: Vec<PatchRow>,
-    pub alerts: Vec<AlertRow>,
     /// Age of the snapshot every card on the page was priced from.
     pub observed: String,
     pub baseline_days: u64,

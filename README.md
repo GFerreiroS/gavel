@@ -114,13 +114,14 @@ Every setting is a CLI flag backed by an environment variable, with a default.
 | `--workers` | `APP_WORKERS` | `4` | Workers inside this process |
 | `--worker-listen` | `APP_WORKER_LISTEN` | off | Accept worker connections, e.g. `0.0.0.0:3001` |
 | `--connect` | `APP_CONNECT` | off | Run as a worker against this coordinator |
+| *(none)* | `APP_CLUSTER_TOKEN` | — | Cluster join secret. Required with `--worker-listen`; sent by `--connect` |
 | `--heartbeat-ms` | `APP_HEARTBEAT_MS` | `1000` | Heartbeat interval |
 | `--suspect-ms` | `APP_SUSPECT_MS` | `3000` | Silence before Suspect |
 | `--offline-ms` | `APP_OFFLINE_MS` | `6000` | Silence before Offline |
 | `--max-task-attempts` | `APP_MAX_ATTEMPTS` | `3` | Attempts before a task fails for good |
 | `--poll-ms` | `APP_POLL_MS` | `2000` | Fallback refresh interval (SSE is primary) |
 | `--gateway-min` etc. | `APP_GATEWAY_MIN` … | `1,2,2,1,1` | Role minimums |
-| `--debug-controls` | `APP_DEBUG_CONTROLS` | `true` | Mount `/debug/*` |
+| `--debug-controls` | `APP_DEBUG_CONTROLS` | `false` | Mount `/debug/*` (administrator only) |
 | `--secure-cookies` | `APP_SECURE_COOKIES` | `false` | Requires HTTPS |
 | `--log` | `APP_LOG` | `info,sqlx=warn` | Tracing filter |
 | `--market-regions` | `APP_MARKET_REGIONS` | `eu,us,kr,tw` | Auction regions to collect and offer in the picker |
@@ -204,9 +205,20 @@ docker compose up -d --scale worker=8  # more workers, no config change
 Or without Docker, on one host:
 
 ```bash
+export APP_CLUSTER_TOKEN=$(openssl rand -hex 32)                 # same on both
 server --host 0.0.0.0 --worker-listen 0.0.0.0:3001 --workers 0   # coordinator
 server --connect coordinator:3001                                # each worker
 ```
+
+`APP_CLUSTER_TOKEN` is what a worker presents to join, and the coordinator
+**refuses to start** with `--worker-listen` and no token: without one, anything
+that can open a socket to that port becomes a node of the cluster, takes work
+and reports whatever result it likes. It is an environment variable, never a
+flag, so it stays out of `ps` and out of shell history.
+
+The token crosses the wire as it is, so the worker port belongs on a private
+network or inside a tunnel — the same boundary as everything else here, where
+TLS terminates at the reverse proxy. Do not publish 3001.
 
 Put a reverse proxy in front for TLS. Workers need no ports, no volume and no
 database: everything they need arrives over the connection they open.

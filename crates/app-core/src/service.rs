@@ -3,7 +3,7 @@
 
 use cluster_core::{ClusterControl, JobId, JobSpec, Millis};
 
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult, text};
 use crate::item::{ItemDetailProvider, ItemTooltip};
 use crate::locale::Locale;
 use crate::market::{ItemId, Region};
@@ -22,16 +22,15 @@ pub const MAX_PRIME_BOUND: u64 = 50_000_000;
 /// a store -- which also makes it trivial to test.
 pub fn build_job_spec(kind: &str, size: u64, tasks: u16) -> AppResult<JobSpec> {
     if tasks == 0 || tasks > MAX_TASKS_PER_JOB {
-        return Err(AppError::validation(format!(
-            "task count must be between 1 and {MAX_TASKS_PER_JOB}"
-        )));
+        return Err(AppError::validation_with(
+            text::TASK_COUNT_RANGE,
+            [MAX_TASKS_PER_JOB],
+        ));
     }
     match kind {
         "sleep" => {
             if size == 0 || size > MAX_SLEEP_MS {
-                return Err(AppError::validation(format!(
-                    "sleep duration must be between 1 and {MAX_SLEEP_MS} ms"
-                )));
+                return Err(AppError::validation_with(text::SLEEP_RANGE, [MAX_SLEEP_MS]));
             }
             Ok(JobSpec::Sleep {
                 total_ms: size,
@@ -40,16 +39,17 @@ pub fn build_job_spec(kind: &str, size: u64, tasks: u16) -> AppResult<JobSpec> {
         }
         "primes" => {
             if !(2..=MAX_PRIME_BOUND).contains(&size) {
-                return Err(AppError::validation(format!(
-                    "prime bound must be between 2 and {MAX_PRIME_BOUND}"
-                )));
+                return Err(AppError::validation_with(
+                    text::PRIME_RANGE,
+                    [MAX_PRIME_BOUND],
+                ));
             }
             Ok(JobSpec::Primes {
                 upper_bound: size,
                 tasks,
             })
         }
-        other => Err(AppError::validation(format!("unknown job kind '{other}'"))),
+        other => Err(AppError::validation_with(text::UNKNOWN_JOB_KIND, [other])),
     }
 }
 
@@ -101,25 +101,26 @@ impl<'a, P: CharacterProvider, K: CacheStore> CharacterService<'a, P, K> {
     }
 
     pub fn validate(region: &str, realm: &str, name: &str) -> AppResult<CharacterQuery> {
-        let clean = |label: &str, value: &str| -> AppResult<String> {
+        // Each field names its own two messages rather than sharing one with
+        // the field name substituted in: the field name would be the one word
+        // in the sentence that no catalogue could translate.
+        let clean = |missing: &'static str, bad: &'static str, value: &str| -> AppResult<String> {
             let value = value.trim();
             if value.is_empty() || value.len() > 64 {
-                return Err(AppError::validation(format!("{label} is required")));
+                return Err(AppError::validation(missing));
             }
             if !value
                 .chars()
                 .all(|c| c.is_alphanumeric() || matches!(c, '-' | '\'' | ' '))
             {
-                return Err(AppError::validation(format!(
-                    "{label} contains invalid characters"
-                )));
+                return Err(AppError::validation(bad));
             }
             Ok(value.to_string())
         };
         Ok(CharacterQuery {
-            region: clean("region", region)?.to_lowercase(),
-            realm: clean("realm", realm)?,
-            name: clean("character name", name)?,
+            region: clean(text::REGION_REQUIRED, text::REGION_CHARSET, region)?.to_lowercase(),
+            realm: clean(text::REALM_REQUIRED, text::REALM_CHARSET, realm)?,
+            name: clean(text::CHARACTER_REQUIRED, text::CHARACTER_CHARSET, name)?,
         })
     }
 
@@ -172,6 +173,42 @@ impl<'a, P: ItemDetailProvider, K: CacheStore> ItemTooltipService<'a, P, K> {
         let key = ItemTooltip::cache_key(item, locale);
         let bytes = self.cache.get(&key, now).await.ok().flatten()?;
         serde_json::from_slice::<ItemTooltip>(&bytes).ok()
+    }
+
+    /// Every cached tooltip among `items`, in one round trip.
+    ///
+    /// A page of item cards wants all of them at once. Asking one at a time is
+    /// the same answer for an order of magnitude more work, and it was the
+    /// largest single cost in rendering a category page.
+    ///
+    /// An item that is not cached is simply missing from the result, like
+    /// [`Self::cached`] returning `None`. Nothing here fetches: a page renders
+    /// what is already known and the collector is what fills the gaps.
+    pub async fn cached_many(
+        &self,
+        locale: Locale,
+        items: impl IntoIterator<Item = ItemId>,
+        now: Millis,
+    ) -> Vec<(ItemId, ItemTooltip)> {
+        let mut wanted: Vec<ItemId> = items.into_iter().collect();
+        wanted.sort_unstable();
+        wanted.dedup();
+
+        let keys: Vec<String> = wanted
+            .iter()
+            .map(|item| ItemTooltip::cache_key(*item, locale))
+            .collect();
+        let Ok(rows) = self.cache.get_many(&keys, now).await else {
+            return Vec::new();
+        };
+
+        // Keyed back by the id inside the decoded tooltip rather than by
+        // parsing the cache key: the key format is this module's business and
+        // the tooltip already carries the id it is for.
+        rows.into_iter()
+            .filter_map(|(_, bytes)| serde_json::from_slice::<ItemTooltip>(&bytes).ok())
+            .map(|tooltip| (tooltip.item, tooltip))
+            .collect()
     }
 
     /// The tooltip for one item in one language, fetching if it is not cached.

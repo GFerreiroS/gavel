@@ -3,7 +3,7 @@
 use app_core::market::{
     Catalog, CatalogItem, ItemId, ItemKind, analysis, analysis::WEEKDAY_NAMES, downsample,
 };
-use app_core::repo::{PriceRepository, Store};
+use app_core::repo::{PriceRepository, Store, WatchRepository};
 use app_core::{AppError, Ports};
 use askama::Template;
 use axum::Extension;
@@ -29,6 +29,9 @@ const CHART_POINTS: usize = 140;
 struct ItemPage {
     layout: Layout,
     item: ItemDetail,
+    /// `None` when nobody is signed in: the control is not offered, rather
+    /// than offered and refused.
+    following: Option<bool>,
 }
 
 pub async fn detail<E: Ports>(
@@ -49,6 +52,22 @@ pub async fn detail<E: Ports>(
 
     let detail = build(&env, prefs, &catalog, &entry, item).await?;
     let user = current_user(&env, &headers).await?;
+
+    // Whether this reader already follows this item in the region they are
+    // looking at. `None` for a visitor who is signed out: the control is not
+    // offered at all rather than offered and then refused.
+    let following = match user.as_ref() {
+        None => None,
+        Some(user) => Some(
+            env.store()
+                .watches()
+                .watches(user.id)
+                .await?
+                .iter()
+                .any(|w| w.item == item && w.region == prefs.region),
+        ),
+    };
+
     page(
         &ItemPage {
             layout: Layout::new(
@@ -58,9 +77,10 @@ pub async fn detail<E: Ports>(
                 "/wow/auctions",
                 &uri,
                 user.as_ref(),
-                csrf.0.clone(),
+                csrf.masked(),
             ),
             item: detail,
+            following,
         },
         prefs.locale,
     )
@@ -224,6 +244,7 @@ async fn build<E: Ports>(
         section_href: format!("{section_path}?expansion={}", catalog.id),
         expansion_href: format!("/wow/auctions?expansion={}", catalog.id),
         region: region.to_string().to_uppercase(),
+        region_code: region.as_str(),
         archived: !catalog.is_active(),
 
         has_data: stats.samples > 0,

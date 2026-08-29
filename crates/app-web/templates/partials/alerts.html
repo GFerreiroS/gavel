@@ -1,0 +1,43 @@
+{# Today's alerts, for the items this reader follows.
+
+   Renders *nothing* when there is nothing to say: signed out, or following
+   nothing. An empty box that explains why it is empty is one more thing to
+   read past on every visit, and the reader learns the page from what is on
+   it. #}
+{% if alerts.visible %}
+<details class="alerts" {% if alerts.count() > 0 %}open{% endif %}>
+  <summary>
+    {{ "Today's alerts"|t }}
+    {% if alerts.count() > 0 %}<span class="tag warn">{{ alerts.count() }}</span>{% endif %}
+  </summary>
+
+  {% if alerts.rows.is_empty() %}
+  <p class="muted">{{ "Nothing you follow has been unusually cheap today."|t }}</p>
+  {% else %}
+  <div class="scroll-x">
+    <table>
+      <thead>
+        <tr>
+          <th>{{ "When"|t }}</th><th>{{ "Item"|t }}</th><th>{{ "Region"|t }}</th>
+          <th>{{ "Price"|t }}</th><th>{{ "Usually"|t }}</th>
+          <th>{{ "Discount"|t }}</th><th>{{ "Stock"|t }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for alert in alerts.rows %}
+        <tr class="severity-{% if alert.severity == "very_low" %}error{% else %}warn{% endif %}">
+          <td>{{ alert.when }}</td>
+          <td><a href="/wow/item/{{ alert.item_id }}">{{ alert.name }}</a></td>
+          <td>{{ alert.region }}</td>
+          <td><b>{{ alert.current }}</b></td>
+          <td>{{ alert.baseline }}</td>
+          <td>-{{ alert.discount_percent }}%</td>
+          <td>{{ alert.quantity }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</details>
+{% endif %}

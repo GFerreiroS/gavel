@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use cluster_core::{
     Heartbeat, NodeId, NodeMessage, PROTOCOL_VERSION, RejectReason, SupervisorMessage, Task,
-    TaskId, decode_frame, encode_frame, frame_len,
+    TaskId, decode_frame, encode_frame, frame_len, token_accepted,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -44,7 +44,11 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const GOODBYE_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// Accept worker connections until the supervisor goes away.
-pub(crate) async fn serve(listener: TcpListener, commands: mpsc::Sender<Command>) {
+pub(crate) async fn serve(
+    listener: TcpListener,
+    commands: mpsc::Sender<Command>,
+    token: Option<String>,
+) {
     let local = listener
         .local_addr()
         .map(|a| a.to_string())
@@ -68,8 +72,9 @@ pub(crate) async fn serve(listener: TcpListener, commands: mpsc::Sender<Command>
             break;
         }
         let commands = commands.clone();
+        let token = token.clone();
         tokio::spawn(async move {
-            if let Err(e) = connection(socket, peer, commands).await {
+            if let Err(e) = connection(socket, peer, commands, token.as_deref()).await {
                 tracing::debug!(peer = %peer, error = %e, "node connection ended");
             }
         });
@@ -81,6 +86,7 @@ async fn connection(
     socket: TcpStream,
     peer: SocketAddr,
     commands: mpsc::Sender<Command>,
+    token: Option<&str>,
 ) -> std::io::Result<()> {
     // Frames are small and latency matters: a heartbeat held back by Nagle's
     // algorithm is a node that looks slower than it is.
@@ -102,6 +108,7 @@ async fn connection(
         protocol,
         node: requested,
         capabilities,
+        token: presented,
     } = hello
     else {
         tracing::warn!(peer = %peer, "first frame from a node was not Hello");
@@ -114,6 +121,15 @@ async fn connection(
             "rejecting worker: protocol mismatch"
         );
         return reject(&mut wr, RejectReason::ProtocolMismatch).await;
+    }
+
+    // Checked here, before the supervisor is even asked. An unauthenticated
+    // peer must not reach the registry: `AttachRemote` allocates an id and
+    // evicts whatever held it, which is work an unknown caller should not be
+    // able to make the coordinator do.
+    if !token_accepted(token, presented.as_deref()) {
+        tracing::warn!(peer = %peer, "rejecting worker: missing or incorrect join token");
+        return reject(&mut wr, RejectReason::Unauthorized).await;
     }
 
     // Ask the supervisor whether this worker may join, and which identity it

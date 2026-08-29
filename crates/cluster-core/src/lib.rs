@@ -40,7 +40,7 @@ pub use node::{HealthPolicy, Heartbeat, Node, NodeCapabilities, NodeLoad, NodeSt
 pub use persist::{ClusterStore, EventLog, JobStore, StoreError, StoreResult};
 pub use protocol::{
     MAX_FRAME, NodeMessage, PROTOCOL_VERSION, ProtocolError, RejectReason, SupervisorMessage,
-    WireTaskSpec, decode_frame, encode_frame, frame_len,
+    WireTaskSpec, decode_frame, encode_frame, frame_len, token_accepted,
 };
 pub use role::{ALL_ROLES, DEGRADATION_PRIORITY, Role, RolePolicies, RolePolicy, RoleSet};
 pub use scheduler::{LeastLoaded, RoundRobin, Scheduler, schedulable};

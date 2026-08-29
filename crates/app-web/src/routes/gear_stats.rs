@@ -14,7 +14,9 @@
 use std::collections::BTreeMap;
 
 use app_core::Ports;
-use app_core::market::{Copper, ItemId, ItemKind, Point, Realm, RealmSample, Region};
+use app_core::market::{
+    Catalog, Copper, ItemId, ItemKind, Point, Realm, RealmSample, Region, Track,
+};
 use app_core::repo::{RealmPriceRepository, Store};
 use askama::Template;
 use axum::Extension;
@@ -27,10 +29,10 @@ use crate::chart::{self, Series, Unit};
 use crate::csrf::Csrf;
 use crate::error::WebResult;
 use crate::i18n::filters;
-use crate::prefs::{MarketPrefs, RealmChoice, slug};
+use crate::prefs::{MarketPrefs, RealmChoice};
 use crate::render::page;
 use crate::session::current_user;
-use crate::views::{GearLevelLink, GearModifierStat, GearStatsView, Layout, RealmOption};
+use crate::views::{GearLevelLink, GearModifierStat, GearStatsView, Layout};
 
 /// How far back the page looks. Gear moves far more slowly than a commodity --
 /// a raid tier is months -- so this is generous, and every figure on the page
@@ -55,12 +57,12 @@ pub async fn stats<E: Ports>(
     prefs: Extension<MarketPrefs>,
     chosen: Extension<RealmChoice>,
     uri: OriginalUri,
-    Path((item_id, item_level)): Path<(u32, u16)>,
+    Path((item_id, track)): Path<(u32, String)>,
     headers: HeaderMap,
 ) -> WebResult<Html<String>> {
     render(
         item_id,
-        Some(item_level),
+        Track::parse(&track),
         state,
         csrf,
         prefs,
@@ -90,7 +92,7 @@ pub async fn recipe_stats<E: Ports>(
 #[allow(clippy::too_many_arguments)]
 async fn render<E: Ports>(
     item_id: u32,
-    wanted_level: Option<u16>,
+    wanted_track: Option<Track>,
     State(env): State<E>,
     Extension(csrf): Extension<Csrf>,
     Extension(prefs): Extension<MarketPrefs>,
@@ -106,33 +108,30 @@ async fn render<E: Ports>(
         return Err(app_core::AppError::NotFound.into());
     };
 
-    // Which bonus id carries this item level. An item level nobody has
-    // resolved is not a page: better a 404 than a graph of everything.
-    let resolved = match wanted_level {
-        Some(want) => {
-            let found = catalog
-                .item_levels
-                .iter()
-                .find(|(_, level)| level.item_level == want)
-                .and_then(|(bonus, level)| Some((bonus.parse::<u32>().ok()?, level)));
-            match found {
-                Some((bonus, level)) => Some((bonus, level.item_level, level.upgrade.clone())),
-                None => return Err(app_core::AppError::NotFound.into()),
-            }
-        }
-        None => None,
-    };
+    // Gear is asked for by track; a recipe has no track and is asked for by
+    // item alone. A slug that is not a track at all is a 404 rather than a
+    // graph of everything.
+    if entry.kind != ItemKind::Recipe && wanted_track.is_none() {
+        return Err(app_core::AppError::NotFound.into());
+    }
 
     let prices = env.store().realm_prices();
     let now = env.now();
     let since = Millis(now.get().saturating_sub(WINDOW_DAYS * 24 * 60 * 60 * 1000));
 
-    let realms = prices.realms().await?;
-    let selected: Option<&Realm> = chosen.0.as_deref().and_then(|want| {
-        realms
-            .iter()
-            .find(|r| slug(&r.name).as_deref() == Some(want))
-    });
+    // The reader's region, chosen once on the Auction House index. Regions are
+    // separate markets and were never merged; this stops the page offering the
+    // other three as though they were an option here.
+    let realms: Vec<Realm> = prices
+        .realms()
+        .await?
+        .into_iter()
+        .filter(|r| r.region == prefs.region)
+        .collect();
+    let want_realm = chosen.0.clone();
+    let selected: Option<&Realm> = want_realm
+        .as_deref()
+        .and_then(|want| realms.iter().find(|r| super::gear::realm_matches(r, want)));
 
     // Everything this item did over the window, then narrowed to the one item
     // level. Narrowing here rather than in SQL keeps the bonus grouping in one
@@ -141,7 +140,7 @@ async fn render<E: Ports>(
     match selected {
         Some(realm) => history.extend(prices.history(item, realm.region, realm.id, since).await?),
         None => {
-            let mut regions: Vec<Region> = realms.iter().map(|r| r.region).collect();
+            let mut regions: Vec<Region> = vec![prefs.region];
             regions.sort();
             regions.dedup();
             for region in regions {
@@ -150,8 +149,10 @@ async fn render<E: Ports>(
         }
     }
     // A recipe has one version of itself, so every sample of it belongs here.
-    if let Some((upgrade_bonus, _, _)) = resolved {
-        history.retain(|s| super::gear::has_bonus(&s.variant, upgrade_bonus));
+    // Gear is narrowed to the one track -- every rank inside it, because the
+    // track is the market and the ranks are what this page breaks apart.
+    if let Some(track) = wanted_track {
+        history.retain(|s| super::gear::track_of_public(&s.variant, catalog) == Some(track));
     }
 
     let (title, section, section_href) = match entry.kind {
@@ -167,25 +168,14 @@ async fn render<E: Ports>(
     let stats = build(
         BuildInput {
             item,
-            item_level: resolved.as_ref().map(|(_, level, _)| *level).unwrap_or(0),
-            upgrade: resolved
-                .as_ref()
-                .map(|(_, _, upgrade)| upgrade.clone())
-                .unwrap_or_default(),
+            track: wanted_track,
             history,
             selected,
-            realms: &realms,
+            want_realm: want_realm.clone(),
             // The ladder is only meaningful where there is one.
             section,
             section_href,
-            catalog_levels: match resolved {
-                Some(_) => catalog
-                    .item_levels
-                    .values()
-                    .map(|l| (l.item_level, l.upgrade.clone()))
-                    .collect(),
-                None => Vec::new(),
-            },
+            catalog,
         },
         entry,
         prefs,
@@ -203,7 +193,7 @@ async fn render<E: Ports>(
                 "/wow/auctions",
                 &uri,
                 user.as_ref(),
-                csrf.0.clone(),
+                csrf.masked(),
             ),
             stats,
         },
@@ -213,14 +203,16 @@ async fn render<E: Ports>(
 
 struct BuildInput<'a> {
     item: ItemId,
-    item_level: u16,
-    upgrade: String,
+    /// `None` for a recipe, which has one version of itself.
+    track: Option<Track>,
     section: &'static str,
     section_href: &'static str,
     history: Vec<RealmSample>,
     selected: Option<&'a Realm>,
-    realms: &'a [Realm],
-    catalog_levels: Vec<(u16, String)>,
+    /// The slug the reader asked for, so the picker can echo their own realm's
+    /// name back rather than the connected realm's joined one.
+    want_realm: Option<String>,
+    catalog: &'a Catalog,
 }
 
 async fn build<E: Ports>(
@@ -232,14 +224,13 @@ async fn build<E: Ports>(
 ) -> GearStatsView {
     let BuildInput {
         item,
-        item_level,
-        upgrade,
+        track,
         section,
         section_href,
         history,
         selected,
-        realms,
-        catalog_levels,
+        want_realm,
+        catalog,
     } = input;
 
     let tooltip = super::tooltip::cached_one(env, prefs, entry, item, now).await;
@@ -285,31 +276,35 @@ async fn build<E: Ports>(
             .unwrap_or_else(|| entry.name.clone()),
         icon: entry.icon_url(),
         slot: entry.slot.map(|s| s.label()).unwrap_or(""),
-        item_level,
-        upgrade,
+        track: track.map(Track::as_str).unwrap_or(""),
+        level_range: super::gear::level_range_of(&current, catalog),
         section,
         section_href,
-        siblings: catalog_levels
-            .into_iter()
-            .map(|(level, upgrade)| GearLevelLink {
-                item_level: level,
-                upgrade,
-                href: format!("/wow/gear/{}/{level}", item.get()),
-                current: level == item_level,
-            })
-            .collect(),
+        // The ladder is the other tracks, one click wide. Only for gear: a
+        // recipe has nothing to climb.
+        siblings: match track {
+            None => Vec::new(),
+            Some(_) => Track::ALL
+                .into_iter()
+                .map(|other| GearLevelLink {
+                    track: other.as_str(),
+                    href: format!("/wow/gear/{}/{}", item.get(), other.slug()),
+                    current: Some(other) == track,
+                })
+                .collect(),
+        },
+        levels: level_stats(&current, catalog),
+        kind: match entry.kind {
+            ItemKind::Recipe => "recipes",
+            _ => "gear",
+        },
+        realm_name: match (selected, want_realm.as_deref()) {
+            (Some(realm), Some(want)) => super::gear::member_named(realm, want),
+            _ => String::new(),
+        },
         scope: selected.map(|r| r.name.clone()),
-        realm_slug: selected.and_then(|r| slug(&r.name)).unwrap_or_default(),
+        realm_slug: want_realm.clone().unwrap_or_default(),
         region: selected.map_or(prefs.region, |r| r.region).as_str(),
-        realms: realms
-            .iter()
-            .map(|realm| RealmOption {
-                value: slug(&realm.name).unwrap_or_default(),
-                name: realm.name.clone(),
-                region: realm.region.to_string().to_uppercase(),
-                selected: selected.is_some_and(|r| r.id == realm.id && r.region == realm.region),
-            })
-            .collect(),
         observed: super::market::observed(prefs, now, observed),
         window_days: WINDOW_DAYS,
         snapshots: history
@@ -457,4 +452,55 @@ fn draw(series: &[(String, Vec<Point>)], unit: Unit) -> String {
         unit,
         "Not enough history yet — the chart appears after a few collections.",
     )
+}
+
+/// One line per item level inside this track, from the newest snapshot.
+///
+/// The reason the page exists. A card says "Hero · ilvl 305-311" because that
+/// is the choice a buyer makes; this is what the range is made of, and an
+/// ilvl 311 going for less than an ilvl 305 is exactly the thing worth
+/// seeing. Levels the catalog cannot name yet are left out rather than shown
+/// as zero -- the sync script resolves them, and a level of 0 is a lie.
+fn level_stats(current: &[&RealmSample], catalog: &Catalog) -> Vec<crate::views::GearLevelStat> {
+    let mut by_level: std::collections::BTreeMap<u16, (String, Vec<&RealmSample>)> =
+        Default::default();
+    for sample in current {
+        let Some(level) = super::gear::rank_of_public(&sample.variant, catalog) else {
+            continue;
+        };
+        by_level
+            .entry(level.item_level)
+            .or_insert_with(|| (level.upgrade.clone(), Vec::new()))
+            .1
+            .push(sample);
+    }
+
+    by_level
+        .into_iter()
+        .map(|(item_level, (upgrade, samples))| {
+            let cheapest = samples
+                .iter()
+                .map(|s| s.min_price)
+                .min()
+                .unwrap_or_default();
+            // Rows written before `max_price` existed carry zero, which is not
+            // a price: fall back to the cheapest rather than reporting nothing.
+            let highest = samples
+                .iter()
+                .map(|s| s.max_price)
+                .max()
+                .filter(|p| p.get() > 0)
+                .unwrap_or(cheapest);
+            let realms: std::collections::BTreeSet<u32> =
+                samples.iter().map(|s| s.realm.get()).collect();
+            crate::views::GearLevelStat {
+                item_level,
+                upgrade,
+                cheapest: cheapest.to_string(),
+                highest: highest.to_string(),
+                listings: samples.iter().map(|s| s.listings).sum(),
+                realms: realms.len(),
+            }
+        })
+        .collect()
 }

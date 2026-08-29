@@ -6,6 +6,12 @@
   {{ "Every tracked market lives here. Prices come from the Battle.net auction-house API and are recorded on every collection cycle."|t }}
 </p>
 
+{# Fetched after the page rather than with it. The alerts need the signed-in
+   user resolved and a scan of today's alerts, and neither should hold up the
+   prices -- which is what this page is for. It renders nothing at all for a
+   visitor who is signed out or follows nothing. #}
+<div hx-get="/partials/alerts" hx-trigger="load" hx-swap="outerHTML"></div>
+
 {# The choice is made once, here, and carried into every category below: an
    expansion and a region picked separately per category is how you end up
    comparing two different markets without noticing. #}

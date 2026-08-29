@@ -116,6 +116,12 @@ pub const EXTERNAL_STRINGS: &[&str] = &[
     "Speed",
     "Indestructible",
     "Prismatic Socket",
+    // Upgrade tracks (market::Track). The game's own word for each, and the
+    // axis that actually separates gear prices.
+    "Veteran",
+    "Champion",
+    "Hero",
+    "Myth",
     // Equipment slots (market::Slot), the enchant grouping.
     "Head",
     "Neck",
@@ -146,6 +152,7 @@ pub const EXTERNAL_STRINGS: &[&str] = &[
     "Tailoring",
     "Shared reagents",
     // Navigation (views::Layout).
+    "Alerts",
     "Dashboard",
     "Cluster",
     "Nodes",
@@ -249,6 +256,33 @@ pub const EXTERNAL_STRINGS: &[&str] = &[
     "Last 7 days",
     "Last 14 days",
     "Last 30 days",
+    // Error messages (app_core::error::text). Every one of them is a sentence
+    // a visitor reads at the moment something went wrong, which is the worst
+    // moment to be handed English. `error_sentences_are_all_translatable`
+    // walks `text::ALL` against this list.
+    "not found",
+    "invalid username or password",
+    "not permitted",
+    "that already exists",
+    "that request was not valid: {}",
+    "Something went wrong on our side.",
+    "username must be {}-{} characters",
+    "username may contain letters, digits, '_' and '-' only",
+    "password must be {}-{} characters",
+    "username already taken",
+    "too many sign-in attempts; try again in {} minutes",
+    "too many new accounts just now; try again in {} minutes",
+    "task count must be between 1 and {}",
+    "sleep duration must be between 1 and {} ms",
+    "prime bound must be between 2 and {}",
+    "unknown job kind '{}'",
+    "unknown role '{}'",
+    "a region is required",
+    "that region name contains characters that are not allowed",
+    "a realm is required",
+    "that realm name contains characters that are not allowed",
+    "a character name is required",
+    "that character name contains characters that are not allowed",
     // Relative times (format::ago).
     "{} ago",
     "just now",
@@ -486,6 +520,52 @@ mod tests {
             missing.is_empty(),
             "not listed for translation: {missing:?}"
         );
+    }
+
+    /// Every upgrade track must be translatable: they are the row labels on
+    /// every gear card, and an untranslated one is the loudest English on an
+    /// otherwise Spanish page.
+    #[test]
+    fn every_upgrade_track_is_listed() {
+        for track in app_core::market::Track::ALL {
+            assert!(
+                EXTERNAL_STRINGS.contains(&track.as_str()),
+                "track not listed for translation: {}",
+                track.as_str()
+            );
+        }
+    }
+
+    /// An error is the sentence a visitor is most likely to read and least
+    /// likely to expect, so none of them may fall through to English.
+    #[test]
+    fn error_sentences_are_all_translatable() {
+        for source in app_core::error::text::ALL {
+            assert!(
+                EXTERNAL_STRINGS.contains(source),
+                "error source not listed for translation: {source:?}"
+            );
+            assert_ne!(
+                translate(Locale::EsEs, source),
+                *source,
+                "error source has no Spanish translation: {source:?}"
+            );
+        }
+    }
+
+    /// A translation may reorder the sentence, but it cannot drop a value: a
+    /// message with two placeholders and a translation with one renders the
+    /// second number nowhere.
+    #[test]
+    fn translations_keep_every_placeholder() {
+        for source in app_core::error::text::ALL {
+            let spanish = translate(Locale::EsEs, source);
+            assert_eq!(
+                source.matches("{}").count(),
+                spanish.matches("{}").count(),
+                "placeholder count differs between {source:?} and {spanish:?}"
+            );
+        }
     }
 
     /// The generated tables are binary-searched, so their order is load

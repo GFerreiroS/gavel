@@ -23,7 +23,7 @@ pub use analysis::{Cycle, ItemAnalysis, Point, Trend, analyse, downsample};
 pub use catalog::{
     ALL_AUDIENCES, ALL_AUDIENCES_LABELS, ALL_PROFESSIONS, ALL_SLOTS, Audience, Catalog,
     CatalogItem, CatalogSet, CatalogStatus, Category, ItemKind, ItemLevel, ItemRank, Patch,
-    Profession, Slot, Stat,
+    Profession, Slot, Stat, Track,
 };
 pub use collector::{AlertSink, Collector, NullSink, Outcome, Report};
 pub use realm::{

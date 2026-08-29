@@ -86,7 +86,7 @@ pub async fn page_handler<E: Ports>(
                 "/admin",
                 &uri,
                 Some(&user),
-                csrf.0.clone(),
+                csrf.masked(),
             ),
             admin,
         },

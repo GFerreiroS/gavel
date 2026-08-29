@@ -16,14 +16,46 @@
   <div>
     <h1>{{ stats.name }}</h1>
     <p class="muted">
-      {% if stats.item_level > 0 %}{{ "ilvl {}"|t|fill(stats.item_level) }} · {{ stats.upgrade }}{% endif %}
-      {% if !stats.slot.is_empty() %}{% if stats.item_level > 0 %} · {% endif %}{{ stats.slot|t }}{% endif %}
+      {% if !stats.track.is_empty() %}{{ stats.track|t }}{% if !stats.level_range.is_empty() %} · ilvl {{ stats.level_range }}{% endif %}{% endif %}
+      {% if !stats.slot.is_empty() %}{% if !stats.track.is_empty() %} · {% endif %}{{ stats.slot|t }}{% endif %}
     </p>
   </div>
 </div>
 
 {# The other item levels of the same item. Each is its own market, so this is
    navigation between markets rather than a filter within one. #}
+{% if !stats.levels.is_empty() %}
+<article>
+  <h2>{{ "Item levels in this track"|t }}</h2>
+  <p class="hint">
+    {{ "The card shows the track as a range because that is the choice; this is what the range is made of. A higher item level going for less than a lower one is worth knowing."|t }}
+  </p>
+  <div class="scroll-x">
+    <table>
+      <thead>
+        <tr>
+          <th>{{ "ilvl"|t }}</th><th>{{ "Upgrade"|t }}</th>
+          <th>{{ "Cheapest"|t }}</th><th>{{ "Highest"|t }}</th>
+          <th>{{ "Auctions"|t }}</th><th>{{ "Realms"|t }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for level in stats.levels %}
+        <tr>
+          <td><b>{{ level.item_level }}</b></td>
+          <td class="muted">{{ level.upgrade }}</td>
+          <td>{{ level.cheapest }}</td>
+          <td>{{ level.highest }}</td>
+          <td>{{ level.listings }}</td>
+          <td>{{ level.realms }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</article>
+{% endif %}
+
 {% if !stats.siblings.is_empty() %}
 <div class="roles level-links">
   {% for level in stats.siblings %}
@@ -32,23 +64,37 @@
   <a class="chip{% if level.current %} on{% endif %}" role="button"
      href="{{ level.href }}?region={{ stats.region }}&realm={{ stats.realm_slug }}"
      {% if level.current %}aria-current="page"{% endif %}>
-    {{ "ilvl {}"|t|fill(level.item_level) }} · {{ level.upgrade }}
+    {{ level.track|t }}
   </a>
   {% endfor %}
 </div>
 {% endif %}
 
 <form class="toolbar" method="get"
-      action="{% if stats.item_level > 0 %}/wow/gear/{{ stats.item_id }}/{{ stats.item_level }}{% else %}/wow/recipe/{{ stats.item_id }}{% endif %}">
+      action="{% if !stats.track.is_empty() %}/wow/gear/{{ stats.item_id }}/{{ stats.track|lower }}{% else %}/wow/recipe/{{ stats.item_id }}{% endif %}">
   <input type="hidden" name="region" value="{{ stats.region }}">
   <label>
     <span>{{ "Realm"|t }}</span>
-    <select name="realm">
-      <option value="">{{ "All realms"|t }}</option>
-      {% for realm in stats.realms %}
-      <option value="{{ realm.value }}"{% if realm.selected %} selected{% endif %}>{{ realm.region }} · {{ realm.name }}</option>
-      {% endfor %}
-    </select>
+    {# The same picker as the list page, so a reader who learned it there
+       finds it here (§7). Entries are links; nothing to press afterwards. #}
+    <details class="dropdown realm-picker">
+      <summary>{% if stats.realm_name.is_empty() %}{{ "All realms"|t }}{% else %}{{ stats.realm_name }}{% endif %}</summary>
+      <div class="realm-panel">
+        <input type="search" name="q" autocomplete="off"
+               placeholder='{{ "Search a realm"|t }}'
+               aria-label='{{ "Search a realm"|t }}'
+               hx-get="/partials/realms?kind={{ stats.kind }}&expansion="
+               hx-trigger="keyup changed delay:200ms, search"
+               hx-target="#realm-options"
+               hx-swap="innerHTML">
+        <div id="realm-options" class="realm-options"
+             hx-get="/partials/realms?kind={{ stats.kind }}&expansion="
+             hx-trigger="toggle once from:closest details"
+             hx-swap="innerHTML">
+          <span class="muted" aria-busy="true">{{ "Loading…"|t }}</span>
+        </div>
+      </div>
+    </details>
   </label>
   <button type="submit">{{ "Apply"|t }}</button>
 </form>
@@ -88,7 +134,7 @@
 <article>
   <h2>{{ "Sockets and tertiary stats"|t }}</h2>
   {% if stats.modifiers.is_empty() %}
-  <p class="muted">{{ "None seen at this item level."|t }}</p>
+  <p class="muted">{{ "None seen in this track."|t }}</p>
   {% else %}
   <table class="table">
     <thead>

@@ -1,0 +1,6 @@
+{# One link per realm. Choosing a realm is going somewhere, so it is a link:
+   nothing to press afterwards, and it works with scripting off. #}
+<a href="{{ all_href }}">{{ "All realms"|t }}</a>
+{% for realm in realms %}
+<a href="{{ base }}&realm={{ realm.name|urlencode }}">{{ realm.name }}</a>
+{% endfor %}

@@ -86,10 +86,22 @@ impl Unit {
     }
 }
 
+/// Escape for SVG, which the templates render with `|safe` because this
+/// module builds the markup itself.
+///
+/// Quotes as well as the three characters element text needs. Everything
+/// interpolated here today lands in element content -- a `<title>`, a `<text>`
+/// -- where `&<>` would be enough, and one of those `<title>`s carries a
+/// series label, which on the gear pages is a realm name that came from
+/// Blizzard. The day somebody puts one of these in an `x="…"` instead, the
+/// quotes are the difference between a chart and an injection, and finding
+/// that out then is worse than the two extra replacements now.
 fn escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
 }
 
 /// A "nice" axis step: 1, 2, 2.5 or 5 times a power of ten.
@@ -575,6 +587,23 @@ mod tests {
         let svg = bar_chart(&cycles, &|_| "<script>x</script>".into(), "empty");
         assert!(!svg.contains("<script>"), "label was not escaped");
         assert!(svg.contains("&lt;script&gt;"));
+    }
+
+    /// Everything this module writes goes to the page through `|safe`, so this
+    /// escape is the only thing standing between upstream text -- a series
+    /// label on the gear pages is a realm name Blizzard supplied -- and the
+    /// markup. Quotes included, so that moving one of these into an attribute
+    /// later is a layout change rather than an injection.
+    #[test]
+    fn a_label_can_break_out_of_neither_an_element_nor_an_attribute() {
+        let escaped = escape(r#"<script>alert(1)</script> " ' &"#);
+        for ch in ['<', '>', '"', '\''] {
+            assert!(!escaped.contains(ch), "{ch:?} survived: {escaped}");
+        }
+        assert!(escaped.contains("&lt;script&gt;"), "{escaped}");
+        assert!(escaped.contains("&quot;"), "{escaped}");
+        assert!(escaped.contains("&#x27;"), "{escaped}");
+        assert!(escaped.contains("&amp;"), "{escaped}");
     }
 
     #[test]

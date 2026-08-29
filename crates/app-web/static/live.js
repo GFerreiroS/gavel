@@ -8,6 +8,19 @@
 // Deliberately dependency-free: the htmx SSE extension would be another file to
 // ship, and this is nine lines.
 (function () {
+  // htmx does not swap a 4xx or 5xx response by default, and every error this
+  // app returns is already a rendered `.alert` fragment. The result was that a
+  // rejected sign-in changed nothing on the page at all: no message, no hint,
+  // just a form that appeared to ignore the button. Swapping the body is the
+  // whole fix -- the status still marks it an error, so `htmx:responseError`
+  // fires as before for anything listening.
+  document.body.addEventListener("htmx:beforeSwap", function (evt) {
+    if (evt.detail.xhr && evt.detail.xhr.status >= 400) {
+      evt.detail.shouldSwap = true;
+      evt.detail.isError = false;
+    }
+  });
+
   var RETRY_MS = 5000;
   var DEBOUNCE_MS = 200;
   var MAX_STALENESS_MS = 1000;

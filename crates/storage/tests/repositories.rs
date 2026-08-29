@@ -571,3 +571,382 @@ async fn an_in_memory_database_survives_connection_recycling() {
         "the schema and its rows outlive the connections that created them"
     );
 }
+
+// --- the "latest per market" query ------------------------------------------
+//
+// `latest` and `latest_in_region` are the two queries a price page waits on,
+// and they are written in a SQLite-specific form -- `MAX(observed_at)` with
+// the other columns bare -- because the portable `ROW_NUMBER() OVER (PARTITION
+// BY ...)` was four and a half times slower on the real archive.
+//
+// That form is only correct because SQLite promises the bare columns come from
+// the row that produced the max. This holds the fast query against the
+// portable one on data shaped like the real thing: several observations per
+// market, arriving out of order, across realms and variants and regions.
+
+use app_core::market::{Copper, ItemId, RealmId, RealmSample, Region};
+use app_core::repo::RealmPriceRepository;
+use sqlx::Row;
+
+fn realm_sample(
+    item: u32,
+    region: Region,
+    realm: u32,
+    variant: &str,
+    at: u64,
+    min: u64,
+) -> RealmSample {
+    RealmSample {
+        item: ItemId(item),
+        region,
+        realm: RealmId(realm),
+        variant: variant.to_string(),
+        observed_at: Millis(at),
+        min_price: Copper(min),
+        median_price: Copper(min * 2),
+        max_price: Copper(min * 3),
+        listings: 7,
+    }
+}
+
+/// What the query used to say, spelled portably, straight against the pool.
+async fn window_function_latest(
+    store: &SqliteStore,
+    region: Region,
+    realm: Option<RealmId>,
+) -> Vec<(u32, u32, String, u64, u64)> {
+    let mut sql = String::from(
+        "SELECT item_id, realm_id, variant, observed_at, min_price FROM (
+           SELECT *, ROW_NUMBER() OVER (
+                       PARTITION BY item_id, realm_id, variant
+                       ORDER BY observed_at DESC) AS rn
+             FROM realm_price_samples WHERE region = ?",
+    );
+    if realm.is_some() {
+        sql.push_str(" AND realm_id = ?");
+    }
+    sql.push_str(") WHERE rn = 1");
+
+    let mut query = sqlx::query(&sql).bind(region.as_str());
+    if let Some(realm) = realm {
+        query = query.bind(realm.get() as i64);
+    }
+    let rows = query.fetch_all(store.pool()).await.expect("window query");
+
+    let mut out: Vec<(u32, u32, String, u64, u64)> = rows
+        .iter()
+        .map(|r| {
+            (
+                r.get::<i64, _>("item_id") as u32,
+                r.get::<i64, _>("realm_id") as u32,
+                r.get::<String, _>("variant"),
+                r.get::<i64, _>("observed_at") as u64,
+                r.get::<i64, _>("min_price") as u64,
+            )
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+fn as_tuples(samples: &[RealmSample]) -> Vec<(u32, u32, String, u64, u64)> {
+    let mut out: Vec<(u32, u32, String, u64, u64)> = samples
+        .iter()
+        .map(|s| {
+            (
+                s.item.get(),
+                s.realm.get(),
+                s.variant.clone(),
+                s.observed_at.get(),
+                s.min_price.get(),
+            )
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[tokio::test]
+async fn latest_matches_the_window_function() {
+    let store = store().await;
+
+    // Deliberately out of insertion order, so "the newest" cannot be "the last
+    // one written". Two variants and two realms per item, two regions, and one
+    // market observed only once.
+    let mut samples = Vec::new();
+    for item in [100u32, 200] {
+        for realm in [1u32, 2] {
+            for variant in ["", "13332"] {
+                for (at, min) in [(300u64, 50u64), (100, 90), (200, 70)] {
+                    samples.push(realm_sample(item, Region::Eu, realm, variant, at, min));
+                }
+            }
+        }
+    }
+    samples.push(realm_sample(300, Region::Eu, 1, "", 42, 999));
+    samples.push(realm_sample(100, Region::Us, 1, "", 500, 11));
+
+    let written = store
+        .realm_prices()
+        .record_samples(&samples)
+        .await
+        .expect("record");
+    assert_eq!(written as usize, samples.len());
+
+    for region in [Region::Eu, Region::Us] {
+        assert_eq!(
+            as_tuples(&store.realm_prices().latest_in_region(region).await.unwrap()),
+            window_function_latest(&store, region, None).await,
+            "latest_in_region disagrees with the window function for {region}"
+        );
+    }
+
+    for realm in [RealmId(1), RealmId(2)] {
+        assert_eq!(
+            as_tuples(
+                &store
+                    .realm_prices()
+                    .latest(Region::Eu, realm)
+                    .await
+                    .unwrap()
+            ),
+            window_function_latest(&store, Region::Eu, Some(realm)).await,
+            "latest disagrees with the window function for realm {realm:?}"
+        );
+    }
+}
+
+/// The property the whole formulation rests on: the row that comes back is the
+/// one that produced the max, not some other row from the group.
+#[tokio::test]
+async fn latest_returns_the_newest_rows_own_prices() {
+    let store = store().await;
+    store
+        .realm_prices()
+        .record_samples(&[
+            realm_sample(1, Region::Eu, 1, "", 100, 900),
+            realm_sample(1, Region::Eu, 1, "", 300, 100),
+            realm_sample(1, Region::Eu, 1, "", 200, 500),
+        ])
+        .await
+        .expect("record");
+
+    let latest = store
+        .realm_prices()
+        .latest_in_region(Region::Eu)
+        .await
+        .unwrap();
+    assert_eq!(latest.len(), 1, "one market, one row");
+    assert_eq!(latest[0].observed_at, Millis(300));
+    assert_eq!(
+        latest[0].min_price,
+        Copper(100),
+        "the newest row's own price"
+    );
+    assert_eq!(
+        latest[0].max_price,
+        Copper(300),
+        "and its own other columns"
+    );
+}
+
+/// A variant is part of what makes a market: two upgrade tracks of one item on
+/// one realm are two prices, not one.
+#[tokio::test]
+async fn a_variant_is_its_own_market() {
+    let store = store().await;
+    store
+        .realm_prices()
+        .record_samples(&[
+            realm_sample(1, Region::Eu, 1, "13332", 100, 10),
+            realm_sample(1, Region::Eu, 1, "13334", 100, 90),
+        ])
+        .await
+        .expect("record");
+
+    let latest = store
+        .realm_prices()
+        .latest_in_region(Region::Eu)
+        .await
+        .unwrap();
+    assert_eq!(latest.len(), 2);
+}
+
+// --- watchlists -------------------------------------------------------------
+
+use app_core::repo::WatchRepository;
+
+async fn a_user(store: &SqliteStore, name: &str) -> app_core::model::UserId {
+    store
+        .users()
+        .create(name, "hash", Millis(0))
+        .await
+        .expect("create user")
+        .id
+}
+
+#[tokio::test]
+async fn a_watchlist_is_one_persons_and_nobody_elses() {
+    let store = store().await;
+    let alice = a_user(&store, "alice").await;
+    let bob = a_user(&store, "bob").await;
+
+    let watches = store.watches();
+    watches
+        .watch(alice, ItemId(1), Region::Eu, Millis(10))
+        .await
+        .unwrap();
+    watches
+        .watch(bob, ItemId(2), Region::Eu, Millis(20))
+        .await
+        .unwrap();
+
+    let hers: Vec<u32> = watches
+        .watches(alice)
+        .await
+        .unwrap()
+        .iter()
+        .map(|w| w.item.get())
+        .collect();
+    let his: Vec<u32> = watches
+        .watches(bob)
+        .await
+        .unwrap()
+        .iter()
+        .map(|w| w.item.get())
+        .collect();
+
+    assert_eq!(hers, vec![1]);
+    assert_eq!(his, vec![2], "one person's list is not another's");
+}
+
+/// EU and US are separate markets. Following an item on one says nothing
+/// about the other, and a price on one is not something a player on the other
+/// can act on.
+#[tokio::test]
+async fn a_region_is_part_of_what_is_followed() {
+    let store = store().await;
+    let alice = a_user(&store, "alice").await;
+    store
+        .watches()
+        .watch(alice, ItemId(1), Region::Eu, Millis(10))
+        .await
+        .unwrap();
+
+    let watched: Vec<(u32, Region)> = store
+        .watches()
+        .watches(alice)
+        .await
+        .unwrap()
+        .iter()
+        .map(|w| (w.item.get(), w.region))
+        .collect();
+    assert_eq!(watched, vec![(1, Region::Eu)]);
+
+    store
+        .watches()
+        .watch(alice, ItemId(1), Region::Us, Millis(20))
+        .await
+        .unwrap();
+    assert_eq!(store.watches().watches(alice).await.unwrap().len(), 2);
+}
+
+/// The control is a toggle, and a double-click is not a fault.
+#[tokio::test]
+async fn following_and_unfollowing_are_both_idempotent() {
+    let store = store().await;
+    let alice = a_user(&store, "alice").await;
+    let watches = store.watches();
+
+    for at in [10, 20, 30] {
+        watches
+            .watch(alice, ItemId(1), Region::Eu, Millis(at))
+            .await
+            .unwrap();
+    }
+    let held = watches.watches(alice).await.unwrap();
+    assert_eq!(held.len(), 1);
+    assert_eq!(
+        held[0].added_at,
+        Millis(10),
+        "clicking again must not reshuffle the list"
+    );
+
+    for _ in 0..3 {
+        watches.unwatch(alice, ItemId(1), Region::Eu).await.unwrap();
+    }
+    assert!(watches.watches(alice).await.unwrap().is_empty());
+    // And unfollowing something never followed is not an error either.
+    watches
+        .unwatch(alice, ItemId(99), Region::Eu)
+        .await
+        .unwrap();
+}
+
+/// A watchlist must not outlive the account it belongs to.
+#[tokio::test]
+async fn deleting_a_user_takes_their_watchlist_with_it() {
+    let store = store().await;
+    let alice = a_user(&store, "alice").await;
+    store
+        .watches()
+        .watch(alice, ItemId(1), Region::Eu, Millis(10))
+        .await
+        .unwrap();
+
+    sqlx::query("DELETE FROM users WHERE id = ?")
+        .bind(alice)
+        .execute(store.pool())
+        .await
+        .expect("delete user");
+
+    assert!(
+        store.watches().watches(alice).await.unwrap().is_empty(),
+        "the foreign key must cascade"
+    );
+}
+
+/// The page asks for one day. Older alerts stay in the table -- they are the
+/// history's account of itself -- but must not reach the reader.
+#[tokio::test]
+async fn alerts_since_is_a_window_not_the_whole_table() {
+    use app_core::market::{Alert, AlertSeverity};
+    use app_core::repo::PriceRepository;
+
+    let store = store().await;
+    let alert = |at: u64| Alert {
+        item: ItemId(1),
+        region: Region::Eu,
+        severity: AlertSeverity::Low,
+        observed_at: Millis(at),
+        current: Copper(10),
+        baseline: Copper(100),
+        threshold: Copper(50),
+        discount_percent: 90,
+        quantity: 500,
+    };
+    let day = 24 * 60 * 60 * 1000u64;
+    for at in [0, day, 2 * day] {
+        store
+            .prices()
+            .record_alert(&alert(at))
+            .await
+            .expect("record alert");
+    }
+
+    let since = Millis(2 * day - 1);
+    let today = store.prices().alerts_since(since, 100).await.unwrap();
+    assert_eq!(today.len(), 1, "only the one inside the window");
+    assert_eq!(today[0].observed_at, Millis(2 * day));
+
+    // And the limit is a limit.
+    assert_eq!(
+        store
+            .prices()
+            .alerts_since(Millis(0), 2)
+            .await
+            .unwrap()
+            .len(),
+        2
+    );
+}

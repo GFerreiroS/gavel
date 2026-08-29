@@ -106,3 +106,142 @@ fn character_cache_keys_are_case_insensitive() {
     assert_eq!(a.cache_key(), b.cache_key());
     assert_eq!(a.cache_key(), "character:eu:silvermoon:someone");
 }
+
+// ---------------------------------------------------------------------------
+// Sign-in must cost the same whether or not the username exists.
+//
+// The identical error message was doing no work on its own: a missing user
+// answered without hashing anything, so a stopwatch told a caller which
+// usernames were real. These fakes count the hash verifications rather than
+// timing them -- a timing assertion in CI is a flaky test, an equal number of
+// Argon2 passes is the property that makes the timings equal.
+// ---------------------------------------------------------------------------
+
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+use app_core::auth::AuthService;
+use app_core::error::{AppError, RepoResult};
+use app_core::model::{Credentials, LinkedAccount, User, UserId};
+use app_core::repo::{SessionRepository, UserRepository};
+
+#[derive(Default)]
+struct CountingHasher {
+    verifications: AtomicUsize,
+}
+
+impl PasswordHasher for CountingHasher {
+    fn hash(&self, password: &str) -> Result<String, AppError> {
+        Ok(format!("hashed:{password}"))
+    }
+
+    fn verify(&self, password: &str, hash: &str) -> Result<bool, AppError> {
+        self.verifications.fetch_add(1, Ordering::SeqCst);
+        Ok(hash == format!("hashed:{password}"))
+    }
+}
+
+struct OneUser(Option<Credentials>);
+
+impl UserRepository for OneUser {
+    async fn create(&self, _: &str, _: &str, _: Millis) -> RepoResult<User> {
+        unreachable!("registration is not under test here")
+    }
+
+    async fn by_username(&self, username: &str) -> RepoResult<Option<Credentials>> {
+        Ok(self
+            .0
+            .as_ref()
+            .filter(|c| c.user.username == username)
+            .map(|c| Credentials {
+                user: c.user.clone(),
+                password_hash: c.password_hash.clone(),
+            }))
+    }
+
+    async fn by_id(&self, _: UserId) -> RepoResult<Option<User>> {
+        Ok(self.0.as_ref().map(|c| c.user.clone()))
+    }
+
+    async fn linked_accounts(&self, _: UserId) -> RepoResult<Vec<LinkedAccount>> {
+        Ok(Vec::new())
+    }
+}
+
+struct NoSessions;
+
+impl SessionRepository for NoSessions {
+    async fn create(&self, _: &Session) -> RepoResult<()> {
+        Ok(())
+    }
+    async fn get(&self, _: &str) -> RepoResult<Option<Session>> {
+        Ok(None)
+    }
+    async fn delete(&self, _: &str) -> RepoResult<()> {
+        Ok(())
+    }
+    async fn purge_expired(&self, _: Millis) -> RepoResult<u64> {
+        Ok(0)
+    }
+}
+
+struct FixedToken;
+
+impl TokenSource for FixedToken {
+    fn token(&self) -> String {
+        "token".into()
+    }
+}
+
+fn alice() -> Credentials {
+    Credentials {
+        user: User {
+            id: 1,
+            username: "alice".into(),
+            created_at: Millis(0),
+            is_admin: true,
+        },
+        password_hash: "hashed:correct-horse".into(),
+    }
+}
+
+async fn failed_login_verifications(username: &str) -> usize {
+    let hasher = CountingHasher::default();
+    let users = OneUser(Some(alice()));
+    let sessions = NoSessions;
+    let auth = AuthService::new(&users, &sessions, &hasher, &FixedToken);
+
+    let outcome = auth.login(username, "not-the-password", Millis(0)).await;
+    assert!(
+        matches!(outcome, Err(AppError::Unauthorized)),
+        "both failures must be the same error"
+    );
+    hasher.verifications.load(Ordering::SeqCst)
+}
+
+#[tokio::test]
+async fn an_unknown_username_costs_the_same_as_a_wrong_password() {
+    let real = failed_login_verifications("alice").await;
+    let absent = failed_login_verifications("nobody-by-that-name").await;
+
+    assert_eq!(
+        real, 1,
+        "a wrong password is checked against the stored hash"
+    );
+    assert_eq!(
+        absent, real,
+        "an unknown username must spend the same hash, or the clock says which is which"
+    );
+}
+
+/// The parseability of the stand-in hash is checked as a unit test next to the
+/// constant; this is the end of the path, with the real hasher in place.
+#[tokio::test]
+async fn an_unknown_username_is_refused_by_the_real_hasher() {
+    let hasher = Argon2Hasher::new();
+    let users = OneUser(None);
+    let sessions = NoSessions;
+    let auth = AuthService::new(&users, &sessions, &hasher, &FixedToken);
+
+    let outcome = auth.login("nobody", "any password at all", Millis(0)).await;
+    assert!(matches!(outcome, Err(AppError::Unauthorized)));
+}

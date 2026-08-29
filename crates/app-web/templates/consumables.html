@@ -12,12 +12,24 @@
   {{ "prices are the 5th-percentile unit price, which ignores a single joke listing while still reflecting what you would actually pay. Consumables are commodities, so these are region-wide prices — every realm in the region sees the same market."|t }}
 </p>
 
+{# The cards arrive in their own request, and then keep themselves current on
+   the same trigger they always did: `load` for the first paint, a cluster
+   event or the slow poll after that. An archived expansion is never updated
+   again, so it fetches once and stops. #}
 <div id="consumables"
-     {% if !market.archived %}
      hx-get="/partials/consumables"
-     hx-trigger="cluster-changed from:body, every {{ layout.fallback_poll_ms }}ms"
-     hx-swap="innerHTML"
-     {% endif %}>
-  {% include "partials/consumables.html" %}
+     {% if market.archived %}
+     hx-trigger="load"
+     {% else %}
+     hx-trigger="load, cluster-changed from:body, every {{ layout.fallback_poll_ms }}ms"
+     {% endif %}
+     hx-swap="innerHTML">
+  <p class="hint page-meta" aria-busy="true">{{ "Loading prices…"|t }}</p>
+  {# The cards are fetched, so without scripting nothing would arrive. The
+     fragment is a real URL and answers on its own; unstyled, but the prices
+     are all there. #}
+  <noscript>
+    <p><a href="/partials/consumables">{{ "Show the prices"|t }}</a></p>
+  </noscript>
 </div>
 {% endblock %}

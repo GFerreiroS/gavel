@@ -77,6 +77,22 @@ struct WowPage {
 }
 
 /// Assemble the layout for a page, resolving the signed-in user once.
+///
+/// `pub(crate)` under a second name so sibling route modules can build a
+/// layout without every one of them repeating the `Layout::new` argument list
+/// and getting the CSRF masking wrong in a new way.
+pub(crate) async fn layout_for<E: Ports>(
+    env: &E,
+    headers: &HeaderMap,
+    csrf: &Csrf,
+    locale: Locale,
+    title: &str,
+    current: &'static str,
+    request_uri: &Uri,
+) -> WebResult<Layout> {
+    layout(env, headers, csrf, locale, title, current, request_uri).await
+}
+
 async fn layout<E: Ports>(
     env: &E,
     headers: &HeaderMap,
@@ -94,7 +110,7 @@ async fn layout<E: Ports>(
         current,
         request_uri,
         user.as_ref(),
-        csrf.0.clone(),
+        csrf.masked(),
     ))
 }
 
@@ -266,7 +282,7 @@ pub async fn account<E: Ports>(
                 "/account",
                 &uri,
                 user.as_ref(),
-                csrf.0.clone(),
+                csrf.masked(),
             ),
             signed_in: user.is_some(),
             username: user.map(|u| u.username).unwrap_or_default(),

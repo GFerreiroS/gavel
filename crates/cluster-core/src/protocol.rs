@@ -26,8 +26,15 @@ use crate::node::{Heartbeat, NodeCapabilities};
 /// Bumped on any breaking change to the message types below. A worker whose
 /// version does not match is rejected at `Hello` rather than being allowed to
 /// half-work. Version 2 made `Hello.node` optional, so a worker can ask to be
-/// given an identity instead of asserting one.
-pub const PROTOCOL_VERSION: u16 = 2;
+/// given an identity instead of asserting one. Version 3 added the join token.
+pub const PROTOCOL_VERSION: u16 = 3;
+
+/// Longest join token either side will send or compare.
+///
+/// The frame cap already bounds it; this keeps a token from crowding out the
+/// rest of the `Hello` and makes "too long" a clear refusal rather than a
+/// malformed frame.
+pub const MAX_TOKEN: usize = 256;
 
 /// Largest frame either side will encode or accept, in bytes.
 ///
@@ -60,6 +67,24 @@ pub enum NodeMessage {
         protocol: u16,
         node: Option<NodeId>,
         capabilities: NodeCapabilities,
+        /// Shared secret proving this worker was invited.
+        ///
+        /// Before this existed, five bytes on a socket was the whole of
+        /// joining a cluster: `Hello` with no identity, and the coordinator
+        /// answered `Welcome`. Anyone who could reach the port could take
+        /// work, report whatever outcome they liked for it, and crowd out the
+        /// real workers -- on a port the deployment notes tell you to bind to
+        /// `0.0.0.0`.
+        ///
+        /// `None` is for a coordinator configured without a token, which is
+        /// only allowed when it is not listening on a socket at all.
+        ///
+        /// It crosses the wire as it is. That is the same trust boundary the
+        /// rest of the deployment already has -- TLS terminates at the proxy,
+        /// and the worker link belongs on a private network or through a
+        /// tunnel. A token on an untrusted network is a token you have given
+        /// away.
+        token: Option<String>,
     },
     Heartbeat(Heartbeat),
     TaskStarted {
@@ -159,6 +184,8 @@ pub enum RejectReason {
     AlreadyConnected,
     /// The coordinator is not accepting any more workers.
     Full,
+    /// No join token, or the wrong one.
+    Unauthorized,
 }
 
 impl RejectReason {
@@ -168,6 +195,7 @@ impl RejectReason {
             RejectReason::UnknownNode => "node id not in cluster topology",
             RejectReason::AlreadyConnected => "a node with that id is already connected",
             RejectReason::Full => "the coordinator is not accepting more workers",
+            RejectReason::Unauthorized => "missing or incorrect join token",
         }
     }
 }
@@ -184,6 +212,27 @@ pub enum ProtocolError {
     FrameTooLarge { size: usize },
     #[error("malformed frame")]
     Malformed,
+}
+
+/// Whether a presented join token matches the one this coordinator expects.
+///
+/// Constant time over the comparison, so the reply cannot be used to recover
+/// the token one byte at a time. A coordinator with no token configured
+/// accepts anything -- which is why the server refuses to open the worker
+/// socket at all in that state.
+pub fn token_accepted(expected: Option<&str>, presented: Option<&str>) -> bool {
+    let Some(expected) = expected else {
+        return true;
+    };
+    let Some(presented) = presented else {
+        return false;
+    };
+    if presented.len() > MAX_TOKEN {
+        return false;
+    }
+    let a = expected.as_bytes();
+    let b = presented.as_bytes();
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// Encode one message as `[u16 length][postcard body]`, appended to `out`.

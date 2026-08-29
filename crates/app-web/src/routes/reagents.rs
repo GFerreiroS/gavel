@@ -69,6 +69,7 @@ pub async fn page_handler<E: Ports>(
         prefs,
         params.q.as_deref(),
         params.expansion.as_deref(),
+        super::gear::Detail::Shell,
     )
     .await?;
     let user = current_user(&env, &headers).await?;
@@ -81,7 +82,7 @@ pub async fn page_handler<E: Ports>(
                 "/wow/auctions",
                 &uri,
                 user.as_ref(),
-                csrf.0.clone(),
+                csrf.masked(),
             ),
             reagents,
         },
@@ -102,6 +103,7 @@ pub async fn fragment<E: Ports>(
                 prefs,
                 params.q.as_deref(),
                 params.expansion.as_deref(),
+                super::gear::Detail::Full,
             )
             .await?,
         },
@@ -114,6 +116,7 @@ async fn build<E: Ports>(
     prefs: MarketPrefs,
     query: Option<&str>,
     expansion: Option<&str>,
+    detail: super::gear::Detail,
 ) -> WebResult<ReagentsView> {
     // An explicit choice from the index, else whatever is being collected.
     // An empty value is what a select with no choice submits and means the
@@ -129,26 +132,45 @@ async fn build<E: Ports>(
     let prices = env.store().prices();
     let now = env.now();
 
-    let latest: BTreeMap<ItemId, PriceSample> = prices
-        .latest(region)
-        .await?
-        .into_iter()
-        .map(|s| (s.item, s))
-        .collect();
+    // The shell asks for no prices: it is the title, the search box and the
+    // expansion note, and none of those need a market.
+    let shell = detail == super::gear::Detail::Shell;
+    let latest: BTreeMap<ItemId, PriceSample> = if shell {
+        BTreeMap::new()
+    } else {
+        prices
+            .latest(region)
+            .await?
+            .into_iter()
+            .map(|s| (s.item, s))
+            .collect()
+    };
     // The "vs usual" window is the visitor's, chosen once on the Auction
     // House index and applied to every category under it.
-    let recent = index_stats(
-        prices
-            .window_stats(region, prefs.baseline_since(now), None)
-            .await?,
-    );
+    let recent = if shell {
+        BTreeMap::new()
+    } else {
+        index_stats(
+            prices
+                .window_stats(region, prefs.baseline_since(now), None)
+                .await?,
+        )
+    };
     // Extremes are all-time, as on the consumables cards: "cheapest ever, and
     // when" only means anything across the whole history.
-    let all_time = index_stats(prices.window_stats(region, Millis::ZERO, None).await?);
+    let all_time = if shell {
+        BTreeMap::new()
+    } else {
+        index_stats(prices.window_stats(region, Millis::ZERO, None).await?)
+    };
 
     // Localised names come from the tooltip cache, so a search matches what
     // the visitor can actually see on the page.
-    let tooltips = super::tooltip::cached_all(env, prefs, catalog, now).await;
+    let tooltips = if shell {
+        Default::default()
+    } else {
+        super::tooltip::cached_all(env, prefs, catalog, now).await
+    };
 
     let needle = normalise(query);
     let total = catalog.of_kind(ItemKind::Reagent).count();
@@ -156,6 +178,9 @@ async fn build<E: Ports>(
     let mut matched = 0;
 
     for profession in ALL_PROFESSIONS {
+        if shell {
+            break;
+        }
         let mut cards: Vec<ItemCard> = catalog
             .by_profession(profession)
             .map(|entry| crate::cards::card(entry, &latest, &recent, &all_time, &tooltips))
@@ -174,6 +199,11 @@ async fn build<E: Ports>(
     }
 
     Ok(ReagentsView {
+        fragment_href: format!(
+            "/partials/reagents?expansion={}&q={}",
+            super::gear::query_value(&catalog.id),
+            super::gear::query_value(needle.as_deref().unwrap_or_default()),
+        ),
         expansion: catalog.expansion.clone(),
         expansion_id: catalog.id.clone(),
         archived: !catalog.is_active(),

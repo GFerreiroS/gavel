@@ -65,6 +65,7 @@ impl LocalCluster {
         let (command_tx, command_rx) = mpsc::channel(64);
         let (event_tx, _) = broadcast::channel(config.event_buffer.max(16));
         let listen = config.node_listen;
+        let join_token = config.join_token.clone();
         // Durable writes are drained by their own task so the supervisor never
         // blocks on the store while there are messages to process.
         let (writer, _writer_task) = crate::persistence::Writer::spawn(store.clone());
@@ -88,7 +89,7 @@ impl LocalCluster {
             let commands = command_tx.clone();
             tokio::spawn(async move {
                 match tokio::net::TcpListener::bind(address).await {
-                    Ok(listener) => crate::remote::serve(listener, commands).await,
+                    Ok(listener) => crate::remote::serve(listener, commands, join_token).await,
                     // Not fatal: the in-process part of the cluster still runs,
                     // and saying so beats exiting with a bind error on a port
                     // the user may not have meant to use.

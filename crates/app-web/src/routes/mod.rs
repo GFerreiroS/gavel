@@ -5,6 +5,7 @@
 
 mod account;
 mod admin;
+mod alerts;
 mod cluster;
 mod debug;
 pub(crate) mod enhancements;
@@ -16,11 +17,15 @@ mod market;
 mod pages;
 mod partials;
 mod reagents;
+mod realms;
 mod stream;
 pub(crate) mod tooltip;
 mod wow;
 
+use std::sync::Arc;
+
 use app_core::Ports;
+use axum::Extension;
 use axum::Router;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -28,13 +33,14 @@ use axum::routing::{get, post};
 use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::{assets, csrf, metrics, prefs};
+use crate::throttle::{LoginThrottle, SignUpThrottle};
+use crate::{assets, csrf, error, headers, metrics, prefs};
 
 /// Build the application router.
 ///
 /// Generic over the port bundle, so this function never names SQLite, the
 /// Tokio-task cluster or Raider.IO.
-pub fn router<E: Ports>(env: E) -> Router {
+pub fn router<E: Ports>(env: E, shutdown: crate::Shutdown) -> Router {
     let debug_routes = if env.config().debug_controls {
         Router::new()
             .route("/debug/nodes/{id}/stop", post(debug::stop_node::<E>))
@@ -92,6 +98,12 @@ pub fn router<E: Ports>(env: E) -> Router {
         .route("/account", get(pages::account::<E>))
         .route("/wow", get(pages::wow::<E>))
         .route("/wow/auctions", get(market::index::<E>))
+        // Per account: what you follow, and what fired today. A visitor who is
+        // signed out gets the page with an invitation and no alerts.
+        .route(
+            "/wow/alerts",
+            get(alerts::page_handler::<E>).post(alerts::toggle::<E>),
+        )
         .route("/wow/consumables", get(market::page_handler::<E>))
         .route("/wow/auctions/reagents", get(reagents::page_handler::<E>))
         .route(
@@ -101,11 +113,9 @@ pub fn router<E: Ports>(env: E) -> Router {
         .route("/wow/auctions/gems", get(enhancements::gems_page::<E>))
         .route("/wow/auctions/gear", get(gear::page_handler::<E>))
         .route("/wow/auctions/recipes", get(gear::recipes_page::<E>))
-        // One page per item level: the market is the (item, item level) pair.
-        .route(
-            "/wow/gear/{item_id}/{item_level}",
-            get(gear_stats::stats::<E>),
-        )
+        // One page per upgrade track: the track is the market, and the item
+        // levels inside it are what that page breaks apart.
+        .route("/wow/gear/{item_id}/{track}", get(gear_stats::stats::<E>))
         // A recipe has one version of itself, so it has no item level.
         .route("/wow/recipe/{item_id}", get(gear_stats::recipe_stats::<E>))
         // Distinct prefixes so an expansion slug can never shadow an item id.
@@ -113,6 +123,8 @@ pub fn router<E: Ports>(env: E) -> Router {
         .route("/wow/item/{item_id}", get(item::detail::<E>))
         .route("/wow/item/{item_id}/tooltip", get(tooltip::tooltip::<E>))
         // HTMX fragments
+        .route("/partials/alerts", get(alerts::fragment::<E>))
+        .route("/partials/realms", get(realms::fragment::<E>))
         .route("/partials/consumables", get(market::fragment::<E>))
         .route("/partials/reagents", get(reagents::fragment::<E>))
         .route(
@@ -139,7 +151,22 @@ pub fn router<E: Ports>(env: E) -> Router {
         .route("/static/live.js", get(assets::live))
         .route("/favicon.ico", get(assets::favicon))
         .fallback(not_found)
-        .layer(axum::middleware::from_fn(csrf::layer))
+        // How fast passwords may be guessed, and how fast accounts may be
+        // asked about. One instance each for the process, because a limit
+        // every request builds for itself is not a limit.
+        .layer(Extension(Arc::new(LoginThrottle::new())))
+        .layer(Extension(Arc::new(SignUpThrottle::new())))
+        // Held by the handlers that keep a connection open, so they can let go
+        // when the process is stopping rather than holding the door.
+        .layer(Extension(shutdown))
+        .layer(axum::middleware::from_fn_with_state(
+            env.clone(),
+            csrf::layer::<E>,
+        ))
+        // Inside `prefs`, so it knows the language; outside the handlers, so
+        // it sees the error they returned. Renders that error's sentence in
+        // the language the rest of the page is in.
+        .layer(axum::middleware::from_fn(error::layer))
         // Resolves region+language for every request, and remembers an
         // explicit choice in a cookie on the way out.
         .layer(axum::middleware::from_fn_with_state(
@@ -160,6 +187,9 @@ pub fn router<E: Ports>(env: E) -> Router {
         // The default predicate skips `text/event-stream`, which matters: a
         // compressed SSE body buffers, and buffered events are late events.
         .layer(CompressionLayer::new().gzip(true).br(true))
+        // Outside compression, so the headers are on every response including
+        // the ones the layers below never see the body of.
+        .layer(axum::middleware::from_fn(headers::layer))
         .layer(TraceLayer::new_for_http())
         .with_state(env)
 }

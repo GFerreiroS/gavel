@@ -23,6 +23,22 @@
       · {{ "region {}"|t|fill(item.region) }} · {{ "item {}"|t|fill(item.item_id) }}
     </p>
   </div>
+
+  {# Following is per account and per region: EU and US are separate markets,
+     and a price on one is not something a player on the other can act on. The
+     control is simply absent for a visitor who is signed out. #}
+  {% if let Some(following) = following %}
+  <form method="post" action="/wow/alerts" class="follow">
+    <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
+    <input type="hidden" name="item_id" value="{{ item.item_id }}">
+    <input type="hidden" name="region" value="{{ item.region_code }}">
+    <input type="hidden" name="watch" value="{% if following %}false{% else %}true{% endif %}">
+    <input type="hidden" name="back" value="/wow/item/{{ item.item_id }}">
+    <button type="submit" class="outline{% if following %} secondary{% endif %}">
+      {% if following %}{{ "Following"|t }}{% else %}{{ "Follow"|t }}{% endif %}
+    </button>
+  </form>
+  {% endif %}
 </header>
 
 {% if item.archived %}

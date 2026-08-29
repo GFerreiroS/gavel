@@ -34,7 +34,18 @@
   </label>
 </form>
 
-<div id="enhancement-list">
-  {% include "partials/enhancements.html" %}
+{# Cards in their own request; the slot links and the search box paint at
+   once. The search swaps into this same target. #}
+<div id="enhancement-list"
+     hx-get="{{ view.fragment_href }}"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+  <p class="hint page-meta" aria-busy="true">{{ "Loading prices…"|t }}</p>
+  {# The cards are fetched, so without scripting nothing would arrive. The
+     fragment is a real URL and answers on its own; unstyled, but the prices
+     are all there. #}
+  <noscript>
+    <p><a href="{{ view.fragment_href }}">{{ "Show the prices"|t }}</a></p>
+  </noscript>
 </div>
 {% endblock %}

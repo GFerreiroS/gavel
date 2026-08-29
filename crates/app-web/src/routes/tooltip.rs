@@ -84,25 +84,39 @@ pub(crate) async fn cached_one<E: Ports>(
 
 /// Every cached tooltip in a catalog, keyed by item id.
 ///
-/// One cache read per tracked item. They are point lookups on a small table,
-/// and doing them here keeps the "which rank does the icon describe" decision
-/// in the page that draws the icon rather than spreading it across two
-/// modules.
+/// **One query, not one per item.** This used to be a point lookup per tracked
+/// item: 1316 of them on every category page, which was most of what a page
+/// spent its time on. The "which rank does the icon describe" decision still
+/// lives here, in the page that draws the icon, rather than moving into the
+/// store.
 pub(crate) async fn cached_all<E: Ports>(
     env: &E,
     prefs: MarketPrefs,
     catalog: &Catalog,
     now: Millis,
 ) -> BTreeMap<u32, TooltipView> {
-    let mut map = BTreeMap::new();
-    for entry in &catalog.items {
-        for item in entry.item_ids() {
-            if let Some(view) = cached_one(env, prefs, entry, item, now).await {
-                map.insert(item.get(), view);
-            }
-        }
-    }
-    map
+    // Which catalog entry an item belongs to, so the rank line can be built
+    // without searching the catalog again per tooltip.
+    let owners: BTreeMap<u32, &CatalogItem> = catalog
+        .items
+        .iter()
+        .flat_map(|entry| entry.item_ids().map(move |item| (item.get(), entry)))
+        .collect();
+
+    let tooltips = service(env)
+        .cached_many(prefs.locale, owners.keys().map(|id| ItemId(*id)), now)
+        .await;
+
+    tooltips
+        .into_iter()
+        .filter_map(|(item, tooltip)| {
+            let entry = owners.get(&item.get())?;
+            Some((
+                item.get(),
+                TooltipView::new(&tooltip, rank_line(entry, item), true),
+            ))
+        })
+        .collect()
 }
 
 /// Which market this icon leads to. The game has no concept of our ranks being

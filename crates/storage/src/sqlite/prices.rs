@@ -158,27 +158,26 @@ impl PriceRepository for SqlitePrices {
                 .fetch_all(&self.pool)
                 .await
                 .map_err(map_err)?;
-        rows.into_iter()
-            .map(|row| {
-                let region: String = row.get("region");
-                let severity: String = row.get("severity");
-                Ok(Alert {
-                    item: ItemId(row.get::<i64, _>("item_id") as u32),
-                    region: Region::parse(&region).ok_or_else(|| corrupt("region", region))?,
-                    severity: match severity.as_str() {
-                        "very_low" => AlertSeverity::VeryLow,
-                        "low" => AlertSeverity::Low,
-                        other => return Err(corrupt("alert severity", other)),
-                    },
-                    observed_at: Millis(row.get::<i64, _>("observed_at") as u64),
-                    current: Copper(row.get::<i64, _>("current_c") as u64),
-                    baseline: Copper(row.get::<i64, _>("baseline_c") as u64),
-                    threshold: Copper(row.get::<i64, _>("threshold_c") as u64),
-                    discount_percent: row.get::<i64, _>("discount") as u8,
-                    quantity: row.get::<i64, _>("quantity") as u64,
-                })
-            })
-            .collect()
+        rows.iter().map(alert_from_row).collect()
+    }
+
+    async fn alerts_since(&self, since: Millis, limit: usize) -> RepoResult<Vec<Alert>> {
+        // `idx_alerts_time` is on `observed_at DESC`, so this is a range scan
+        // from the cut-off rather than a sort of the whole table.
+        let rows = sqlx::query(
+            "SELECT item_id, region, severity, observed_at,
+                    current_c, baseline_c, threshold_c, discount, quantity
+               FROM price_alerts
+              WHERE observed_at >= ?
+              ORDER BY observed_at DESC
+              LIMIT ?",
+        )
+        .bind(since.get() as i64)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(alert_from_row).collect()
     }
 
     async fn window_stats(
@@ -329,4 +328,28 @@ impl SqlitePrices {
             })
             .collect())
     }
+}
+
+/// One `price_alerts` row as a domain [`Alert`].
+///
+/// Shared by both reads, so a column added to one cannot be forgotten in the
+/// other -- which is how the two would drift.
+fn alert_from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<Alert> {
+    let region: String = row.get("region");
+    let severity: String = row.get("severity");
+    Ok(Alert {
+        item: ItemId(row.get::<i64, _>("item_id") as u32),
+        region: Region::parse(&region).ok_or_else(|| corrupt("region", region))?,
+        severity: match severity.as_str() {
+            "very_low" => AlertSeverity::VeryLow,
+            "low" => AlertSeverity::Low,
+            other => return Err(corrupt("alert severity", other)),
+        },
+        observed_at: Millis(row.get::<i64, _>("observed_at") as u64),
+        current: Copper(row.get::<i64, _>("current_c") as u64),
+        baseline: Copper(row.get::<i64, _>("baseline_c") as u64),
+        threshold: Copper(row.get::<i64, _>("threshold_c") as u64),
+        discount_percent: row.get::<i64, _>("discount") as u8,
+        quantity: row.get::<i64, _>("quantity") as u64,
+    })
 }

@@ -537,6 +537,7 @@ fn a_node_introduces_itself_with_its_own_capabilities() {
         protocol,
         node,
         capabilities,
+        ..
     } = agent.hello()
     else {
         panic!("hello is a Hello");
@@ -749,6 +750,7 @@ fn every_protocol_message_survives_a_round_trip() {
             protocol: PROTOCOL_VERSION,
             node: Some(NodeId(1)),
             capabilities: NodeCapabilities::new(2, 0),
+            token: Some("s3cret".into()),
         },
         NodeMessage::Heartbeat(Heartbeat {
             node: NodeId(1),
@@ -958,4 +960,56 @@ fn re_assigning_the_task_a_node_is_already_running_is_not_a_failure() {
             outcome: TaskOutcome::Completed { .. }
         })
     ));
+}
+
+// --- the join token ---------------------------------------------------------
+
+#[test]
+fn a_coordinator_with_a_token_refuses_a_worker_without_one() {
+    use crate::protocol::token_accepted;
+
+    assert!(token_accepted(Some("s3cret"), Some("s3cret")));
+    assert!(!token_accepted(Some("s3cret"), Some("s3cre")), "prefix");
+    assert!(!token_accepted(Some("s3cret"), Some("s3cretx")), "suffix");
+    assert!(!token_accepted(Some("s3cret"), Some("S3CRET")), "case");
+    assert!(!token_accepted(Some("s3cret"), None), "no token at all");
+    assert!(!token_accepted(Some("s3cret"), Some("")), "empty");
+}
+
+/// A token longer than the cap is refused rather than compared, so nothing
+/// downstream has to reason about how long a "token" a peer may send.
+#[test]
+fn an_oversized_token_is_refused() {
+    use crate::protocol::{MAX_TOKEN, token_accepted};
+
+    let huge = "a".repeat(MAX_TOKEN + 1);
+    assert!(!token_accepted(Some(&huge), Some(&huge)));
+}
+
+/// In-process workers never cross a socket. A coordinator with no token
+/// configured must keep working for them -- the server is what refuses to open
+/// the port in that state.
+#[test]
+fn no_token_configured_accepts_the_in_process_case() {
+    use crate::protocol::token_accepted;
+
+    assert!(token_accepted(None, None));
+    assert!(token_accepted(None, Some("anything")));
+}
+
+/// The token has to actually reach the wire, or the check above is checking a
+/// field nobody fills in.
+#[test]
+fn the_agent_puts_its_token_in_hello() {
+    let agent =
+        Agent::anonymous(NodeCapabilities::new(4, 0), 1_000).with_token(Some("s3cret".into()));
+
+    let NodeMessage::Hello {
+        token, protocol, ..
+    } = agent.hello()
+    else {
+        panic!("hello is a Hello");
+    };
+    assert_eq!(token.as_deref(), Some("s3cret"));
+    assert_eq!(protocol, PROTOCOL_VERSION);
 }

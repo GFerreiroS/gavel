@@ -36,6 +36,19 @@ pub trait CacheStore: Send + Sync + 'static {
         key: &str,
         now: Millis,
     ) -> impl Future<Output = RepoResult<Option<Vec<u8>>>> + Send;
+
+    /// Every live entry among `keys`, in one round trip.
+    ///
+    /// Not a convenience. A page draws hundreds of item cards and each one
+    /// wants a cached tooltip; asking for them one at a time was 1316 point
+    /// lookups per page load and the single largest cost in rendering one.
+    /// Missing and expired keys are simply absent from the result, exactly as
+    /// [`CacheStore::get`] returns `None` for them.
+    fn get_many(
+        &self,
+        keys: &[String],
+        now: Millis,
+    ) -> impl Future<Output = RepoResult<Vec<(String, Vec<u8>)>>> + Send;
     fn put(
         &self,
         key: &str,
@@ -112,6 +125,18 @@ pub trait PriceRepository: Send + Sync + 'static {
     ) -> impl Future<Output = RepoResult<Option<Millis>>> + Send;
 
     fn recent_alerts(&self, limit: usize) -> impl Future<Output = RepoResult<Vec<Alert>>> + Send;
+
+    /// Alerts raised at or after `since`, newest first.
+    ///
+    /// The page that shows these asks for one day. Older alerts are still in
+    /// the table -- they are the price history's account of itself -- but a
+    /// week-old "this was cheap on Tuesday" is not something anyone can act
+    /// on, and showing it made the list read as a feed rather than a warning.
+    fn alerts_since(
+        &self,
+        since: Millis,
+        limit: usize,
+    ) -> impl Future<Output = RepoResult<Vec<Alert>>> + Send;
 
     /// Low/high/mean per item over a half-open window, computed by the store
     /// rather than by pulling every row into memory.
@@ -228,6 +253,42 @@ pub trait SettingsRepository: Send + Sync + 'static {
 }
 
 /// Bundles the repositories so callers take one type parameter instead of six.
+/// One item a person asked to be told about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Watch {
+    pub item: ItemId,
+    pub region: Region,
+    pub added_at: Millis,
+}
+
+/// What each person follows.
+///
+/// Its own port rather than a method on [`UserRepository`]: watching an item
+/// is a market concern that happens to be keyed by a user, and the auth
+/// service has no business growing a dependency on the catalogue.
+pub trait WatchRepository: Send + Sync + 'static {
+    /// Everything this person follows, most recently added first.
+    fn watches(&self, user: UserId) -> impl Future<Output = RepoResult<Vec<Watch>>> + Send;
+
+    /// Follow an item. Following one already followed is not an error: the
+    /// button that does this is a toggle, and a double-click is not a fault.
+    fn watch(
+        &self,
+        user: UserId,
+        item: ItemId,
+        region: Region,
+        now: Millis,
+    ) -> impl Future<Output = RepoResult<()>> + Send;
+
+    /// Stop following. Equally idempotent.
+    fn unwatch(
+        &self,
+        user: UserId,
+        item: ItemId,
+        region: Region,
+    ) -> impl Future<Output = RepoResult<()>> + Send;
+}
+
 pub trait Store: Send + Sync + 'static {
     type Users: UserRepository;
     type Sessions: SessionRepository;
@@ -238,6 +299,7 @@ pub trait Store: Send + Sync + 'static {
     type Prices: PriceRepository;
     type RealmPrices: RealmPriceRepository;
     type Settings: SettingsRepository;
+    type Watches: WatchRepository;
 
     fn users(&self) -> &Self::Users;
     fn sessions(&self) -> &Self::Sessions;
@@ -250,4 +312,6 @@ pub trait Store: Send + Sync + 'static {
     fn realm_prices(&self) -> &Self::RealmPrices;
     /// What the tracker collects.
     fn settings(&self) -> &Self::Settings;
+    /// Which items each person asked to be told about.
+    fn watches(&self) -> &Self::Watches;
 }

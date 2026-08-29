@@ -185,6 +185,12 @@
 .toolbar input,
 .toolbar select,
 .toolbar button { margin: 0; width: auto; }
+/* A <select> sizes itself to its widest option, and the realm picker's widest
+   is "EU · Ravencrest, Zul'jin, …". Left alone it pushed the whole page into
+   a horizontal scroll, which is the one thing a page body must never do. The
+   label is the flex item, so it is what has to be told it may shrink. */
+.toolbar label { min-width: 0; }
+.toolbar select { max-width: min(100%, 28rem); }
 .toolbar input, .toolbar select { min-width: 9rem; }
 .toolbar button { padding: var(--pico-form-element-spacing-vertical) 1.25rem; }
 .toolbar small { display: block; margin-top: .15rem; }
@@ -510,8 +516,12 @@ progress.bar { margin: .35rem 0 .1rem; }
    Drawn in the order the game draws one. */
 .tip-card { max-width: 22rem; }
 .tip-name { font-weight: 600; }
-.tip-line, .tip-stat, .tip-rank, .tip-note { font-size: .85em; }
-.tip-effect { color: var(--q-uncommon); font-size: .85em; }
+.tip-line, .tip-rank, .tip-note { font-size: .85em; }
+/* What an item *does*, in green: the "Use:" line on a consumable and the stat
+   block on a piece of gear. They are the same thing to a reader -- the reason
+   to buy this rather than the one beside it -- and reading as one thing across
+   both is the point (§7). */
+.tip-effect, .tip-stat { color: var(--q-uncommon); font-size: .85em; }
 .tip-flavor { font-style: italic; color: var(--pico-muted-color); font-size: .85em; }
 .tip-note, .tip-loading { color: var(--pico-muted-color); font-size: .8em; }
 
@@ -524,3 +534,120 @@ progress.bar { margin: .35rem 0 .1rem; }
 /* Fade a fragment out and in as it is swapped, so a live update reads as a
    change rather than a flicker. */
 .htmx-swapping { opacity: .5; transition: opacity .1s; }
+
+/* Today's alerts, on the auction house index and on the alerts page.
+   A <details> because it is a thing you glance at and then dismiss, not
+   something to scroll past on every visit -- and because a <details> needs no
+   JavaScript to be one. */
+.alerts { margin-block: 1rem; }
+.alerts > summary {
+  cursor: pointer;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: .5rem;
+}
+.alerts > summary::marker { color: var(--pico-muted-color); }
+.alerts table { margin-block: .75rem 0; }
+
+/* The follow control sits at the end of the item header, pushed away from the
+   name so the two never look like one control. */
+.item-head .follow { margin: 0 0 0 auto; }
+.item-head .follow button { margin: 0; white-space: nowrap; }
+
+/* The watchlist: one row per followed item, its name doing the linking and
+   the unfollow button at the end of the line. */
+.watchlist { list-style: none; padding: 0; margin: 0; }
+.watchlist li {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  padding-block: .4rem;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+}
+.watchlist li:last-child { border-bottom: 0; }
+.watchlist form { margin: 0 0 0 auto; }
+.watchlist button { margin: 0; padding: .2rem .6rem; font-size: .85em; }
+
+/* A realm's name under a price, kept to one line.
+   Cards sit next to each other and their rows have to line up (§7). One
+   auction house can be eight realms, and the joined name wrapped to three
+   lines while its neighbour took one -- which put every row below it out of
+   step. One name, clamped, with the rest on hover. */
+.realm-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The realm picker: our own dropdown, because a <datalist>'s popup is the
+   browser's -- it draws it wherever it likes, which on a wide window is a
+   column floating off to the right of the box it belongs to, and no styling
+   of ours reaches it. This one is part of the page. */
+/* No margin. Pico gives a `<details>` a block of margin below it -- room for
+   the content it drops open -- and in a toolbar of bottom-aligned controls
+   that lifted this one sixteen pixels above the search box and the button
+   beside it. The panel here is positioned absolutely, so there is nothing
+   under the summary that needs the room. It is the `<details>` that carries
+   the margin, not the `<summary>`; targeting the summary changes nothing. */
+.realm-picker { position: relative; min-width: 14rem; }
+/* Beats Pico's `label > details.dropdown`, which nudges a dropdown down a
+   quarter-space below its caption. The toolbar's labels already space
+   themselves, so all that nudge does here is lift the control off the line the
+   search box and the button sit on. Written to out-specify that selector
+   rather than to tie with it: a tie survives only while the file order does. */
+.toolbar label > .realm-picker { margin: 0; }
+.realm-picker > summary { white-space: nowrap; }
+
+/* The toolbar shouts its labels in small caps. The picker's own contents are
+   realm names and a search box, and neither is a label. */
+.realm-picker,
+.realm-picker * {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 1rem;
+  color: var(--pico-color);
+}
+
+/* Floated over the page, not wedged into it: a panel that pushes the cards
+   down every time it opens is a page that moves under the pointer. */
+.realm-panel {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + .25rem);
+  left: 0;
+  width: max(100%, 16rem);
+  display: flex;
+  flex-direction: column;
+  gap: .4rem;
+  padding: .5rem;
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  box-shadow: var(--pico-card-box-shadow);
+}
+.realm-panel input { margin: 0; }
+/* Capped and scrolling, so the panel is the same size whatever is typed.
+   A block, *not* a flex column: a flex container with a max-height squashes
+   its items to fit rather than scrolling, and sixty realms in sixteen rems
+   came out ten pixels tall each -- a stack of coloured slivers with no
+   readable text in them. Scrolling is what was wanted, and a block does it. */
+.realm-options {
+  min-height: 4rem;
+  max-height: 16rem;
+  overflow-y: auto;
+}
+.realm-options a {
+  display: block;
+  padding: .3rem .4rem;
+  border-radius: var(--pico-border-radius);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.realm-options a:hover {
+  background: var(--pico-primary-background);
+  color: var(--pico-primary-inverse);
+}

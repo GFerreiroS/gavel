@@ -29,6 +29,11 @@ use tokio::net::TcpStream;
 
 /// Compressed timings, as in `failover.rs`: fast enough to run in a test,
 /// slow enough to exercise the real health state machine.
+/// The join secret every test worker presents. A cluster under test is a
+/// cluster with a token, because that is the only configuration the server
+/// will start with a socket open.
+const TEST_TOKEN: &str = "test-join-token";
+
 fn remote_config(declared: Vec<RemoteNode>) -> LocalClusterConfig {
     let mut config = LocalClusterConfig {
         // No in-process workers: everything here arrives over the wire.
@@ -36,6 +41,7 @@ fn remote_config(declared: Vec<RemoteNode>) -> LocalClusterConfig {
         remote_nodes: declared,
         // Port 0 so the OS picks a free one and tests never collide.
         node_listen: Some("127.0.0.1:0".parse().unwrap()),
+        join_token: Some(TEST_TOKEN.into()),
         tick_interval_ms: 20,
         ..LocalClusterConfig::default()
     };
@@ -83,6 +89,7 @@ impl FakeWorker {
                     protocol: PROTOCOL_VERSION,
                     node: Some(id),
                     capabilities,
+                    token: Some(TEST_TOKEN.into()),
                 },
                 &mut buf,
             )
@@ -109,6 +116,7 @@ impl FakeWorker {
                 protocol,
                 node: Some(id),
                 capabilities: NodeCapabilities::new(2, 0),
+                token: Some(TEST_TOKEN.into()),
             },
             &mut buf,
         )
@@ -527,6 +535,7 @@ impl FakeWorker {
                 protocol: PROTOCOL_VERSION,
                 node: None,
                 capabilities: NodeCapabilities::new(2, 0),
+                token: Some(TEST_TOKEN.into()),
             },
             &mut buf,
         )
@@ -631,4 +640,60 @@ async fn a_freed_identity_is_reused() {
     // after a few thousand restarts.
     let replacement = FakeWorker::join_anonymous(&address).await;
     assert_eq!(replacement.id, id, "the freed id is handed out again");
+}
+
+// --- the join token -------------------------------------------------------
+//
+// Over a real socket, because the interesting property is not "the comparison
+// works" -- that is a unit test in `cluster-core` -- but that a peer holding
+// the wrong secret never reaches the registry. `AttachRemote` allocates an id
+// and evicts whatever held it; an unknown caller must not be able to make the
+// coordinator do that.
+
+/// Say `Hello` with whatever token, and report what came back.
+async fn hello_with_token(address: &str, token: Option<&str>) -> SupervisorMessage {
+    let mut socket = TcpStream::connect(address).await.expect("connect");
+    let mut buf = Vec::new();
+    encode_frame(
+        &NodeMessage::Hello {
+            protocol: PROTOCOL_VERSION,
+            node: None,
+            capabilities: NodeCapabilities::new(2, 0),
+            token: token.map(str::to_string),
+        },
+        &mut buf,
+    )
+    .expect("encode hello");
+    socket.write_all(&buf).await.expect("send hello");
+
+    let mut worker = FakeWorker {
+        id: NodeId(0),
+        socket,
+    };
+    worker.recv().await
+}
+
+#[tokio::test]
+async fn a_worker_without_the_join_token_is_turned_away() {
+    let (cluster, address, _store) = start(remote_config(Vec::new())).await;
+
+    for presented in [None, Some(""), Some("wrong"), Some("test-join-toke")] {
+        match hello_with_token(&address, presented).await {
+            SupervisorMessage::Rejected { reason } => {
+                assert_eq!(reason, RejectReason::Unauthorized, "for {presented:?}");
+            }
+            other => panic!("{presented:?} was not refused: {other:?}"),
+        }
+    }
+
+    // And none of them left anything behind in the registry.
+    assert!(
+        cluster.nodes().await.is_empty(),
+        "a refused worker must never reach the node registry"
+    );
+
+    match hello_with_token(&address, Some(TEST_TOKEN)).await {
+        SupervisorMessage::Welcome { .. } => {}
+        other => panic!("the right token was refused: {other:?}"),
+    }
 }

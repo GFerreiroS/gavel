@@ -23,8 +23,7 @@ pub struct WebConfig {
     pub poll_interval_ms: u64,
     /// Number of events shown in the UI event log.
     pub event_log_limit: usize,
-    /// Mount the failure-simulation routes. Off in anything resembling
-    /// production.
+    /// Mount the failure-simulation routes. Off unless explicitly asked for.
     pub debug_controls: bool,
     /// Send `Secure` on the session cookie. Off for plain-HTTP local dev.
     pub secure_cookies: bool,
@@ -42,7 +41,7 @@ impl Default for WebConfig {
             app_name: "Auction Tracker".to_string(),
             poll_interval_ms: 2_000,
             event_log_limit: 25,
-            debug_controls: true,
+            debug_controls: false,
             secure_cookies: false,
             upstream_cache_ttl_ms: 10 * 60 * 1000,
             item_cache_ttl_ms: 7 * 24 * 60 * 60 * 1000,

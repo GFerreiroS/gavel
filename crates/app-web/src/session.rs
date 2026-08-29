@@ -15,6 +15,25 @@ use axum::response::{IntoResponse, Redirect, Response};
 
 use crate::error::WebResult;
 
+/// With `Secure` available, the browser-enforced version of the session
+/// cookie's name.
+pub const SESSION_COOKIE_HOST: &str = "__Host-wow_tracker_session";
+
+/// What this deployment calls the session cookie.
+///
+/// `__Host-` is only legal on a `Secure`, `Path=/`, no-`Domain` cookie, so the
+/// prefix follows `--secure-cookies`. Where it applies it is the browser
+/// refusing to let any other origin -- a sibling subdomain, a plain-HTTP
+/// impostor -- write this name, which is a guarantee no amount of care on
+/// this side of the wire can produce.
+pub fn cookie_name(config: &WebConfig) -> &'static str {
+    if config.secure_cookies {
+        SESSION_COOKIE_HOST
+    } else {
+        SESSION_COOKIE
+    }
+}
+
 /// Value of one cookie from the request headers.
 pub fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     headers
@@ -30,7 +49,7 @@ pub fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
 /// The signed-in user, or `None`. An unknown or expired session is simply
 /// treated as signed out.
 pub async fn current_user<E: Ports>(env: &E, headers: &HeaderMap) -> WebResult<Option<User>> {
-    let Some(token) = cookie_value(headers, SESSION_COOKIE) else {
+    let Some(token) = cookie_value(headers, cookie_name(env.config())) else {
         return Ok(None);
     };
     let store = env.store();
@@ -59,7 +78,15 @@ pub async fn admin_only<E: Ports>(State(env): State<E>, request: Request, next: 
     if admin {
         return next.run(request).await;
     }
-    if request.uri().path() == "/" {
+    refuse(request.uri().path())
+}
+
+/// What somebody who is not an administrator gets.
+///
+/// Split out so the rule can be asserted rather than described: 404 for every
+/// operations page, and the one deliberate exception on the front door.
+fn refuse(path: &str) -> Response {
+    if path == "/" {
         return Redirect::to("/wow/auctions").into_response();
     }
     crate::error::WebError::from(AppError::NotFound).into_response()
@@ -72,8 +99,9 @@ pub fn session_cookie(token: &str, config: &WebConfig) -> HeaderValue {
         ""
     };
     let max_age = SESSION_TTL_MS / 1000;
+    let name = cookie_name(config);
     HeaderValue::from_str(&format!(
-        "{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}"
+        "{name}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age={max_age}{secure}"
     ))
     .expect("session cookie is ASCII")
 }
@@ -84,8 +112,102 @@ pub fn cleared_session_cookie(config: &WebConfig) -> HeaderValue {
     } else {
         ""
     };
+    let name = cookie_name(config);
     HeaderValue::from_str(&format!(
-        "{SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}"
+        "{name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{secure}"
     ))
     .expect("session cookie is ASCII")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::http::StatusCode;
+
+    /// A 403 confirms the page is there. These pages describe how the
+    /// deployment is doing, and somebody guessing must learn nothing.
+    #[test]
+    fn operations_pages_are_missing_rather_than_forbidden() {
+        for path in [
+            "/cluster",
+            "/nodes",
+            "/jobs",
+            "/jobs/7",
+            "/admin",
+            "/api/cluster",
+            "/api/metrics",
+            "/partials/stats",
+            "/partials/nodes",
+            "/debug/nodes/1/stop",
+        ] {
+            assert_eq!(refuse(path).status(), StatusCode::NOT_FOUND, "{path}");
+        }
+    }
+
+    /// The front door is the exception: everybody visits it, and it should
+    /// open on the thing the app is for rather than deny it exists.
+    #[test]
+    fn the_front_door_sends_a_visitor_to_the_auction_house() {
+        let response = refuse("/");
+        assert_eq!(response.status(), StatusCode::SEE_OTHER);
+        assert_eq!(response.headers()[header::LOCATION], "/wow/auctions");
+    }
+
+    #[test]
+    fn the_host_prefix_follows_secure_cookies() {
+        let mut config = WebConfig {
+            secure_cookies: false,
+            ..WebConfig::default()
+        };
+        assert_eq!(cookie_name(&config), SESSION_COOKIE);
+        assert!(
+            !session_cookie("t", &config)
+                .to_str()
+                .unwrap()
+                .contains("Secure")
+        );
+
+        config.secure_cookies = true;
+        assert_eq!(cookie_name(&config), SESSION_COOKIE_HOST);
+        let cookie = session_cookie("t", &config);
+        let cookie = cookie.to_str().unwrap();
+        assert!(cookie.starts_with("__Host-"), "{cookie}");
+        assert!(cookie.contains("; Secure"), "{cookie}");
+        assert!(cookie.contains("Path=/"), "{cookie}");
+        assert!(
+            !cookie.contains("Domain="),
+            "__Host- forbids Domain: {cookie}"
+        );
+    }
+
+    /// Signing out has to clear the same name it set, or the browser keeps
+    /// sending a cookie nothing overwrites.
+    #[test]
+    fn clearing_a_session_targets_the_name_that_was_set() {
+        for secure_cookies in [false, true] {
+            let config = WebConfig {
+                secure_cookies,
+                ..WebConfig::default()
+            };
+            let name = cookie_name(&config);
+            let cleared = cleared_session_cookie(&config);
+            let cleared = cleared.to_str().unwrap();
+            assert!(cleared.starts_with(&format!("{name}=;")), "{cleared}");
+            assert!(cleared.contains("Max-Age=0"), "{cleared}");
+        }
+    }
+
+    #[test]
+    fn a_cookie_is_read_out_of_a_crowded_header() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("a=1; wow_tracker_session=abc; b=2"),
+        );
+        assert_eq!(
+            cookie_value(&headers, SESSION_COOKIE),
+            Some("abc".to_string())
+        );
+        assert_eq!(cookie_value(&headers, SESSION_COOKIE_HOST), None);
+    }
 }

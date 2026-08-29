@@ -1,3 +1,4 @@
+use app_core::error::text;
 use app_core::{AppError, Ports};
 use axum::Extension;
 use axum::extract::{Path, State};
@@ -34,7 +35,7 @@ pub async fn set_role<E: Ports>(
     csrf.verify_request(&headers, Some(&form.csrf_token))?;
 
     let role = Role::parse(&form.role)
-        .ok_or_else(|| AppError::validation(format!("unknown role '{}'", form.role)))?;
+        .ok_or_else(|| AppError::validation_with(text::UNKNOWN_ROLE, [&form.role]))?;
     env.cluster()
         .set_role(NodeId(id), role, form.enabled)
         .await?;

@@ -44,7 +44,19 @@
      its index, not repeated per category. #}
 </form>
 
-<div id="reagent-list">
-  {% include "partials/reagents.html" %}
+{# The cards arrive in their own request; the search box and the expansion
+   note paint immediately. The search swaps into this same target, so there is
+   one behaviour to learn rather than two. #}
+<div id="reagent-list"
+     hx-get="{{ reagents.fragment_href }}"
+     hx-trigger="load"
+     hx-swap="innerHTML">
+  <p class="hint page-meta" aria-busy="true">{{ "Loading prices…"|t }}</p>
+  {# The cards are fetched, so without scripting nothing would arrive. The
+     fragment is a real URL and answers on its own; unstyled, but the prices
+     are all there. #}
+  <noscript>
+    <p><a href="{{ reagents.fragment_href }}">{{ "Show the prices"|t }}</a></p>
+  </noscript>
 </div>
 {% endblock %}

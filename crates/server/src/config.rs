@@ -87,10 +87,25 @@ pub struct Cli {
     #[arg(long, env = "APP_COORDINATOR_MIN", default_value_t = 1)]
     pub coordinator_min: usize,
 
-    /// Expose the failure-simulation routes. On by default in V0; turn it off
-    /// for anything resembling a real deployment.
-    #[arg(long, env = "APP_DEBUG_CONTROLS", default_value_t = true, action = clap::ArgAction::Set)]
+    /// Expose the failure-simulation routes: stop a node, drop its
+    /// heartbeats, make its next task fail.
+    ///
+    /// **Off by default.** They are behind the administrator gate, but a
+    /// control that can take a node down is not something a deployment should
+    /// have to remember to remove -- it is something a deployment should have
+    /// to ask for. Turn it on to demonstrate a requeue.
+    #[arg(long, env = "APP_DEBUG_CONTROLS", default_value_t = false, action = clap::ArgAction::Set)]
     pub debug_controls: bool,
+
+    /// Shared secret a connecting worker must present, and that a worker
+    /// started with `--connect` sends.
+    ///
+    /// Environment only, never a flag: a secret on a command line is in every
+    /// `ps` listing and every shell history (CLAUDE.md §10). Required whenever
+    /// `--worker-listen` is set -- an open worker socket without one admits
+    /// anybody who can reach the port, and five bytes was the whole handshake.
+    #[arg(skip)]
+    pub cluster_token: Option<String>,
 
     /// Mark cookies `Secure`. Requires HTTPS; off for local plain-HTTP dev.
     #[arg(long, env = "APP_SECURE_COOKIES", default_value_t = false, action = clap::ArgAction::Set)]
@@ -151,7 +166,39 @@ pub struct Cli {
     pub log: String,
 }
 
+/// Where the cluster join token comes from.
+pub const CLUSTER_TOKEN_ENV: &str = "APP_CLUSTER_TOKEN";
+
 impl Cli {
+    /// Read the join token out of the environment and check it is present
+    /// where it is needed.
+    ///
+    /// A worker socket with no token is not a smaller version of a secured
+    /// one, it is an open door: five bytes on that port used to be the whole
+    /// of joining the cluster, taking work and reporting whatever outcome you
+    /// liked. So refusing to start beats starting and mentioning it in a log
+    /// nobody reads.
+    ///
+    /// Nothing is required of the default single-process deployment, whose
+    /// workers are Tokio tasks that never touch a socket.
+    pub fn resolve_cluster_token(&mut self) -> anyhow::Result<()> {
+        self.cluster_token = std::env::var(CLUSTER_TOKEN_ENV)
+            .ok()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty());
+
+        if self.worker_listen.is_some() && self.cluster_token.is_none() {
+            anyhow::bail!(
+                "--worker-listen is set but {CLUSTER_TOKEN_ENV} is not. \
+                 Any process that can reach that port would join the cluster, \
+                 take work and report results for it. Set {CLUSTER_TOKEN_ENV} \
+                 to a long random string, the same value on the coordinator \
+                 and on every worker."
+            );
+        }
+        Ok(())
+    }
+
     /// The `--workers` default.
     const DEFAULT_WORKERS: u16 = 4;
 
@@ -172,6 +219,7 @@ impl Cli {
             // nothing has to be declared up front.
             remote_nodes: Vec::new(),
             node_listen: self.worker_listen,
+            join_token: self.cluster_token.clone(),
             health: HealthPolicy {
                 heartbeat_interval_ms: self.heartbeat_ms,
                 suspect_after_ms: self.suspect_ms,

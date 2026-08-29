@@ -105,6 +105,7 @@ async fn render<E: Ports>(
         prefs,
         params.q.as_deref(),
         params.expansion.as_deref(),
+        super::gear::Detail::Shell,
     )
     .await?;
     let user = current_user(&env, &headers).await?;
@@ -117,7 +118,7 @@ async fn render<E: Ports>(
                 "/wow/auctions",
                 &uri,
                 user.as_ref(),
-                csrf.0.clone(),
+                csrf.masked(),
             ),
             view,
         },
@@ -139,6 +140,7 @@ async fn fragment<E: Ports>(
                 prefs,
                 params.q.as_deref(),
                 params.expansion.as_deref(),
+                super::gear::Detail::Full,
             )
             .await?,
         },
@@ -155,6 +157,7 @@ async fn build<E: Ports>(
     prefs: MarketPrefs,
     query: Option<&str>,
     expansion: Option<&str>,
+    detail: super::gear::Detail,
 ) -> WebResult<EnhancementsView> {
     let catalog = match expansion.filter(|id| !id.is_empty()) {
         Some(id) => env.catalogs().by_id(id),
@@ -167,25 +170,47 @@ async fn build<E: Ports>(
     let prices = env.store().prices();
     let now = env.now();
 
-    let latest: BTreeMap<ItemId, PriceSample> = prices
-        .latest(region)
-        .await?
-        .into_iter()
-        .map(|s| (s.item, s))
-        .collect();
-    let recent = index_stats(
+    // The shell asks for no prices: it is the title, the slot links and the
+    // search box, and none of those need a market.
+    let shell = detail == super::gear::Detail::Shell;
+    let latest: BTreeMap<ItemId, PriceSample> = if shell {
+        BTreeMap::new()
+    } else {
         prices
-            .window_stats(region, prefs.baseline_since(now), None)
-            .await?,
-    );
-    let all_time = index_stats(prices.window_stats(region, Millis::ZERO, None).await?);
-    let tooltips = super::tooltip::cached_all(env, prefs, catalog, now).await;
+            .latest(region)
+            .await?
+            .into_iter()
+            .map(|s| (s.item, s))
+            .collect()
+    };
+    let recent = if shell {
+        BTreeMap::new()
+    } else {
+        index_stats(
+            prices
+                .window_stats(region, prefs.baseline_since(now), None)
+                .await?,
+        )
+    };
+    let all_time = if shell {
+        BTreeMap::new()
+    } else {
+        index_stats(prices.window_stats(region, Millis::ZERO, None).await?)
+    };
+    let tooltips = if shell {
+        Default::default()
+    } else {
+        super::tooltip::cached_all(env, prefs, catalog, now).await
+    };
 
     let needle = super::reagents::normalise(query);
     let total = catalog.of_kind(kind).count();
     let mut matched = 0;
     let mut groups = Vec::new();
     for (anchor, label, entries) in sections(catalog, kind) {
+        if shell {
+            break;
+        }
         let mut cards: Vec<ItemCard> = entries
             .into_iter()
             .map(|entry| crate::cards::card(entry, &latest, &recent, &all_time, &tooltips))
@@ -217,6 +242,12 @@ async fn build<E: Ports>(
 
     let text = Text::of(kind);
     Ok(EnhancementsView {
+        fragment_href: format!(
+            "{}?expansion={}&q={}",
+            Text::of(kind).fragment_path,
+            super::gear::query_value(&catalog.id),
+            super::gear::query_value(needle.as_deref().unwrap_or_default()),
+        ),
         title: text.title,
         blurb: text.blurb,
         counted: text.counted,

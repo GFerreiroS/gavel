@@ -11,6 +11,7 @@ mod runtime;
 mod worker;
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use anyhow::Context;
 use app_core::Metrics;
@@ -43,13 +44,14 @@ fn main() -> anyhow::Result<()> {
 
 #[tokio::main]
 async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result<()> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
     init_tracing(&cli.log)?;
+    cli.resolve_cluster_token()?;
 
     // Worker mode short-circuits everything below: no HTTP, no database, no
     // application state. It dials the coordinator and does what it is told.
     if let Some(address) = cli.connect.clone() {
-        return worker::run(&address).await;
+        return worker::run(&address, cli.cluster_token.clone()).await;
     }
 
     // Key names only -- never values.
@@ -169,7 +171,10 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
     let collector = collector_task::spawn(env.clone());
 
     // --- serve ------------------------------------------------------------
-    let app = app_web::router(env.clone());
+    // Told to the handlers that hold a connection open -- the SSE stream --
+    // so they let go when the process is stopping.
+    let (stop, stopping) = tokio::sync::watch::channel(false);
+    let app = app_web::router(env.clone(), app_web::Shutdown::new(stopping));
     let address = std::net::SocketAddr::new(cli.host, cli.port);
     let listener = tokio::net::TcpListener::bind(address)
         .await
@@ -180,16 +185,63 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
         tracing::warn!("failure-simulation routes are mounted under /debug");
     }
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await
-        .context("serving HTTP")?;
+    // Draining is started by hand rather than by handing `axum` the signal
+    // directly, because there are two things to do when the signal arrives and
+    // the order matters: first tell the live connections to let go, *then*
+    // start waiting for them.
+    let (drain, draining) = tokio::sync::oneshot::channel::<()>();
+    let mut server = tokio::spawn(async move {
+        axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = draining.await;
+            })
+            .await
+    });
+
+    shutdown_signal().await;
+    tracing::info!("shutting down");
+    let _ = stop.send(true);
+    let _ = drain.send(());
+
+    // A deadline, because "graceful" must not mean "never". Graceful shutdown
+    // waits for the responses already in flight; the SSE stream is one that
+    // never ends on its own, and one open browser tab used to make Ctrl+C hang
+    // for ever -- the only way out was closing the terminal. The signal above
+    // is what fixes that properly; this is the backstop, so that whatever gets
+    // added next cannot bring the hang back.
+    match tokio::time::timeout(SHUTDOWN_GRACE, &mut server).await {
+        Ok(Ok(result)) => result.context("serving HTTP")?,
+        Ok(Err(e)) => tracing::warn!(error = %e, "the HTTP server task ended badly"),
+        Err(_) => {
+            tracing::warn!(
+                seconds = SHUTDOWN_GRACE.as_secs(),
+                "connections still open after the grace period; closing anyway"
+            );
+            // Aborted, not merely abandoned. Letting the deadline drop the
+            // handle detaches the task, and a detached server task still holds
+            // its clone of the port bundle -- so `drop(env)` below would not be
+            // dropping the last one, the supervisor would never be told to
+            // stop, and the wait for it would hang exactly where the connection
+            // used to. The deadline has to actually end the thing it gave up
+            // waiting for.
+            server.abort();
+        }
+    }
 
     // Dropping the last handle stops the supervisor, which stops the nodes.
-    tracing::info!("shutting down");
     collector.abort();
     drop(env);
-    let _ = supervisor.await;
+    // Bounded for the same reason as the server above: a shutdown path that
+    // can wait for ever is a shutdown path that eventually does.
+    if tokio::time::timeout(SHUTDOWN_GRACE, supervisor)
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            seconds = SHUTDOWN_GRACE.as_secs(),
+            "the cluster did not stop in time; exiting anyway"
+        );
+    }
     Ok(())
 }
 
@@ -208,6 +260,10 @@ async fn housekeeping(store: &SqliteStore, clock: &SystemClock) -> u64 {
     let now = clock.now();
     let sessions = store.sessions().purge_expired(now).await.unwrap_or(0);
     let cache = store.cache().purge_expired(now).await.unwrap_or(0);
+    // The price tables grow on every collection cycle. A plan chosen against
+    // last month's statistics is a plan chosen against a different table, and
+    // on this archive that was a four-fold difference on every category page.
+    store.optimize().await;
     sessions + cache
 }
 
@@ -227,6 +283,41 @@ async fn record_boot_configuration(store: &SqliteStore, cli: &Cli) {
     }
 }
 
+/// How long to wait for open connections once shutdown has begun.
+///
+/// Generous for a request that is genuinely mid-flight, and short enough that
+/// nobody reaches for the terminal's close button.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+
+/// Ctrl+C, or the signal a container runtime sends.
+///
+/// `SIGTERM` matters as much as the keyboard: it is what `docker compose down`
+/// and systemd send, and a process that ignores it is a process they wait ten
+/// seconds for and then kill.
 async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
+    let interrupt = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            // Nothing to listen on is not a reason to refuse to serve; the
+            // keyboard still works.
+            Err(e) => {
+                tracing::warn!(error = %e, "cannot listen for SIGTERM");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = interrupt => tracing::debug!("interrupted"),
+        _ = terminate => tracing::debug!("terminated"),
+    }
 }

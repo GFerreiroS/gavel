@@ -415,6 +415,20 @@ impl PriceRepository for FakePrices {
             .max())
     }
 
+    async fn alerts_since(&self, since: Millis, limit: usize) -> RepoResult<Vec<Alert>> {
+        let mut found: Vec<Alert> = self
+            .alerts
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|a| a.observed_at.get() >= since.get())
+            .cloned()
+            .collect();
+        found.sort_by_key(|a| std::cmp::Reverse(a.observed_at.get()));
+        found.truncate(limit);
+        Ok(found)
+    }
+
     async fn recent_alerts(&self, limit: usize) -> RepoResult<Vec<Alert>> {
         Ok(self
             .alerts

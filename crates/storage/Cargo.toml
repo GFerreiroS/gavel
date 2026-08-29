@@ -20,6 +20,12 @@ serde_json = { workspace = true }
 sqlx = { workspace = true }
 tracing = { workspace = true }
 
+[features]
+# Exposes `SqliteStore::pool` so an integration test can hold a hand-written
+# query against what a port returns. Never enabled by the server.
+test-pool = []
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
 cluster-core = { workspace = true }
+storage = { path = ".", features = ["test-pool"] }

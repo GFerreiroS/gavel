@@ -52,6 +52,12 @@ pub struct LocalClusterConfig {
     /// alone with its in-process pool, which is the default and is all a
     /// single-server deployment needs until it outgrows one machine.
     pub node_listen: Option<SocketAddr>,
+    /// Shared secret a connecting worker must present.
+    ///
+    /// `None` is only sound with `node_listen` at `None` too: an open socket
+    /// with no token admits anyone who can reach it. The server refuses that
+    /// combination at startup rather than leaving it to be noticed later.
+    pub join_token: Option<String>,
     /// Fill in plausible load/memory numbers for in-process workers. Remote
     /// workers report their own values.
     pub simulate_load: bool,
@@ -70,6 +76,7 @@ impl Default for LocalClusterConfig {
             profiles: default_profiles(),
             remote_nodes: Vec::new(),
             node_listen: None,
+            join_token: None,
             simulate_load: true,
         }
     }

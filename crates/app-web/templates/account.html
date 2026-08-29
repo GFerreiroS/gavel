@@ -5,7 +5,7 @@
 {% if signed_in %}
 <article>
   <h2>{{ "Signed in as {}"|t|fill(username) }}</h2>
-  <form hx-post="/account/logout">
+  <form method="post" action="/account/logout" hx-post="/account/logout">
     <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
     <button type="submit">{{ "Sign out"|t }}</button>
   </form>
@@ -27,7 +27,8 @@
 <div class="two-col">
   <article>
     <h2>{{ "Sign in"|t }}</h2>
-    <form hx-post="/account/login" hx-target="#auth-error" hx-swap="innerHTML">
+    <form method="post" action="/account/login"
+          hx-post="/account/login" hx-target="#auth-error" hx-swap="innerHTML">
       <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
       <label>{{ "Username"|t }} <input type="text" name="username" autocomplete="username" required></label>
       <label>{{ "Password"|t }} <input type="password" name="password" autocomplete="current-password" required></label>
@@ -37,7 +38,8 @@
 
   <article>
     <h2>{{ "Register"|t }}</h2>
-    <form hx-post="/account/register" hx-target="#auth-error" hx-swap="innerHTML">
+    <form method="post" action="/account/register"
+          hx-post="/account/register" hx-target="#auth-error" hx-swap="innerHTML">
       <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
       <label>{{ "Username"|t }} <input type="text" name="username" autocomplete="username" required minlength="3" maxlength="32"></label>
       <label>{{ "Password"|t }} <input type="password" name="password" autocomplete="new-password" required minlength="8"></label>

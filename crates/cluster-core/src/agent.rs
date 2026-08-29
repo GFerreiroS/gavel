@@ -104,6 +104,9 @@ pub struct Agent {
     /// measure this, so the agent stores what it is told rather than guessing.
     free_memory_bytes: u64,
     joined: bool,
+    /// Shared secret presented in `Hello`. `None` for an in-process worker,
+    /// which never crosses a socket and has nothing to prove.
+    token: Option<String>,
 }
 
 impl Agent {
@@ -133,7 +136,19 @@ impl Agent {
             extra_delay_ms: 0,
             free_memory_bytes: 0,
             joined: false,
+            token: None,
         }
+    }
+
+    /// The join token this worker will present.
+    ///
+    /// A builder step rather than a constructor argument: every worker in the
+    /// tests is a worker on a channel, with no socket and nothing to
+    /// authenticate to, and threading `None` through all of them would be
+    /// noise around the one place it matters.
+    pub fn with_token(mut self, token: Option<String>) -> Self {
+        self.token = token;
+        self
     }
 
     pub fn id(&self) -> Option<NodeId> {
@@ -151,6 +166,7 @@ impl Agent {
             protocol: PROTOCOL_VERSION,
             node: self.id,
             capabilities: self.capabilities,
+            token: self.token.clone(),
         }
     }
 

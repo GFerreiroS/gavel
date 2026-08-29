@@ -5,12 +5,27 @@
 
 use cluster_core::Millis;
 
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult, Message, text};
 use crate::model::{Session, User};
 use crate::repo::{SessionRepository, UserRepository};
 
 pub const SESSION_COOKIE: &str = "wow_tracker_session";
 pub const SESSION_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+
+/// Argon2id over a password nobody holds, verified against when the username
+/// does not exist.
+///
+/// The identical error message for "no such user" and "wrong password" only
+/// hides which one happened if the two cost the same. They did not: a missing
+/// user answered in under a millisecond, a real one after the ~420ms Argon2
+/// spends, and a stopwatch told anyone which usernames were real. Verifying
+/// this instead spends the same work on both paths.
+///
+/// The cost is the one encoded in this string -- `verify_password` reads the
+/// parameters from the hash, not from the verifier -- so it is the reference
+/// `Params::default()` of m=19456, t=2, p=1. Regenerate it if those change,
+/// or the two paths drift apart again.
+const ABSENT_USER_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$PBDGmYQeDFZi+ngthQy7oA$nWFqoA3BhV2HzsVjhYkCtBOCC1eJX9HiHrqd0jaL7aQ";
 
 const MIN_USERNAME: usize = 3;
 const MAX_USERNAME: usize = 32;
@@ -30,17 +45,16 @@ pub trait TokenSource: Send + Sync + 'static {
 pub fn validate_username(username: &str) -> AppResult<()> {
     let len = username.chars().count();
     if !(MIN_USERNAME..=MAX_USERNAME).contains(&len) {
-        return Err(AppError::validation(format!(
-            "username must be {MIN_USERNAME}-{MAX_USERNAME} characters"
-        )));
+        return Err(AppError::validation_with(
+            text::USERNAME_LENGTH,
+            [MIN_USERNAME, MAX_USERNAME],
+        ));
     }
     if !username
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
-        return Err(AppError::validation(
-            "username may contain letters, digits, '_' and '-' only",
-        ));
+        return Err(AppError::validation(text::USERNAME_CHARSET));
     }
     Ok(())
 }
@@ -48,9 +62,10 @@ pub fn validate_username(username: &str) -> AppResult<()> {
 pub fn validate_password(password: &str) -> AppResult<()> {
     let len = password.chars().count();
     if !(MIN_PASSWORD..=MAX_PASSWORD).contains(&len) {
-        return Err(AppError::validation(format!(
-            "password must be {MIN_PASSWORD}-{MAX_PASSWORD} characters"
-        )));
+        return Err(AppError::validation_with(
+            text::PASSWORD_LENGTH,
+            [MIN_PASSWORD, MAX_PASSWORD],
+        ));
     }
     Ok(())
 }
@@ -83,7 +98,7 @@ where
         validate_username(username)?;
         validate_password(password)?;
         if self.users.by_username(username).await?.is_some() {
-            return Err(AppError::Conflict("username already taken".into()));
+            return Err(AppError::Conflict(Message::new(text::USERNAME_TAKEN)));
         }
         let hash = self.hasher.hash(password)?;
         Ok(self.users.create(username, &hash, now).await?)
@@ -91,18 +106,34 @@ where
 
     pub async fn login(&self, username: &str, password: &str, now: Millis) -> AppResult<Session> {
         // Same error for "no such user" and "wrong password", so the response
-        // cannot be used to discover which usernames exist.
-        let creds = self
-            .users
-            .by_username(username)
-            .await?
-            .ok_or(AppError::Unauthorized)?;
+        // cannot be used to discover which usernames exist -- and the same
+        // work on both paths, so the clock cannot either.
+        let Some(creds) = self.users.by_username(username).await? else {
+            let _ = self.hasher.verify(password, ABSENT_USER_HASH);
+            return Err(AppError::Unauthorized);
+        };
         if !self.hasher.verify(password, &creds.password_hash)? {
             return Err(AppError::Unauthorized);
         }
         let session = Session {
             id: self.tokens.token(),
             user_id: creds.user.id,
+            created_at: now,
+            expires_at: now.plus_ms(SESSION_TTL_MS),
+        };
+        self.sessions.create(&session).await?;
+        Ok(session)
+    }
+
+    /// Sign in a user who has just been created.
+    ///
+    /// Not `login` with the password again: that is a second Argon2 pass over
+    /// a hash this call produced moments ago, which proves nothing and doubles
+    /// what one unauthenticated request costs the server.
+    pub async fn start_session(&self, user: &User, now: Millis) -> AppResult<Session> {
+        let session = Session {
+            id: self.tokens.token(),
+            user_id: user.id,
             created_at: now,
             expires_at: now.plus_ms(SESSION_TTL_MS),
         };
@@ -203,3 +234,22 @@ mod argon2_impl {
 
 #[cfg(feature = "argon2")]
 pub use argon2_impl::{Argon2Hasher, OsTokens};
+
+#[cfg(all(test, feature = "argon2"))]
+mod tests {
+    use super::{ABSENT_USER_HASH, Argon2Hasher, PasswordHasher};
+
+    /// The stand-in only costs what a real hash costs if Argon2 actually runs
+    /// over it, and it only runs if the string parses. A typo would fail
+    /// open -- `verify` returning `Err` in a microsecond, the timing gap back,
+    /// and nothing anywhere saying so.
+    #[test]
+    fn the_absent_user_hash_parses_and_matches_nothing() {
+        let hasher = Argon2Hasher::new();
+        assert_eq!(
+            hasher.verify("any password at all", ABSENT_USER_HASH).ok(),
+            Some(false),
+            "must be a parseable argon2id hash, not an error"
+        );
+    }
+}

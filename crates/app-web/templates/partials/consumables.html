@@ -25,29 +25,7 @@
 </div>
 {% endif %}
 
-{% if !market.alerts.is_empty() %}
-<article>
-  <h2>{{ "Recent alerts"|t }}</h2>
-  <table>
-    <thead>
-      <tr><th>{{ "When"|t }}</th><th>{{ "Item"|t }}</th><th>{{ "Region"|t }}</th><th>{{ "Price"|t }}</th><th>{{ "Usually"|t }}</th><th>{{ "Discount"|t }}</th><th>{{ "Stock"|t }}</th></tr>
-    </thead>
-    <tbody>
-      {% for alert in market.alerts %}
-      <tr class="severity-{% if alert.severity == "very_low" %}error{% else %}warn{% endif %}">
-        <td>{{ alert.when }}</td>
-        <td>{{ alert.name }}</td>
-        <td>{{ alert.region }}</td>
-        <td><b>{{ alert.current }}</b></td>
-        <td>{{ alert.baseline }}</td>
-        <td>-{{ alert.discount_percent }}%</td>
-        <td>{{ alert.quantity }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</article>
-{% endif %}
+
 
 {% for group in market.groups %}
 <section class="group" id="group-{{ group.audience }}">

@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>{{ "Alerts"|t }}</h1>
+
+{% if !view.signed_in %}
+<p class="hint">
+  {{ "Alerts are per account: follow the items you care about and this page tells you when one of them is unusually cheap. Nobody else sees your list."|t }}
+</p>
+<p><a href="/account" role="button" class="outline">{{ "Sign in"|t }}</a></p>
+
+{% else %}
+<p class="hint">
+  {{ "What counts as cheap is measured against the item's own recent history, not a fixed price. Follow an item from its page to add it here."|t }}
+</p>
+
+{# Today's alerts first: it is the reason to open this page. #}
+{% include "partials/alerts.html" %}
+
+<article>
+  <h2>{{ "Following"|t }}</h2>
+  {% if view.watches.is_empty() %}
+  <p class="muted">
+    {{ "You are not following anything yet. Open any item and use “Follow” to start."|t }}
+  </p>
+  {% else %}
+  <ul class="watchlist">
+    {% for watch in view.watches %}
+    <li>
+      {% if let Some(icon) = watch.icon %}
+      <img class="item-icon" src="{{ icon }}" alt="" width="24" height="24" loading="lazy">
+      {% endif %}
+      <a href="{{ watch.href }}">{{ watch.name }}</a>
+      <span class="tag">{{ watch.region }}</span>
+      {% if let Some(price) = watch.current %}
+      <span class="muted">{{ price }}</span>
+      {% else %}
+      <span class="muted">{{ "no price recorded"|t }}</span>
+      {% endif %}
+      <form method="post" action="/wow/alerts">
+        <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
+        <input type="hidden" name="item_id" value="{{ watch.item_id }}">
+        <input type="hidden" name="region" value="{{ watch.region_code }}">
+        <input type="hidden" name="watch" value="false">
+        <input type="hidden" name="back" value="/wow/alerts">
+        <button type="submit" class="outline secondary">{{ "Unfollow"|t }}</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</article>
+{% endif %}
+{% endblock %}
