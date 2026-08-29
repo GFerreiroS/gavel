@@ -1,10 +1,10 @@
 //! One configuration mechanism: CLI flags, each backed by an environment
-//! variable, each with a default (CLAUDE.md 28).
+//! variable, each with a default.
 //!
 //! Secrets are never flags -- they come from the environment only, and are
 //! read by the adapter that needs them.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 
 use app_core::WebConfig;
@@ -15,101 +15,136 @@ use cluster_local::LocalClusterConfig;
 
 #[derive(Debug, Parser)]
 #[command(
-    name = "esp-web-cluster",
-    about = "V0 of the ESP32 web cluster, running on a PC"
+    name = "wow-auction-tracker",
+    about = "Auction tracker with a built-in work cluster"
 )]
 pub struct Cli {
     /// Address to bind the HTTP server to.
-    #[arg(long, env = "ESP_HOST", default_value = "127.0.0.1")]
+    #[arg(long, env = "APP_HOST", default_value = "127.0.0.1")]
     pub host: IpAddr,
 
     /// Port to bind the HTTP server to.
-    #[arg(long, env = "ESP_PORT", default_value_t = 3000)]
+    #[arg(long, env = "APP_PORT", default_value_t = 3000)]
     pub port: u16,
 
     /// SQLite database file. Use `:memory:` for a throwaway run.
-    #[arg(long, env = "ESP_DATABASE", default_value = "data/cluster.db")]
+    #[arg(long, env = "APP_DATABASE", default_value = "data/cluster.db")]
     pub database: PathBuf,
 
-    /// Number of simulated nodes to start.
-    #[arg(long, env = "ESP_NODES", default_value_t = 8)]
-    pub nodes: u16,
+    /// Workers to run inside this process. Enough for a single server: they
+    /// are Tokio tasks and cost nothing when idle.
+    #[arg(long, env = "APP_WORKERS", default_value_t = Self::DEFAULT_WORKERS)]
+    pub workers: u16,
+
+    /// Also accept workers that connect over the network, so the cluster can
+    /// outgrow one machine. Off by default -- a single server needs only the
+    /// in-process pool.
+    ///
+    /// Workers dial this address; nothing here dials a worker. Bind
+    /// `0.0.0.0:3001` rather than `127.0.0.1:3001` or nothing off-box can
+    /// reach it.
+    #[arg(long, env = "APP_WORKER_LISTEN")]
+    pub worker_listen: Option<SocketAddr>,
+
+    /// Run as a worker instead of a web server: connect to the coordinator at
+    /// this address, take work, and exit when it goes away.
+    ///
+    /// The same binary either way, which is what keeps a worker's build
+    /// identical to the one that was tested.
+    #[arg(long, env = "APP_CONNECT", conflicts_with_all = ["worker_listen", "workers"])]
+    pub connect: Option<String>,
 
     /// How often each node emits a heartbeat.
-    #[arg(long, env = "ESP_HEARTBEAT_MS", default_value_t = 1_000)]
+    #[arg(long, env = "APP_HEARTBEAT_MS", default_value_t = 1_000)]
     pub heartbeat_ms: u64,
 
     /// Heartbeat silence after which a node becomes Suspect.
-    #[arg(long, env = "ESP_SUSPECT_MS", default_value_t = 3_000)]
+    #[arg(long, env = "APP_SUSPECT_MS", default_value_t = 3_000)]
     pub suspect_ms: u64,
 
     /// Heartbeat silence after which a node is declared Offline and its tasks
     /// are requeued.
-    #[arg(long, env = "ESP_OFFLINE_MS", default_value_t = 6_000)]
+    #[arg(long, env = "APP_OFFLINE_MS", default_value_t = 6_000)]
     pub offline_ms: u64,
 
     /// Total attempts per task before it fails for good.
-    #[arg(long, env = "ESP_MAX_ATTEMPTS", default_value_t = 3)]
+    #[arg(long, env = "APP_MAX_ATTEMPTS", default_value_t = 3)]
     pub max_task_attempts: u16,
 
     /// Fallback refresh interval for the live fragments. Updates normally
     /// arrive over SSE; this is the safety net when the stream is unavailable.
-    #[arg(long, env = "ESP_POLL_MS", default_value_t = 2_000)]
+    #[arg(long, env = "APP_POLL_MS", default_value_t = 2_000)]
     pub poll_ms: u64,
 
-    #[arg(long, env = "ESP_GATEWAY_MIN", default_value_t = 1)]
+    #[arg(long, env = "APP_GATEWAY_MIN", default_value_t = 1)]
     pub gateway_min: usize,
-    #[arg(long, env = "ESP_FRONTEND_MIN", default_value_t = 2)]
+    #[arg(long, env = "APP_FRONTEND_MIN", default_value_t = 2)]
     pub frontend_min: usize,
-    #[arg(long, env = "ESP_BACKEND_MIN", default_value_t = 2)]
+    #[arg(long, env = "APP_BACKEND_MIN", default_value_t = 2)]
     pub backend_min: usize,
-    #[arg(long, env = "ESP_STORAGE_MIN", default_value_t = 1)]
+    #[arg(long, env = "APP_STORAGE_MIN", default_value_t = 1)]
     pub storage_min: usize,
-    #[arg(long, env = "ESP_COORDINATOR_MIN", default_value_t = 1)]
+    #[arg(long, env = "APP_COORDINATOR_MIN", default_value_t = 1)]
     pub coordinator_min: usize,
 
     /// Expose the failure-simulation routes. On by default in V0; turn it off
     /// for anything resembling a real deployment.
-    #[arg(long, env = "ESP_DEBUG_CONTROLS", default_value_t = true, action = clap::ArgAction::Set)]
+    #[arg(long, env = "APP_DEBUG_CONTROLS", default_value_t = true, action = clap::ArgAction::Set)]
     pub debug_controls: bool,
 
     /// Mark cookies `Secure`. Requires HTTPS; off for local plain-HTTP dev.
-    #[arg(long, env = "ESP_SECURE_COOKIES", default_value_t = false, action = clap::ArgAction::Set)]
+    #[arg(long, env = "APP_SECURE_COOKIES", default_value_t = false, action = clap::ArgAction::Set)]
     pub secure_cookies: bool,
 
     /// How long upstream WoW responses stay cached, in seconds.
-    #[arg(long, env = "ESP_CACHE_TTL_SECS", default_value_t = 600)]
+    #[arg(long, env = "APP_CACHE_TTL_SECS", default_value_t = 600)]
     pub cache_ttl_secs: u64,
 
     /// Regions to collect auction-house prices for, comma separated.
     /// Commodity markets are region-wide and entirely separate from each other.
     #[arg(
         long,
-        env = "ESP_MARKET_REGIONS",
-        default_value = "eu",
+        env = "APP_MARKET_REGIONS",
+        default_value = "eu,us,kr,tw",
         value_delimiter = ','
     )]
     pub market_regions: Vec<String>,
 
+    /// Connected realms to collect gear prices from, as `region:id`, comma
+    /// separated -- for example `eu:1403,us:60`. Gear is not a commodity: it
+    /// is auctioned per realm, so each one is a separate fetch of roughly
+    /// 20 MB. The default is three FULL-population realms in each of EU and
+    /// US; an empty value collects no gear at all.
+    #[arg(
+        long,
+        env = "APP_MARKET_REALMS",
+        default_value = "eu:1403,eu:1084,eu:1329,us:60,us:57,us:76",
+        value_delimiter = ','
+    )]
+    pub market_realms: Vec<String>,
+
     /// How often to poll the commodities endpoint, in minutes. Upstream only
     /// changes hourly, so more often than that mostly yields 304s.
-    #[arg(long, env = "ESP_MARKET_INTERVAL_MIN", default_value_t = 30)]
+    #[arg(long, env = "APP_MARKET_INTERVAL_MIN", default_value_t = 30)]
     pub market_interval_minutes: u64,
 
     /// How long price history is kept, in days.
-    #[arg(long, env = "ESP_MARKET_RETAIN_DAYS", default_value_t = 90)]
+    #[arg(long, env = "APP_MARKET_RETAIN_DAYS", default_value_t = 90)]
     pub market_retain_days: u64,
 
     /// Tracing filter, e.g. `info`, `debug`, `server=debug,cluster_local=trace`.
     #[arg(
         long,
-        env = "ESP_LOG",
+        env = "APP_LOG",
         default_value = "info,sqlx=warn,tower_http=info"
     )]
     pub log: String,
 }
 
 impl Cli {
+    /// The `--workers` default.
+    const DEFAULT_WORKERS: u16 = 4;
+
     pub fn role_policies(&self) -> RolePolicies {
         let mut policies = RolePolicies::default();
         policies.set(Role::Gateway, RolePolicy::new(self.gateway_min));
@@ -122,7 +157,11 @@ impl Cli {
 
     pub fn cluster_config(&self) -> LocalClusterConfig {
         LocalClusterConfig {
-            node_count: self.nodes,
+            node_count: self.workers,
+            // Workers normally arrive anonymously and are given an id, so
+            // nothing has to be declared up front.
+            remote_nodes: Vec::new(),
+            node_listen: self.worker_listen,
             health: HealthPolicy {
                 heartbeat_interval_ms: self.heartbeat_ms,
                 suspect_after_ms: self.suspect_ms,
@@ -162,17 +201,47 @@ impl Cli {
         regions
     }
 
+    /// Parsed gear realms, ignoring anything unrecognised.
+    ///
+    /// A malformed entry is a warning rather than a failure to start: one
+    /// mistyped realm must not take the whole tracker down with it.
+    pub fn realms(&self) -> Vec<(Region, app_core::market::RealmId)> {
+        let mut realms: Vec<(Region, app_core::market::RealmId)> = self
+            .market_realms
+            .iter()
+            .filter_map(|entry| {
+                let entry = entry.trim();
+                if entry.is_empty() {
+                    return None;
+                }
+                let parsed = entry
+                    .split_once(':')
+                    .and_then(|(region, id)| {
+                        Some((Region::parse(region.trim())?, id.trim().parse().ok()?))
+                    })
+                    .map(|(region, id)| (region, app_core::market::RealmId(id)));
+                if parsed.is_none() {
+                    tracing::warn!(realm = %entry, "ignoring unparseable market realm, expected region:id");
+                }
+                parsed
+            })
+            .collect();
+        realms.sort();
+        realms.dedup();
+        realms
+    }
+
     /// The settings worth writing down, as JSON. Recorded at boot through the
     /// key/value port so a misbehaving run can be explained afterwards.
     pub fn effective_settings_json(&self) -> String {
         format!(
             concat!(
-                r#"{{"nodes":{},"heartbeat_ms":{},"suspect_ms":{},"offline_ms":{},"#,
+                r#"{{"workers":{},"heartbeat_ms":{},"suspect_ms":{},"offline_ms":{},"#,
                 r#""max_task_attempts":{},"gateway_min":{},"frontend_min":{},"#,
                 r#""backend_min":{},"storage_min":{},"coordinator_min":{},"#,
                 r#""debug_controls":{}}}"#
             ),
-            self.nodes,
+            self.workers,
             self.heartbeat_ms,
             self.suspect_ms,
             self.offline_ms,

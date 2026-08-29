@@ -1,130 +1,135 @@
 {% extends "base.html" %}
+{% import "macros.html" as tips %}
 {% block content %}
-<p class="crumbs">
-  <a href="/wow/consumables">Consumables</a> ›
-  <a href="/wow/expansion/{{ item.catalog_id }}">{{ item.expansion }}</a> ›
-  {{ item.name }}
-</p>
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/wow/auctions">{{ "Auction House"|t }}</a></li>
+    <li><a href="{{ item.section_href }}">{{ item.section|t }}</a></li>
+    <li><a href="{{ item.expansion_href }}">{{ item.expansion }}</a></li>
+    <li>{{ item.name }}</li>
+  </ul>
+</nav>
 
 <header class="item-head">
   {% if let Some(icon) = item.icon %}
-  <img class="item-icon lg" src="{{ icon }}" alt="" width="56" height="56" loading="lazy">
+  {% call tips::item_icon(item.item_id, item.name, icon, 56, item.tooltip) %}
   {% endif %}
   <div>
     <h1>{{ item.name }}</h1>
     <p class="muted">
-      {{ item.category }} · {{ item.audience }}
-      {% if item.stat != "none" %} · {{ item.stat }}{% endif %}
-      {% if item.ranks_total > 1 %} · rank {{ item.rank }} of {{ item.ranks_total }}{% endif %}
-      · region {{ item.region }} · item {{ item.item_id }}
+      {{ item.category|t }} · {{ item.audience|t }}
+      {% if item.stat != "none" %} · {{ item.stat|t }}{% endif %}
+      {% if item.ranks_total > 1 %} · {{ "rank {} of {}"|t|fill(item.rank)|fill(item.ranks_total) }}{% endif %}
+      · {{ "region {}"|t|fill(item.region) }} · {{ "item {}"|t|fill(item.item_id) }}
     </p>
   </div>
 </header>
 
 {% if item.archived %}
 <div class="alert alert-archived" role="status">
-  <strong>{{ item.expansion }} is archived.</strong>
-  These figures are final; this market is no longer collected.
+  <strong>{{ "{} is archived."|t|fill(item.expansion) }}</strong>
+  {{ "These figures are final; this market is no longer collected."|t }}
 </div>
 {% endif %}
 
 {% if !item.has_data %}
 <div class="alert alert-archived" role="status">
-  No observations recorded for this market yet. Statistics appear once the
-  collector has run.
+  {{ "No observations recorded for this market yet. Statistics appear once the collector has run."|t }}
 </div>
 {% else %}
 
 <div class="stat-grid">
-  <div class="stat"><span class="label">Price now</span><span class="value">{{ item.current }}</span></div>
-  <div class="stat"><span class="label">Average</span><span class="value">{{ item.mean }}</span></div>
-  <div class="stat"><span class="label">Median</span><span class="value">{{ item.median }}</span></div>
+  <div class="stat"><span class="label">{{ "Price now"|t }}</span><span class="value">{{ item.current }}</span></div>
+  <div class="stat"><span class="label">{{ "Average"|t }}</span><span class="value">{{ item.mean }}</span></div>
+  <div class="stat"><span class="label">{{ "Median"|t }}</span><span class="value">{{ item.median }}</span></div>
   <div class="stat">
-    <span class="label">Lowest ever</span>
+    <span class="label">{{ "Lowest ever"|t }}</span>
     <span class="value good">{{ item.low }}</span>
     <span class="when muted">{{ item.low_when }}</span>
   </div>
   <div class="stat">
-    <span class="label">Highest ever</span>
+    <span class="label">{{ "Highest ever"|t }}</span>
     <span class="value bad">{{ item.high }}</span>
     <span class="when muted">{{ item.high_when }}</span>
   </div>
-  <div class="stat"><span class="label">In stock</span><span class="value">{{ item.quantity }}</span></div>
-  <div class="stat"><span class="label">Swing</span><span class="value">{{ item.volatility_percent }}%</span></div>
+  <div class="stat"><span class="label">{{ "In stock"|t }}</span><span class="value">{{ item.quantity }}</span></div>
+  <div class="stat"><span class="label">{{ "Swing"|t }}</span><span class="value">{{ item.volatility_percent }}%</span></div>
   <div class="stat">
-    <span class="label">Observations</span>
+    <span class="label">{{ "Observations"|t }}</span>
     <span class="value">{{ item.samples }}</span>
-    <span class="when muted">since {{ item.first_seen }}</span>
+    <span class="when muted">{{ "since {}"|t|fill(item.first_seen) }}</span>
   </div>
 </div>
 
-<section class="panel">
-  <h2>Change</h2>
+<article>
+  <h2>{{ "Change"|t }}</h2>
   <div class="trend-row">
     {% for trend in item.trends %}
     <div class="trend">
-      <span class="label">{{ trend.label }}</span>
+      <span class="label">{{ trend.label|t }}</span>
       {% if trend.known %}
       <span class="value {% if trend.cheaper %}good{% else if trend.percent > 0 %}bad{% endif %}">
         {% if trend.percent > 0 %}+{% endif %}{{ trend.percent }}%
       </span>
       {% else %}
-      <span class="value muted">not enough history</span>
+      <span class="value muted">{{ "not enough history"|t }}</span>
       {% endif %}
     </div>
     {% endfor %}
   </div>
-</section>
+</article>
 
-<section class="panel viz-root">
-  <h2>Price over time</h2>
+<article class="viz-root">
+  <h2>{{ "Price over time"|t }}</h2>
   {% if item.series_labels.len() > 1 %}
   <p class="legend">
-    {% for label in item.series_labels %}
-    <span class="key"><i class="swatch s{{ loop.index }}"></i>{{ label }}</span>
+    {# The swatch colour comes from the chart module, not from a CSS class:
+       the class had no rules left after a stylesheet rewrite and the swatches
+       silently disappeared. #}
+    {% for key in item.series_labels %}
+    <span class="key"><i class="swatch" style="background:{{ key.colour }}"></i>{{ key.label }}</span>
     {% endfor %}
   </p>
   {% endif %}
   {{ item.price_chart|safe }}
-  <p class="hint">Hover the chart for the exact value at a point in time.</p>
-</section>
+  <p class="hint">{{ "Hover the chart for the exact value at a point in time."|t }}</p>
+</article>
 
-<section class="panel viz-root">
-  <h2>Units listed over time</h2>
+<article class="viz-root">
+  <h2>{{ "Units listed over time"|t }}</h2>
   <p class="hint">
-    Supply, on its own axis. A price drop with supply collapsing is somebody
-    undercutting an empty market, not the market getting cheaper.
+    {{ "Supply, on its own axis. A price drop with supply collapsing is somebody undercutting an empty market, not the market getting cheaper."|t }}
   </p>
   {{ item.stock_chart|safe }}
-</section>
+</article>
 
 <div class="two-col">
-  <section class="panel viz-root">
-    <h2>Average by hour (UTC)</h2>
+  <article class="viz-root">
+    <h2>{{ "Average by hour (UTC)"|t }}</h2>
     {% if let Some(best) = item.best_hour %}
-    <p class="hint">Cheapest around <strong>{{ best }}</strong>.</p>
+    <p class="hint">{{ "Cheapest around"|t }} <strong>{{ best }}</strong>.</p>
     {% else %}
-    <p class="hint">Needs a few observations in every hour before this is meaningful.</p>
+    <p class="hint">{{ "Needs a few observations in every hour before this is meaningful."|t }}</p>
     {% endif %}
     {{ item.hour_chart|safe }}
-  </section>
+  </article>
 
-  <section class="panel viz-root">
-    <h2>Average by weekday</h2>
+  <article class="viz-root">
+    <h2>{{ "Average by weekday"|t }}</h2>
     {% if let Some(best) = item.best_weekday %}
-    <p class="hint">Cheapest on <strong>{{ best }}</strong>.</p>
+    <p class="hint">{{ "Cheapest on"|t }} <strong>{{ best }}</strong>.</p>
     {% else %}
-    <p class="hint">Needs a few observations on every weekday.</p>
+    <p class="hint">{{ "Needs a few observations on every weekday."|t }}</p>
     {% endif %}
     {{ item.weekday_chart|safe }}
-  </section>
+  </article>
 </div>
 
-<section class="panel">
-  <h2>By patch</h2>
+<article>
+  <h2>{{ "By patch"|t }}</h2>
   <div class="scroll-x">
-    <table class="table">
-      <thead><tr><th>Patch</th><th>Average</th><th>Low</th><th>High</th><th>Observations</th></tr></thead>
+    <table>
+      <thead><tr><th>{{ "Patch"|t }}</th><th>{{ "Average"|t }}</th><th>{{ "Low"|t }}</th><th>{{ "High"|t }}</th><th>{{ "Observations"|t }}</th></tr></thead>
       <tbody>
         {% for patch in item.patches %}
         <tr>
@@ -138,6 +143,6 @@
       </tbody>
     </table>
   </div>
-</section>
+</article>
 {% endif %}
 {% endblock %}

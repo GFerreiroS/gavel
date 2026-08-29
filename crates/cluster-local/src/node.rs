@@ -1,8 +1,8 @@
-//! One simulated node.
+//! One in-process node.
 //!
 //! A node knows only: its own id and capabilities, its mailbox, and where to
 //! send reports. It has no view of the cluster -- exactly the amount of
-//! knowledge an ESP32 will have.
+//! knowledge a worker process has.
 
 use std::time::Duration;
 
@@ -17,7 +17,7 @@ use crate::exec::execute_task;
 #[derive(Debug)]
 pub(crate) enum NodeInbox {
     Assign(Box<Task>),
-    /// Stop sending heartbeats without stopping the node (CLAUDE.md 35).
+    /// Stop sending heartbeats without stopping the node.
     PauseHeartbeat(bool),
     /// Make the next `count` tasks fail.
     ///
@@ -45,10 +45,29 @@ pub(crate) enum NodeReport {
 }
 
 /// The supervisor's handle on a running node.
+///
+/// Deliberately says nothing about *where* the node is. An in-process node is a
+/// Tokio task in this process; a remote worker is a process at the other end of
+/// a TCP connection. Both are reached the same way -- push a [`NodeInbox`]
+/// into a channel -- which is why the supervisor needs no notion of remoteness
+/// to schedule work.
 pub(crate) struct NodeHandle {
     pub inbox: mpsc::Sender<NodeInbox>,
     pub shutdown: tokio::sync::oneshot::Sender<()>,
-    pub join: tokio::task::JoinHandle<()>,
+    /// `None` for a remote node: the connection task owns itself and cannot
+    /// hand out a handle to its own join. Stopping one closes its socket
+    /// instead of aborting a task.
+    pub join: Option<tokio::task::JoinHandle<()>>,
+}
+
+impl NodeHandle {
+    /// Stop the node behind this handle, however it happens to be running.
+    pub fn terminate(self) {
+        let _ = self.shutdown.send(());
+        if let Some(join) = self.join {
+            join.abort();
+        }
+    }
 }
 
 pub(crate) struct NodeConfig {
@@ -60,7 +79,7 @@ pub(crate) struct NodeConfig {
 
 /// Spawn a node task and return the handle used to talk to it.
 pub(crate) fn spawn_node(config: NodeConfig, reports: mpsc::Sender<NodeReport>) -> NodeHandle {
-    // Small mailbox: back-pressure is a real property of the future system and
+    // Small mailbox: back-pressure is a real property of remote workers and
     // should not be papered over with an unbounded queue.
     let (inbox_tx, inbox_rx) = mpsc::channel(8);
     let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel();
@@ -68,7 +87,7 @@ pub(crate) fn spawn_node(config: NodeConfig, reports: mpsc::Sender<NodeReport>) 
     NodeHandle {
         inbox: inbox_tx,
         shutdown: shutdown_tx,
-        join,
+        join: Some(join),
     }
 }
 
@@ -93,7 +112,7 @@ async fn run_node(
     // but run off the select loop so heartbeats keep flowing while it works.
     let mut running: JoinSet<(Box<Task>, TaskOutcome)> = JoinSet::new();
 
-    tracing::debug!(node = %id, cpu = %config.capabilities.cpu_class, "node started");
+    tracing::debug!(node = %id, cores = config.capabilities.cores, "worker started");
 
     loop {
         tokio::select! {

@@ -1,6 +1,6 @@
 //! Battle.net account linking -- configuration only, deliberately unimplemented.
 //!
-//! CLAUDE.md 38 is explicit: do not implement fake OAuth. What exists here is
+//! Do not implement a fake OAuth flow. What exists here is
 //! the configuration shape and the place the adapter will go, so that nothing
 //! else in the application has to move when the real flow is written against
 //! the current official Battle.net OAuth documentation.
@@ -17,7 +17,7 @@
 //! ```
 
 /// Credentials come from the environment; never from a file in the repository
-/// and never from a literal (CLAUDE.md 9/30).
+/// and never from a literal.
 #[derive(Clone)]
 pub struct BattleNetConfig {
     pub client_id: String,

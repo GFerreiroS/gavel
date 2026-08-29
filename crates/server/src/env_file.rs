@@ -1,6 +1,6 @@
 //! Minimal `.env` loading.
 //!
-//! Secrets come from the environment (CLAUDE.md 28/30), but "the environment"
+//! Secrets come from the environment, but "the environment"
 //! in development means a `.env` file, and nothing was reading one -- so
 //! credentials sat on disk while the app reported them missing.
 //!

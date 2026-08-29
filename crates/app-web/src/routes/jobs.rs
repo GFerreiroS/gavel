@@ -8,6 +8,7 @@ use serde::Deserialize;
 
 use crate::csrf::Csrf;
 use crate::error::WebResult;
+use crate::prefs::MarketPrefs;
 use crate::render::page;
 use crate::routes::partials;
 
@@ -20,10 +21,11 @@ pub struct SubmitForm {
     pub csrf_token: String,
 }
 
-/// `POST /jobs` -> the refreshed job list fragment (CLAUDE.md 32).
+/// `POST /jobs` -> the refreshed job list fragment.
 pub async fn submit<E: Ports>(
     State(env): State<E>,
     Extension(csrf): Extension<Csrf>,
+    Extension(prefs): Extension<MarketPrefs>,
     headers: HeaderMap,
     axum::Form(form): axum::Form<SubmitForm>,
 ) -> WebResult<Html<String>> {
@@ -33,5 +35,5 @@ pub async fn submit<E: Ports>(
     let id = jobs.submit(&form.kind, form.size, form.tasks).await?;
     tracing::info!(job = %id, kind = %form.kind, tasks = form.tasks, "job submitted");
 
-    page(&partials::jobs_fragment(&env).await)
+    page(&partials::jobs_fragment(&env).await, prefs.locale)
 }

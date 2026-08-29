@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <h1>{{ detail.job.id }}</h1>
-<p><a href="/jobs">&larr; all jobs</a></p>
+<p><a href="/jobs">&larr; {{ "all jobs"|t }}</a></p>
 
 <div id="job-detail"
      hx-get="/partials/jobs/{{ detail.job.raw_id }}"

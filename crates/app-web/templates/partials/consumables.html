@@ -1,40 +1,36 @@
-<nav class="catalog-tabs">
-  {% for cat in market.catalogs %}
-  <a href="/wow/consumables{% if !cat.collecting %}/{{ cat.id }}{% endif %}"
-     class="{% if cat.selected %}active{% endif %}">
-    {{ cat.label }}
-    {% if cat.collecting %}<span class="tag ok">live</span>{% else %}<span class="tag">archived</span>{% endif %}
-  </a>
-  {% endfor %}
-</nav>
-
+{# The expansion and region selects live in the page shell, above this
+   fragment: they are the choice, and this is what the choice produced. #}
+{% import "macros.html" as tips %}
 {% if market.archived %}
 <div class="alert alert-archived" role="status">
-  <strong>{{ market.expansion }} is archived.</strong>
-  These prices are kept for reference and are no longer collected or updated.
+  <strong>{{ "{} is archived."|t|fill(market.expansion) }}</strong>
+  {{ "These prices are kept for reference and are no longer collected or updated."|t }}
 </div>
 {% endif %}
 
-<div class="stat-grid">
-  <div class="stat"><span class="label">Region</span><span class="value">{{ market.region }}</span></div>
-  <div class="stat"><span class="label">Tracked items</span><span class="value">{{ market.tracked_items }}</span></div>
-  <div class="stat"><span class="label">With data</span><span class="value">{{ market.samples_held }}</span></div>
-  <div class="stat"><span class="label">Last snapshot</span><span class="value">{{ market.last_observed }}</span></div>
-</div>
+{# Region, tracked items and coverage live on the Auction House index. They
+   describe the whole market, not this category, so showing them again here is
+   the same numbers twice.
+
+   The snapshot age and the comparison window do belong here -- they are what
+   every figure below is measured from -- but once, above the cards, rather
+   than on each of them. #}
+<p class="hint page-meta">
+  {{ "Prices from the snapshot {}. The +/− figure compares each price against its average over the last {} days, set on the Auction House index."|t|fill(market.observed)|fill(market.baseline_days) }}
+</p>
 
 {% if !market.configured && !market.archived %}
 <div class="alert alert-error" role="alert">
-  Battle.net credentials are not configured, so no prices are being collected.
-  Set <code>BLIZZARD_CLIENT_ID</code> and <code>BLIZZARD_CLIENT_SECRET</code> and restart.
+  {{ "Battle.net credentials are not configured, so no prices are being collected. Set BLIZZARD_CLIENT_ID and BLIZZARD_CLIENT_SECRET and restart."|t }}
 </div>
 {% endif %}
 
 {% if !market.alerts.is_empty() %}
-<section class="panel">
-  <h2>Recent alerts</h2>
-  <table class="table">
+<article>
+  <h2>{{ "Recent alerts"|t }}</h2>
+  <table>
     <thead>
-      <tr><th>When</th><th>Item</th><th>Region</th><th>Price</th><th>Usually</th><th>Discount</th><th>Stock</th></tr>
+      <tr><th>{{ "When"|t }}</th><th>{{ "Item"|t }}</th><th>{{ "Region"|t }}</th><th>{{ "Price"|t }}</th><th>{{ "Usually"|t }}</th><th>{{ "Discount"|t }}</th><th>{{ "Stock"|t }}</th></tr>
     </thead>
     <tbody>
       {% for alert in market.alerts %}
@@ -50,95 +46,49 @@
       {% endfor %}
     </tbody>
   </table>
-</section>
+</article>
 {% endif %}
 
 {% for group in market.groups %}
-<section class="panel" id="group-{{ group.audience }}">
-  <h2>{{ group.label }}</h2>
+<section class="group" id="group-{{ group.audience }}">
+  <h2>{{ group.label|t }}</h2>
   <p class="hint">
-    Average, lowest and highest are all-time; “vs usual” compares the current
-    price against the last {{ market.baseline_days }} days. Each rank is its own
-    market, so each gets its own column.
+    {{ "Average, lowest and highest are all-time. Each rank is its own market, so each gets its own column."|t }}
   </p>
   {% if group.cards.is_empty() %}
-  <p class="muted">Nothing tracked in this group.</p>
+  <p class="muted">{{ "Nothing tracked in this group."|t }}</p>
   {% else %}
   <div class="card-grid">
-    {% for card in group.cards %}
-    <article class="item-card">
-      <header>
-        {% if let Some(icon) = card.icon %}
-        <img class="item-icon" src="{{ icon }}" alt="" width="40" height="40" loading="lazy">
-        {% endif %}
-        <div>
-          <h3>{{ card.name }}</h3>
-          <span class="sub">
-            {{ card.category }}{% if card.stat != "none" %} · {{ card.stat }}{% endif %}
-          </span>
-        </div>
-      </header>
-
-      {% if card.any_data %}
-      <div class="rank-cols cols-{{ card.columns.len() }}">
-        {% for col in card.columns %}
-        <div class="rank-col">
-          <span class="rank-label">{{ col.label }}</span>
-          {% if col.has_data %}
-          <span class="now">{{ col.current }}</span>
-          {% if col.cheap %}<span class="tag ok">{{ col.delta_percent }}%</span>
-          {% else if col.dear %}<span class="tag warn">+{{ col.delta_percent }}%</span>
-          {% endif %}
-          <dl class="rank-stats">
-            <dt>Avg</dt><dd>{{ col.mean }}</dd>
-            <dt>Low</dt><dd>{{ col.low }} <small class="muted">{{ col.low_when }}</small></dd>
-            <dt>High</dt><dd>{{ col.high }} <small class="muted">{{ col.high_when }}</small></dd>
-            <dt>Stock</dt><dd>{{ col.quantity }}</dd>
-          </dl>
-          <a class="rank-link" href="/wow/item/{{ col.item_id }}">Stats &amp; graphs →</a>
-          {% else %}
-          <p class="muted rank-empty">Not listed.</p>
-          {% endif %}
-        </div>
-        {% endfor %}
-      </div>
-      <span class="sub card-foot">Snapshot {{ card.observed }}</span>
-      {% else %}
-      <p class="muted">No observations yet.</p>
-      {% endif %}
-    </article>
-    {% endfor %}
+    {% for card in group.cards %}{% call tips::item_card(card, market.baseline_days) %}{% endfor %}
   </div>
   {% endif %}
 </section>
 {% endfor %}
 
-<section class="panel">
-  <h2>Across {{ market.expansion }}</h2>
+<article>
+  <h2>{{ "Across {}"|t|fill(market.expansion) }}</h2>
   <p class="hint">
-    Average unit price per patch, with the low and high underneath. The last
-    column is the whole expansion, which is what "what did this cost during
-    {{ market.expansion }}" means once it is over.
+    {{ "Average unit price per patch, with the low and high underneath. The last column is the whole expansion, which is what “what did this cost during {}” means once it is over."|t|fill(market.expansion) }}
   </p>
   {% if market.patches.is_empty() %}
-  <p class="muted">No patch boundaries recorded for this expansion.</p>
+  <p class="muted">{{ "No patch boundaries recorded for this expansion."|t }}</p>
   {% else %}
   <div class="scroll-x">
   <table class="table patch-table">
     <thead>
       <tr>
-        <th>Item</th><th>Type</th>
+        <th>{{ "Item"|t }}</th><th>{{ "Type"|t }}</th>
         {% for patch in market.patches %}
-        <th title="{{ patch.label }} — from {{ patch.started }}">{{ patch.patch }}</th>
+        <th title='{{ "{} — from {}"|t|fill(patch.label)|fill(patch.started) }}'>{{ patch.patch }}</th>
         {% endfor %}
-        <th>All patches</th>
+        <th>{{ "All patches"|t }}</th>
       </tr>
     </thead>
     <tbody>
       {% for row in market.patch_rows %}
       <tr class="audience-{{ row.audience }}">
-        <td>{{ row.name }} {% if row.audience != "common" %}<span class="tag">{{ row.audience }}</span>{% endif %}</td>
-        <td class="muted">{{ row.category }}</td>
+        <td>{{ row.name }} {% if row.audience != "common" %}<span class="tag">{{ row.audience|t }}</span>{% endif %}</td>
+        <td class="muted">{{ row.category|t }}</td>
         {% for cell in row.cells %}
         <td>
           {% if cell.has_data %}
@@ -150,7 +100,7 @@
         <td>
           {% if row.overall.has_data %}
             <b>{{ row.overall.mean }}</b><br>
-            <small class="muted">{{ row.overall.low }} – {{ row.overall.high }} · {{ row.overall.samples }} samples</small>
+            <small class="muted">{{ row.overall.low }} – {{ row.overall.high }} · {{ "{} samples"|t|fill(row.overall.samples) }}</small>
           {% else %}<span class="muted">—</span>{% endif %}
         </td>
       </tr>
@@ -159,4 +109,4 @@
   </table>
   </div>
   {% endif %}
-</section>
+</article>

@@ -1,9 +1,8 @@
-//! The counters a future autoscaler will need (CLAUDE.md 23).
+//! Request-side counters for operations and future scaling decisions.
 //!
-//! Plain atomics rather than a metrics framework: the whole point is that this
-//! has to be affordable on a node with a few hundred KB of RAM. Queue depth,
-//! worker load and running jobs come from the cluster snapshot; what the
-//! cluster cannot see is the HTTP side, which is what this collects.
+//! Plain atomics rather than a metrics framework keep request accounting
+//! fixed-cost. Queue depth, worker load and running jobs come from the cluster
+//! snapshot; what the cluster cannot see is the HTTP side collected here.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 

@@ -1,20 +1,16 @@
 //! The actual computation behind a task.
 //!
-//! Pure and `no_std`: no async, no allocation beyond the result string, no
-//! platform calls. This is what makes "the same code runs on the PC and on the
-//! device" a fact rather than an aspiration -- `cluster-local` and the ESP32-S3
-//! firmware both call [`run_task`] and neither has its own copy.
-
-use alloc::format;
-use alloc::string::String;
+//! Pure: no async, no allocation beyond the result string, no platform calls.
+//! This is what makes "the same code runs in every worker" a fact rather than
+//! an aspiration: in-process and remote workers both call [`run_task`].
 
 use crate::ids::NodeId;
 use crate::job::TaskSpec;
 
 /// What a caller must do to finish a task.
 ///
-/// Waiting is the caller's job because that is the one part that genuinely
-/// differs: `tokio::time::sleep` on the host, a timer peripheral on the device.
+/// Waiting is the caller's job so the runtime can wait without blocking
+/// heartbeats or other protocol work.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TaskWork {
     /// Wait this long, then report `output`.
@@ -30,13 +26,20 @@ pub fn run_task(node: NodeId, spec: TaskSpec) -> TaskWork {
             millis,
             output: format!("slept {millis}ms on {node}"),
         },
-        TaskSpec::Primes { start, end } => {
-            let count = count_primes(start, end);
-            TaskWork::Done {
-                output: format!("{count} primes in {start}..{end} on {node}"),
-            }
-        }
+        TaskSpec::Primes { start, end } => TaskWork::Done {
+            output: primes_output(node, start, end, count_primes(start, end)),
+        },
     }
+}
+
+/// How a prime count is reported.
+///
+/// Shared so that a node which computes the range in one call and a node which
+/// takes it in slices produce byte-identical output. Without a single source
+/// for this string the two would drift, and the difference would only show up
+/// as a confusing diff between in-process and remote results.
+pub fn primes_output(node: NodeId, start: u64, end: u64, count: u64) -> String {
+    format!("{count} primes in {start}..{end} on {node}")
 }
 
 /// Count the primes in a half-open range.
@@ -54,16 +57,16 @@ pub fn is_prime(n: u64) -> bool {
     if n < 2 {
         return false;
     }
-    if n % 2 == 0 {
+    if n.is_multiple_of(2) {
         return n == 2;
     }
-    if n % 3 == 0 {
+    if n.is_multiple_of(3) {
         return n == 3;
     }
     // 6k +/- 1: skips two thirds of the candidates for one extra add.
     let mut d: u64 = 5;
     while d * d <= n {
-        if n % d == 0 || n % (d + 2) == 0 {
+        if n.is_multiple_of(d) || n.is_multiple_of(d + 2) {
             return false;
         }
         d += 6;

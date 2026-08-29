@@ -1,0 +1,25 @@
+{% import "macros.html" as tips %}
+<p class="hint">
+  {% if reagents.query.is_empty() %}
+  {{ "{} reagents tracked."|t|fill(reagents.total) }}
+  {% else %}
+  {{ "{} of {} reagents match."|t|fill(reagents.matched)|fill(reagents.total) }}
+  {% endif %}
+</p>
+
+<p class="hint page-meta">
+  {{ "Prices from the snapshot {}. The +/− figure compares each price against its average over the last {} days, set on the Auction House index."|t|fill(reagents.observed)|fill(reagents.baseline_days) }}
+</p>
+
+{% if reagents.groups.is_empty() %}
+<p class="muted">{{ "Nothing matches that search."|t }}</p>
+{% endif %}
+
+{% for group in reagents.groups %}
+<section class="group" id="profession-{{ group.audience }}">
+  <h2>{{ group.label|t }} <span class="muted">({{ group.cards.len() }})</span></h2>
+  <div class="card-grid">
+    {% for card in group.cards %}{% call tips::item_card(card, reagents.baseline_days) %}{% endfor %}
+  </div>
+</section>
+{% endfor %}

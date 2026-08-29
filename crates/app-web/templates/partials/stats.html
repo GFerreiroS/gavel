@@ -1,42 +1,42 @@
 <div class="stat-grid">
   <div class="stat">
-    <span class="label">Cluster</span>
-    <span class="value status-{{ stats.status }}">{{ stats.status }}</span>
+    <span class="label">{{ "Cluster"|t }}</span>
+    <span class="value status-{{ stats.status }}">{{ stats.status|t }}</span>
   </div>
   <div class="stat">
-    <span class="label">Nodes online</span>
+    <span class="label">{{ "Nodes online"|t }}</span>
     <span class="value">{{ stats.nodes_online }} / {{ stats.nodes_total }}</span>
   </div>
   <div class="stat">
-    <span class="label">Coordinator</span>
+    <span class="label">{{ "Coordinator"|t }}</span>
     <span class="value">{{ stats.leader }}</span>
   </div>
   <div class="stat">
-    <span class="label">Gateway</span>
+    <span class="label">{{ "Gateway"|t }}</span>
     <span class="value">{{ stats.gateway }}</span>
   </div>
   <div class="stat">
-    <span class="label">Jobs running</span>
+    <span class="label">{{ "Jobs running"|t }}</span>
     <span class="value">{{ stats.jobs_running }}</span>
   </div>
   <div class="stat">
-    <span class="label">Jobs queued</span>
+    <span class="label">{{ "Jobs queued"|t }}</span>
     <span class="value">{{ stats.jobs_queued }}</span>
   </div>
   <div class="stat">
-    <span class="label">Jobs completed</span>
+    <span class="label">{{ "Jobs completed"|t }}</span>
     <span class="value">{{ stats.jobs_completed }}</span>
   </div>
   <div class="stat">
-    <span class="label">Jobs failed</span>
+    <span class="label">{{ "Jobs failed"|t }}</span>
     <span class="value {% if stats.jobs_failed > 0 %}bad{% endif %}">{{ stats.jobs_failed }}</span>
   </div>
   <div class="stat">
-    <span class="label">Tasks running</span>
+    <span class="label">{{ "Tasks running"|t }}</span>
     <span class="value">{{ stats.tasks_running }}</span>
   </div>
   <div class="stat">
-    <span class="label">Tasks queued</span>
+    <span class="label">{{ "Tasks queued"|t }}</span>
     <span class="value">{{ stats.tasks_queued }}</span>
   </div>
 </div>
@@ -44,7 +44,7 @@
 <div class="role-bar">
   {% for role in stats.roles %}
   <span class="role-count {% if role.met %}ok{% else %}bad{% endif %}">
-    {{ role.role }} <b>{{ role.count }}</b>{% if role.min > 0 %} / min {{ role.min }}{% endif %}
+    {{ role.role|t }} <b>{{ role.count }}</b>{% if role.min > 0 %} / {{ "min {}"|t|fill(role.min) }}{% endif %}
   </span>
   {% endfor %}
 </div>

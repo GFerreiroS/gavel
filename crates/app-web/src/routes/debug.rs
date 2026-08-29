@@ -1,4 +1,4 @@
-//! Failure-simulation controls (CLAUDE.md 35).
+//! Failure-simulation controls.
 //!
 //! Mounted only when `WebConfig::debug_controls` is set, which the server ties
 //! to an explicit flag. These are development affordances, not product
@@ -19,6 +19,7 @@ use serde::Deserialize;
 
 use crate::csrf::Csrf;
 use crate::error::WebResult;
+use crate::prefs::MarketPrefs;
 use crate::render::page;
 use crate::routes::partials;
 
@@ -40,6 +41,7 @@ macro_rules! debug_handler {
         pub async fn $name<E: Ports>(
             State($env): State<E>,
             Extension(csrf): Extension<Csrf>,
+            Extension(prefs): Extension<MarketPrefs>,
             headers: HeaderMap,
             Path(id): Path<u16>,
             Query($params): Query<DebugParams>,
@@ -48,7 +50,7 @@ macro_rules! debug_handler {
             let $node = NodeId(id);
             $body;
             tracing::warn!(node = %$node, "debug control: {}", $log);
-            page(&partials::nodes_fragment(&$env).await)
+            page(&partials::nodes_fragment(&$env, prefs.locale).await, prefs.locale)
         }
     };
 }

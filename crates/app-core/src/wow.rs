@@ -1,7 +1,7 @@
 //! The WoW vertical slice, expressed as a port plus our own domain types.
 //!
 //! `app-integrations` provides the Raider.IO adapter. Nothing outside that
-//! adapter ever sees a provider-shaped JSON field (CLAUDE.md 37).
+//! adapter ever sees a provider-shaped JSON field.
 
 use std::future::Future;
 

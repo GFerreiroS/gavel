@@ -1,16 +1,19 @@
 //! Full-page handlers.
 
+use app_core::locale::Locale;
 use app_core::repo::{Store, UserRepository};
 use app_core::{AppError, Ports};
 use askama::Template;
-use axum::extract::{Path, State};
-use axum::http::HeaderMap;
+use axum::extract::{OriginalUri, Path, State};
+use axum::http::{HeaderMap, Uri};
 use axum::response::Html;
 use axum::{Extension, Json};
 use cluster_core::{ClusterControl, JobId};
 
 use crate::csrf::Csrf;
 use crate::error::WebResult;
+use crate::i18n::filters;
+use crate::prefs::MarketPrefs;
 use crate::render::page;
 use crate::session::current_user;
 use crate::views::{EventView, JobDetailView, JobRow, Layout, MetricsView, NodeView, Stats};
@@ -78,14 +81,18 @@ async fn layout<E: Ports>(
     env: &E,
     headers: &HeaderMap,
     csrf: &Csrf,
+    locale: Locale,
     title: &str,
     current: &'static str,
+    request_uri: &Uri,
 ) -> WebResult<Layout> {
     let user = current_user(env, headers).await?;
     Ok(Layout::new(
         env.config(),
+        locale,
         title,
         current,
+        request_uri,
         user.map(|u| u.username),
         csrf.0.clone(),
     ))
@@ -94,6 +101,8 @@ async fn layout<E: Ports>(
 pub async fn dashboard<E: Ports>(
     State(env): State<E>,
     Extension(csrf): Extension<Csrf>,
+    Extension(prefs): Extension<MarketPrefs>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> WebResult<Html<String>> {
     let snapshot = env.cluster().snapshot().await;
@@ -101,17 +110,25 @@ pub async fn dashboard<E: Ports>(
         .cluster()
         .recent_events(env.config().event_log_limit)
         .await;
-    page(&DashboardPage {
-        layout: layout(&env, &headers, &csrf, "Dashboard", "/").await?,
-        stats: Stats::from_snapshot(&snapshot),
-        metrics: MetricsView::new(&env.metrics().snapshot()),
-        events: events.iter().map(EventView::new).collect(),
-    })
+    page(
+        &DashboardPage {
+            layout: layout(&env, &headers, &csrf, prefs.locale, "Dashboard", "/", &uri).await?,
+            stats: Stats::from_snapshot(&snapshot),
+            metrics: MetricsView::new(&env.metrics().snapshot()),
+            events: events
+                .iter()
+                .map(|e| EventView::new(e, prefs.locale))
+                .collect(),
+        },
+        prefs.locale,
+    )
 }
 
 pub async fn cluster<E: Ports>(
     State(env): State<E>,
     Extension(csrf): Extension<Csrf>,
+    Extension(prefs): Extension<MarketPrefs>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> WebResult<Html<String>> {
     let snapshot = env.cluster().snapshot().await;
@@ -121,52 +138,79 @@ pub async fn cluster<E: Ports>(
         .recent_events(env.config().event_log_limit)
         .await;
     let now = env.now();
-    page(&ClusterPage {
-        layout: layout(&env, &headers, &csrf, "Cluster", "/cluster").await?,
-        stats: Stats::from_snapshot(&snapshot),
-        nodes: nodes
-            .iter()
-            .map(|n| NodeView::new(n, now, &snapshot))
-            .collect(),
-        events: events.iter().map(EventView::new).collect(),
-        debug_controls: env.config().debug_controls,
-    })
+    page(
+        &ClusterPage {
+            layout: layout(
+                &env,
+                &headers,
+                &csrf,
+                prefs.locale,
+                "Cluster",
+                "/cluster",
+                &uri,
+            )
+            .await?,
+            stats: Stats::from_snapshot(&snapshot),
+            nodes: nodes
+                .iter()
+                .map(|n| NodeView::new(n, now, &snapshot, prefs.locale))
+                .collect(),
+            events: events
+                .iter()
+                .map(|e| EventView::new(e, prefs.locale))
+                .collect(),
+            debug_controls: env.config().debug_controls,
+        },
+        prefs.locale,
+    )
 }
 
 pub async fn nodes<E: Ports>(
     State(env): State<E>,
     Extension(csrf): Extension<Csrf>,
+    Extension(prefs): Extension<MarketPrefs>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> WebResult<Html<String>> {
     let snapshot = env.cluster().snapshot().await;
     let nodes = env.cluster().nodes().await;
     let now = env.now();
-    page(&NodesPage {
-        layout: layout(&env, &headers, &csrf, "Nodes", "/nodes").await?,
-        nodes: nodes
-            .iter()
-            .map(|n| NodeView::new(n, now, &snapshot))
-            .collect(),
-        debug_controls: env.config().debug_controls,
-    })
+    page(
+        &NodesPage {
+            layout: layout(&env, &headers, &csrf, prefs.locale, "Nodes", "/nodes", &uri).await?,
+            nodes: nodes
+                .iter()
+                .map(|n| NodeView::new(n, now, &snapshot, prefs.locale))
+                .collect(),
+            debug_controls: env.config().debug_controls,
+        },
+        prefs.locale,
+    )
 }
 
 pub async fn jobs<E: Ports>(
     State(env): State<E>,
     Extension(csrf): Extension<Csrf>,
+    Extension(prefs): Extension<MarketPrefs>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> WebResult<Html<String>> {
     let now = env.now();
     let jobs = env.cluster().jobs(JOB_LIST_LIMIT).await;
-    page(&JobsPage {
-        layout: layout(&env, &headers, &csrf, "Jobs", "/jobs").await?,
-        jobs: jobs.iter().map(|j| JobRow::new(j, now)).collect(),
-    })
+    page(
+        &JobsPage {
+            layout: layout(&env, &headers, &csrf, prefs.locale, "Jobs", "/jobs", &uri).await?,
+            jobs: jobs.iter().map(|j| JobRow::new(j, now)).collect(),
+        },
+        prefs.locale,
+    )
 }
 
 pub async fn job_detail<E: Ports>(
     State(env): State<E>,
     Extension(csrf): Extension<Csrf>,
+    Extension(prefs): Extension<MarketPrefs>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     Path(id): Path<u64>,
 ) -> WebResult<Html<String>> {
@@ -176,15 +220,29 @@ pub async fn job_detail<E: Ports>(
         .await
         .ok_or(AppError::NotFound)?;
     let now = env.now();
-    page(&JobDetailPage {
-        layout: layout(&env, &headers, &csrf, &format!("Job {id}"), "/jobs").await?,
-        detail: JobDetailView::new(&detail, now),
-    })
+    page(
+        &JobDetailPage {
+            layout: layout(
+                &env,
+                &headers,
+                &csrf,
+                prefs.locale,
+                &format!("Job {id}"),
+                "/jobs",
+                &uri,
+            )
+            .await?,
+            detail: JobDetailView::new(&detail, now),
+        },
+        prefs.locale,
+    )
 }
 
 pub async fn account<E: Ports>(
     State(env): State<E>,
     Extension(csrf): Extension<Csrf>,
+    Extension(prefs): Extension<MarketPrefs>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> WebResult<Html<String>> {
     let user = current_user(&env, &headers).await?;
@@ -199,32 +257,42 @@ pub async fn account<E: Ports>(
             .collect(),
         None => Vec::new(),
     };
-    page(&AccountPage {
-        layout: Layout::new(
-            env.config(),
-            "Account",
-            "/account",
-            user.as_ref().map(|u| u.username.clone()),
-            csrf.0.clone(),
-        ),
-        signed_in: user.is_some(),
-        username: user.map(|u| u.username).unwrap_or_default(),
-        linked,
-    })
+    page(
+        &AccountPage {
+            layout: Layout::new(
+                env.config(),
+                prefs.locale,
+                "Account",
+                "/account",
+                &uri,
+                user.as_ref().map(|u| u.username.clone()),
+                csrf.0.clone(),
+            ),
+            signed_in: user.is_some(),
+            username: user.map(|u| u.username).unwrap_or_default(),
+            linked,
+        },
+        prefs.locale,
+    )
 }
 
 pub async fn wow<E: Ports>(
     State(env): State<E>,
     Extension(csrf): Extension<Csrf>,
+    Extension(prefs): Extension<MarketPrefs>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
 ) -> WebResult<Html<String>> {
-    page(&WowPage {
-        layout: layout(&env, &headers, &csrf, "WoW", "/wow").await?,
-    })
+    page(
+        &WowPage {
+            layout: layout(&env, &headers, &csrf, prefs.locale, "WoW", "/wow", &uri).await?,
+        },
+        prefs.locale,
+    )
 }
 
 /// Machine-readable snapshot, for scripts and future non-browser clients.
-/// The browser uses the HTML fragments instead (CLAUDE.md 32).
+/// The browser uses the HTML fragments instead.
 pub async fn snapshot_json<E: Ports>(State(env): State<E>) -> Json<cluster_core::ClusterSnapshot> {
     Json(env.cluster().snapshot().await)
 }

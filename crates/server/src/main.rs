@@ -8,6 +8,7 @@ mod config;
 mod env_file;
 mod market;
 mod runtime;
+mod worker;
 
 use std::path::PathBuf;
 
@@ -17,8 +18,8 @@ use app_core::auth::{Argon2Hasher, OsTokens};
 use app_core::market::CatalogSet;
 use app_core::repo::{CacheStore, KeyValueStore, SessionRepository, Store};
 use app_integrations::{
-    BlizzardAuctions, BlizzardConfig, BlizzardCredentials, DiscordWebhook, RaiderIoClient,
-    RaiderIoConfig,
+    BlizzardAuctions, BlizzardConfig, BlizzardCredentials, BlizzardItems, DiscordWebhook,
+    RaiderIoClient, RaiderIoConfig,
 };
 use clap::Parser;
 use cluster_core::Clock;
@@ -33,8 +34,8 @@ use crate::runtime::{Inner, Runtime};
 ///
 /// `.env` is loaded before the Tokio runtime exists because `set_var` is not
 /// thread-safe; doing it inside `#[tokio::main]` would already be racing the
-/// worker threads. Loading here also means a `.env` can set the `ESP_*` flags,
-/// since it lands before `Cli::parse`.
+/// runtime's threads. Loading here also means a `.env` can set the `APP_*`
+/// flags, since it lands before `Cli::parse`.
 fn main() -> anyhow::Result<()> {
     let (env_path, env_keys) = env_file::load_default();
     run(env_path, env_keys)
@@ -44,6 +45,12 @@ fn main() -> anyhow::Result<()> {
 async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result<()> {
     let cli = Cli::parse();
     init_tracing(&cli.log)?;
+
+    // Worker mode short-circuits everything below: no HTTP, no database, no
+    // application state. It dials the coordinator and does what it is told.
+    if let Some(address) = cli.connect.clone() {
+        return worker::run(&address).await;
+    }
 
     // Key names only -- never values.
     match (&env_path, env_keys.is_empty()) {
@@ -71,20 +78,34 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
 
     // One store handle: the runtime persists jobs, events and role assignments.
     let (cluster, supervisor) = LocalCluster::start(cli.cluster_config(), store.cluster_handle());
-    tracing::info!(nodes = cli.nodes, "simulated cluster starting");
+    tracing::info!(workers = cli.workers, "worker pool starting");
 
     let characters = RaiderIoClient::new(RaiderIoConfig::default(), clock)
         .map_err(|e| anyhow::anyhow!("building the Raider.IO client: {e}"))?;
 
     // Both of these are optional: the app runs without them, it just cannot
     // collect prices or push alerts.
-    let commodities = match BlizzardCredentials::from_env() {
+    let (commodities, realm_auctions, items) = match BlizzardCredentials::from_env() {
         Some(credentials) => {
-            tracing::info!(client_id = %credentials.client_id, "Battle.net credentials loaded");
-            market::Commodities::Live(Box::new(
-                BlizzardAuctions::new(BlizzardConfig::default(), credentials, clock)
-                    .map_err(|e| anyhow::anyhow!("building the Blizzard client: {e}"))?,
-            ))
+            tracing::info!("Battle.net credentials loaded");
+            // Two adapters, one set of credentials: prices come from the
+            // auction house, tooltips from the static game data.
+            let auctions =
+                BlizzardAuctions::new(BlizzardConfig::default(), credentials.clone(), clock)
+                    .map_err(|e| anyhow::anyhow!("building the Blizzard client: {e}"))?;
+            let realms = app_integrations::BlizzardRealms::new(
+                BlizzardConfig::default(),
+                credentials.clone(),
+                clock,
+            )
+            .map_err(|e| anyhow::anyhow!("building the Blizzard realm client: {e}"))?;
+            let items = BlizzardItems::new(BlizzardConfig::default(), credentials, clock)
+                .map_err(|e| anyhow::anyhow!("building the Blizzard item client: {e}"))?;
+            (
+                market::Commodities::Live(Box::new(auctions)),
+                market::RealmAuctions::Live(Box::new(realms)),
+                market::Items::Live(Box::new(items)),
+            )
         }
         None => {
             // Point at the file if there is one: "not set" is confusing when
@@ -93,14 +114,18 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
                 Some(path) => tracing::warn!(
                     file = %path.display(),
                     "BLIZZARD_CLIENT_ID / BLIZZARD_CLIENT_SECRET are missing or empty in this \
-                     file: price collection is disabled"
+                     file: price collection and item tooltips are disabled"
                 ),
                 None => tracing::warn!(
                     "BLIZZARD_CLIENT_ID / BLIZZARD_CLIENT_SECRET not set and no .env found: \
-                     price collection is disabled"
+                     price collection and item tooltips are disabled"
                 ),
             }
-            market::Commodities::Unconfigured
+            (
+                market::Commodities::Unconfigured,
+                market::RealmAuctions::Unconfigured,
+                market::Items::Unconfigured,
+            )
         }
     };
 
@@ -118,6 +143,7 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
     let catalogs = CatalogSet::embedded();
     let market_config = market::config(
         cli.regions(),
+        cli.realms(),
         cli.market_interval_minutes,
         cli.market_retain_days,
     );
@@ -127,6 +153,8 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
         cluster,
         characters,
         commodities,
+        realm_auctions,
+        items,
         alerts,
         catalogs,
         market: market_config,
@@ -173,8 +201,8 @@ fn init_tracing(filter: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Drop rows nobody will ever read again. Cheap, and keeps the file small --
-/// which will matter a great deal more on flash than it does here.
+/// Drop rows nobody will ever read again. Cheap, and keeps the database from
+/// growing on expired sessions and cache entries alone.
 async fn housekeeping(store: &SqliteStore, clock: &SystemClock) -> u64 {
     let now = clock.now();
     let sessions = store.sessions().purge_expired(now).await.unwrap_or(0);
@@ -183,7 +211,7 @@ async fn housekeeping(store: &SqliteStore, clock: &SystemClock) -> u64 {
 }
 
 /// Persist what this run was actually configured with, through the generic
-/// key/value port (CLAUDE.md 25/26).
+/// key/value port.
 ///
 /// Not decoration: when a cluster misbehaves the first question is always
 /// "what was it started with", and by then the flags are long gone.

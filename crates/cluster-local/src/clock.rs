@@ -2,8 +2,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use cluster_core::{Clock, Millis};
 
-/// Host clock. The ESP implementation will read the RTC / SNTP-disciplined
-/// counter instead, which is exactly why callers only ever see [`Clock`].
+/// System clock used by the host runtime. Tests provide deterministic
+/// [`Clock`] implementations instead.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemClock;
 

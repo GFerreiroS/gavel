@@ -10,6 +10,7 @@ pub mod alerts;
 pub mod analysis;
 pub mod catalog;
 pub mod collector;
+pub mod realm;
 pub mod stats;
 
 use std::fmt;
@@ -20,10 +21,14 @@ use serde::{Deserialize, Serialize};
 pub use alerts::{Alert, AlertRule, AlertSeverity};
 pub use analysis::{Cycle, ItemAnalysis, Point, Trend, analyse, downsample};
 pub use catalog::{
-    ALL_AUDIENCES, ALL_AUDIENCES_LABELS, Audience, Catalog, CatalogItem, CatalogSet, CatalogStatus,
-    Category, ItemRank, Patch, Stat,
+    ALL_AUDIENCES, ALL_AUDIENCES_LABELS, ALL_PROFESSIONS, ALL_SLOTS, Audience, Catalog,
+    CatalogItem, CatalogSet, CatalogStatus, Category, ItemKind, ItemLevel, ItemRank, Patch,
+    Profession, Slot, Stat,
 };
 pub use collector::{AlertSink, Collector, NullSink, Outcome, Report};
+pub use realm::{
+    GearListing, Realm, RealmAuctionProvider, RealmId, RealmSample, RealmSnapshot, summarise_realm,
+};
 
 pub use stats::{PriceStats, summarise};
 
@@ -80,6 +85,13 @@ impl Region {
     /// Dynamic namespace, required on every game-data request.
     pub fn namespace(self) -> String {
         format!("dynamic-{}", self.as_str())
+    }
+
+    /// Static namespace, for data that only changes when the game patches:
+    /// item names, qualities, effects. Separate from [`Region::namespace`]
+    /// because asking the wrong namespace is a 404, not a fallback.
+    pub fn static_namespace(self) -> String {
+        format!("static-{}", self.as_str())
     }
 
     pub fn parse(s: &str) -> Option<Region> {
@@ -198,8 +210,8 @@ pub trait CommodityProvider: Send + Sync + 'static {
     /// `wanted`.
     ///
     /// Filtering is the provider's job because the raw payload is far larger
-    /// than the part we care about; a node with a few hundred KB of RAM has to
-    /// discard as it parses rather than materialise the whole thing.
+    /// than the part we care about. Discarding unrelated listings while
+    /// parsing also avoids a large short-lived allocation every cycle.
     fn commodities(
         &self,
         region: Region,
@@ -214,6 +226,14 @@ pub struct MarketConfig {
     /// Regions to collect. Commodity markets are completely separate, so each
     /// one is its own collection and its own history.
     pub regions: Vec<Region>,
+    /// Connected realms to collect gear prices from, as (region, realm).
+    ///
+    /// A short list on purpose: one realm is ~20 MB per cycle, and every
+    /// realm in EU and US would be roughly half a gigabyte. The eventual
+    /// answer is to fan this out across the cluster -- one task per realm is
+    /// exactly the shape the scheduler already takes -- but a handful of
+    /// realms is honestly a loop.
+    pub realms: Vec<(Region, RealmId)>,
     pub rule: AlertRule,
     /// How often to poll. The upstream snapshot only moves hourly, so polling
     /// faster mostly produces 304s -- cheap, but not free at 25 per call.
@@ -223,9 +243,9 @@ pub struct MarketConfig {
     /// retention window would quietly delete the oldest expansion first.
     ///
     /// Volume is not a reason to prune here -- 26 items at hourly resolution
-    /// is roughly 230k rows a year, which SQLite does not notice. On the
-    /// eventual flash-backed target the answer is downsampling old samples to
-    /// daily, not discarding them.
+    /// is roughly 230k rows a year, which SQLite handles comfortably. If the
+    /// catalogue grows substantially, downsample old samples rather than
+    /// silently discarding whole expansion histories.
     pub retain_ms: u64,
 }
 
@@ -233,6 +253,7 @@ impl Default for MarketConfig {
     fn default() -> Self {
         Self {
             regions: vec![Region::Eu],
+            realms: Vec::new(),
             rule: AlertRule::default(),
             collect_interval_ms: 30 * 60 * 1000,
             retain_ms: 0,

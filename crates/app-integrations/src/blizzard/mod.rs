@@ -4,14 +4,18 @@
 //! reused, and the region-wide commodity auction house.
 //!
 //! Credentials come from the environment and are never logged, never rendered
-//! and never persisted (CLAUDE.md 9/30).
+//! and never persisted.
 
 mod auctions;
+mod items;
+mod realms;
 mod token;
 
 use std::time::Duration;
 
 pub use auctions::BlizzardAuctions;
+pub use items::BlizzardItems;
+pub use realms::BlizzardRealms;
 pub use token::TokenSource;
 
 /// Client credentials, read from the environment.
@@ -62,6 +66,9 @@ pub struct BlizzardConfig {
     pub oauth_url: String,
     /// The commodities payload is large; this is not a snappy request.
     pub timeout: Duration,
+    /// Single-item lookups are small, and one sits behind a hover: a slow
+    /// upstream must not hold a browser connection open for two minutes.
+    pub item_timeout: Duration,
     pub user_agent: String,
 }
 
@@ -70,7 +77,8 @@ impl Default for BlizzardConfig {
         Self {
             oauth_url: "https://oauth.battle.net/token".to_string(),
             timeout: Duration::from_secs(120),
-            user_agent: concat!("esp-web-cluster/", env!("CARGO_PKG_VERSION")).to_string(),
+            item_timeout: Duration::from_secs(10),
+            user_agent: concat!("wow-auction-tracker/", env!("CARGO_PKG_VERSION")).to_string(),
         }
     }
 }

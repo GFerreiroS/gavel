@@ -1,11 +1,15 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Raid consumables</h1>
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/wow/auctions">{{ "Auction House"|t }}</a></li>
+    <li>{{ "Consumables"|t }}</li>
+  </ul>
+</nav>
+<h1>{{ "Raid consumables"|t }}</h1>
 <p class="hint">
-  {{ market.season }} · prices are the 5th-percentile unit price, which ignores
-  a single joke listing while still reflecting what you would actually pay.
-  Consumables are <strong>commodities</strong>, so these are region-wide prices —
-  every realm in {{ market.region }} sees the same market.
+  {{ market.season }} ·
+  {{ "prices are the 5th-percentile unit price, which ignores a single joke listing while still reflecting what you would actually pay. Consumables are commodities, so these are region-wide prices — every realm in the region sees the same market."|t }}
 </p>
 
 <div id="consumables"

@@ -1,6 +1,6 @@
 //! Raider.IO character lookup.
 //!
-//! The first vertical slice (CLAUDE.md 37). The response structs below are
+//! The character-lookup vertical slice. The response structs below are
 //! private: everything that leaves this module is an `app_core::wow` type, so
 //! adding a second provider later is a new file rather than a refactor.
 
@@ -26,7 +26,7 @@ impl Default for RaiderIoConfig {
         Self {
             base_url: DEFAULT_BASE_URL.to_string(),
             timeout: Duration::from_secs(8),
-            user_agent: concat!("esp-web-cluster/", env!("CARGO_PKG_VERSION")).to_string(),
+            user_agent: concat!("wow-auction-tracker/", env!("CARGO_PKG_VERSION")).to_string(),
         }
     }
 }

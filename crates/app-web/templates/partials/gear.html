@@ -1,0 +1,100 @@
+{% import "macros.html" as tips %}
+<p class="hint page-meta">
+  {% if gear.leveled %}
+  {{ "Prices from the snapshot {}. An auction does not carry an item level, only bonus ids; these were resolved from them and each item level is its own market."|t|fill(gear.observed) }}
+  {% else %}
+  {{ "Prices from the snapshot {}."|t|fill(gear.observed) }}
+  {% endif %}
+</p>
+
+{% if gear.groups.is_empty() %}
+<p class="muted">{{ "Nothing tracked yet."|t }}</p>
+{% endif %}
+
+{% for group in gear.groups %}
+{% if !group.label.is_empty() %}
+<h2 id="group-{{ group.anchor }}">{{ group.label|t }} <span class="muted">({{ group.cards.len() }})</span></h2>
+{% endif %}
+<div class="card-grid{% if !gear.compact %} gear-grid{% endif %}">
+  {% for card in group.cards %}
+  <article class="item-card">
+    <header>
+      {% if let Some(icon) = card.icon %}
+      {% call tips::item_icon(card.tooltip_item_id, card.name, icon, 40, card.tooltip) %}
+      {% endif %}
+      <div class="item-head-text">
+        <h3 title="{{ card.name }}">{{ card.name }}</h3>
+        {% if !card.slot.is_empty() %}<span class="sub">{{ card.slot|t }}</span>
+        {% else if let Some(material) = card.material %}<span class="sub">{{ material }}</span>{% endif %}
+      </div>
+    </header>
+
+    {% if card.unlisted %}
+    {# Tracked, but nobody is selling one. Said out loud, because it is a
+       different answer from "we do not follow this item". #}
+    <p class="muted rank-empty">{{ "No listings in this snapshot."|t }}</p>
+    {% else %}
+    {# A row per item level, a cell per region. Rows rather than columns so the
+       same item level always lines up across regions: with columns, one side
+       having an extra line of detail pushed everything below it out of step. #}
+    {# A row per item level, a cell per region -- rows rather than columns so
+       the same item level always lines up across regions. Inside a row the
+       markup is the commodity card's: label, price, figures, and the button
+       at the bottom, because that is where the button is on every other card
+       in the app. #}
+    <div class="gear-levels" style="--scopes: {{ card.scopes.len() }}">
+      {% if card.scopes.len() > 1 %}
+      <div class="gear-cells gear-scopes">
+        {% for scope in card.scopes %}<span class="rank-label">{{ scope }}</span>{% endfor %}
+      </div>
+      {% endif %}
+
+      {% for level in card.levels %}
+      <div class="gear-level">
+        {% if level.leveled %}
+        <span class="rank-label gear-level-name">{{ "ilvl {}"|t|fill(level.item_level) }}
+          <span class="muted">· {{ level.upgrade }}</span></span>
+        {% endif %}
+        <div class="gear-cells">
+          {% for cell in level.cells %}
+          <div class="rank-col">
+            {% if !cell.listed %}
+            <p class="muted rank-empty">{{ "No listings."|t }}</p>
+            {% else %}
+            <span class="now">{{ cell.price }}</span>
+            <dl class="rank-stats">
+              <dt>{{ "Cheapest"|t }}</dt>
+              <dd>{{ cell.cheapest.price }}
+                {% if let Some(realm) = cell.cheapest.realm %}<small class="muted">{{ realm }}</small>{% endif %}</dd>
+              <dt>{{ "Highest"|t }}</dt>
+              <dd>{{ cell.highest.price }}
+                {% if let Some(realm) = cell.highest.realm %}<small class="muted">{{ realm }}</small>{% endif %}</dd>
+              <dt>{{ "Listings"|t }}</dt>
+              <dd>{{ cell.listings }}
+                {% if cell.realms > 1 %}<small class="muted">{{ "on {} realms"|t|fill(cell.realms) }}</small>{% endif %}</dd>
+              {# Always present, so every cell is the same height. Kept to one
+                 line, with the full list on hover: a wrapped list of extras is
+                 what knocked the regions out of alignment. #}
+              <dt>{{ "Extras"|t }}</dt>
+              <dd class="gear-extras"
+                  title="{% for extra in cell.extras %}{{ extra.name|t }} ×{{ extra.listings }}{% if !loop.last %}, {% endif %}{% endfor %}">
+                {% if cell.extras.is_empty() %}<small class="muted">—</small>
+                {% else %}<small class="muted">{% for extra in cell.extras %}{{ extra.name|t }}&nbsp;×{{ extra.listings }}{% if !loop.last %} · {% endif %}{% endfor %}</small>{% endif %}
+              </dd>
+            </dl>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% if !level.href.is_empty() %}
+        <a class="rank-link outline secondary" role="button"
+           href="{{ level.href }}?region={{ gear.region }}{% if !gear.realm_slug.is_empty() %}&realm={{ gear.realm_slug }}{% endif %}">{{ "Stats & graphs"|t }} →</a>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </article>
+  {% endfor %}
+</div>
+{% endfor %}

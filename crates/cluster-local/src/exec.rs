@@ -1,9 +1,9 @@
 //! Running a task on the host.
 //!
 //! The computation itself lives in `cluster_core::workload` and is shared
-//! verbatim with the ESP32-S3 firmware. What is left here is the part that
-//! genuinely differs between a host and a device: how you wait, and how you
-//! keep a CPU-bound loop from blocking an async runtime.
+//! verbatim with the remote worker. What is left here is the part that
+//! genuinely differs: how you wait, and how you keep a CPU-bound loop from
+//! blocking an async runtime.
 
 use cluster_core::{FailureReason, NodeId, TaskOutcome, TaskSpec, TaskWork, run_task};
 
@@ -29,8 +29,8 @@ pub async fn execute_task(
     }
 
     // CPU-bound work goes to the blocking pool so heartbeats from other nodes
-    // are not delayed. On the device there is no pool -- the task simply owns
-    // the core until it finishes, which is why a node runs one task at a time.
+    // are not delayed. A node still accepts one task at a time, matching the
+    // remote agent's execution model.
     let work = match spec {
         TaskSpec::Primes { .. } => {
             match tokio::task::spawn_blocking(move || run_task(node, spec)).await {

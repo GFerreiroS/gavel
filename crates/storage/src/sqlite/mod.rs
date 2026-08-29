@@ -6,6 +6,7 @@ mod events;
 mod jobs;
 mod kv;
 mod prices;
+mod realm_prices;
 mod sessions;
 mod users;
 
@@ -23,6 +24,7 @@ pub use events::SqliteEvents;
 pub use jobs::SqliteJobs;
 pub use kv::SqliteKv;
 pub use prices::SqlitePrices;
+pub use realm_prices::SqliteRealmPrices;
 pub use sessions::SqliteSessions;
 pub use users::SqliteUsers;
 
@@ -45,9 +47,16 @@ pub(crate) fn corrupt(what: &str, value: impl std::fmt::Display) -> RepoError {
 pub struct SqliteConfig {
     pub path: PathBuf,
     /// SQLite writes are serialised anyway; a small pool is plenty and keeps
-    /// the footprint honest about the eventual target.
+    /// the connection footprint explicit.
     pub max_connections: u32,
     pub busy_timeout_ms: u64,
+    /// How long a pooled connection may live before being recycled. `None`
+    /// leaves sqlx's default (30 minutes).
+    ///
+    /// Exposed because recycling is what exposed the in-memory lifetime bug,
+    /// and a bug that takes half an hour to appear needs a way to be
+    /// reproduced in a test that takes a second.
+    pub max_lifetime_ms: Option<u64>,
 }
 
 impl SqliteConfig {
@@ -56,6 +65,7 @@ impl SqliteConfig {
             path: path.as_ref().to_path_buf(),
             max_connections: 4,
             busy_timeout_ms: 5_000,
+            max_lifetime_ms: None,
         }
     }
 
@@ -95,6 +105,7 @@ pub struct SqliteStore {
     cache: SqliteCache,
     kv: SqliteKv,
     prices: SqlitePrices,
+    realm_prices: SqliteRealmPrices,
 }
 
 impl SqliteStore {
@@ -121,17 +132,28 @@ impl SqliteStore {
             .map_err(map_err)?
             .create_if_missing(true)
             .foreign_keys(true)
-            // WAL keeps readers from blocking the writer; on the eventual
-            // flash-backed target this choice will be revisited.
+            // WAL keeps readers from blocking the writer.
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
             .busy_timeout(std::time::Duration::from_millis(config.busy_timeout_ms));
 
-        let pool = SqlitePoolOptions::new()
-            .max_connections(config.max_connections)
-            .connect_with(options)
-            .await
-            .map_err(map_err)?;
+        let mut pool = SqlitePoolOptions::new().max_connections(config.max_connections);
+        if let Some(ms) = config.max_lifetime_ms {
+            pool = pool.max_lifetime(std::time::Duration::from_millis(ms));
+        }
+        if config.is_memory() {
+            // A `mode=memory` database exists only while a connection to it is
+            // open. The pool closes idle connections, so once the last one
+            // went the database went with it -- and the next request opened a
+            // fresh, empty one and failed with "no such table". Holding one
+            // connection open for the pool's lifetime is what makes the shared
+            // cache above actually shared.
+            pool = pool
+                .min_connections(1)
+                .idle_timeout(None)
+                .max_lifetime(None);
+        }
+        let pool = pool.connect_with(options).await.map_err(map_err)?;
 
         sqlx::migrate!("../../migrations")
             .run(&pool)
@@ -148,6 +170,7 @@ impl SqliteStore {
             cache: SqliteCache::new(pool.clone()),
             kv: SqliteKv::new(pool.clone()),
             prices: SqlitePrices::new(pool.clone()),
+            realm_prices: SqliteRealmPrices::new(pool.clone()),
             pool,
         })
     }
@@ -173,6 +196,7 @@ impl Store for SqliteStore {
     type Cache = SqliteCache;
     type Kv = SqliteKv;
     type Prices = SqlitePrices;
+    type RealmPrices = SqliteRealmPrices;
 
     fn users(&self) -> &Self::Users {
         &self.users
@@ -194,5 +218,8 @@ impl Store for SqliteStore {
     }
     fn prices(&self) -> &Self::Prices {
         &self.prices
+    }
+    fn realm_prices(&self) -> &Self::RealmPrices {
+        &self.realm_prices
     }
 }

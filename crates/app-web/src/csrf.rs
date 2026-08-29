@@ -15,7 +15,7 @@ use app_core::AppError;
 use crate::error::WebResult;
 use crate::session::cookie_value;
 
-pub const CSRF_COOKIE: &str = "esp_csrf";
+pub const CSRF_COOKIE: &str = "wow_tracker_csrf";
 pub const CSRF_HEADER: &str = "x-csrf-token";
 
 /// The token for the current request, injected as a request extension.

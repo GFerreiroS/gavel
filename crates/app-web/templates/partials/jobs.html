@@ -1,20 +1,25 @@
 <div id="job-list" hx-get="/partials/jobs" hx-trigger="cluster-changed from:body"
      hx-swap="outerHTML">
   {% if jobs.is_empty() %}
-  <p class="muted">No jobs yet. Submit one above.</p>
+  <p class="muted">{{ "No jobs yet. Submit one above."|t }}</p>
   {% else %}
-  <table class="table">
+  <div class="scroll-x">
+  <table>
     <thead>
-      <tr><th>Job</th><th>Workload</th><th>State</th><th>Progress</th><th>Failed</th><th>Duration</th></tr>
+      <tr><th>{{ "Job"|t }}</th><th>{{ "Workload"|t }}</th><th>{{ "State"|t }}</th><th>{{ "Progress"|t }}</th><th>{{ "Failed"|t }}</th><th>{{ "Duration"|t }}</th></tr>
     </thead>
     <tbody>
       {% for job in jobs %}
       <tr>
-        <td><a href="/jobs/{{ job.raw_id }}">{{ job.id }}</a></td>
-        <td>{{ job.description }}</td>
-        <td><span class="badge state-{{ job.state }}">{{ job.state }}</span></td>
+        <td><a class="rank-link outline secondary" role="button"
+               href="/jobs/{{ job.raw_id }}">{{ job.id }}</a></td>
+        <td>{{ job.description|t }}</td>
+        <td><span class="badge state-{{ job.state }}">{{ job.state|t }}</span></td>
         <td>
-          <div class="bar small"><span style="width: {{ job.progress }}%"></span></div>
+          <div class="bar small" role="progressbar" aria-label='{{ "Job progress"|t }}'
+               aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ job.progress }}">
+            <span style="width: {{ job.progress }}%"></span>
+          </div>
           {{ job.tasks_done }} / {{ job.tasks_total }}
         </td>
         <td class="{% if job.tasks_failed > 0 %}bad{% endif %}">{{ job.tasks_failed }}</td>
@@ -23,5 +28,6 @@
       {% endfor %}
     </tbody>
   </table>
+  </div>
   {% endif %}
 </div>

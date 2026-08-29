@@ -1,9 +1,8 @@
 //! Charts, rendered server-side as inline SVG.
 //!
-//! No charting library. Partly because a JS bundle would dwarf the rest of the
-//! frontend, and partly because the eventual target serves pages from flash --
-//! but mostly because the data is already reduced by the time it reaches here,
-//! so drawing it is a few dozen lines of arithmetic.
+//! No charting library: a JS bundle would dwarf the rest of the frontend, and
+//! the data is already reduced by the time it reaches here, so drawing it is a
+//! few dozen lines of arithmetic.
 //!
 //! Colours come from the validated two-slot categorical palette (blue, then
 //! orange, assigned in fixed order and never cycled) and are emitted as CSS
@@ -15,8 +14,23 @@ use std::fmt::Write;
 use app_core::market::{Copper, Cycle, Point};
 use cluster_core::Millis;
 
+/// The categorical palette, in slot order: blue, then orange.
+///
+/// One source of truth, in Rust, because two things draw from it -- the line
+/// strokes inside the SVG and the legend swatches outside it. When the palette
+/// lived in CSS the legend and the chart could disagree silently, and did:
+/// rewriting the stylesheet left the swatches with no colour at all while the
+/// lines kept theirs.
+pub const SERIES_COLOURS: [&str; 2] = ["#3b82f6", "#f59e0b"];
+
 /// Series identity is fixed by slot, never by rank order in the data.
 const SERIES: [&str; 2] = ["var(--series-1)", "var(--series-2)"];
+
+/// The colour for a series slot, saturating rather than wrapping: a third
+/// series reuses the last colour instead of silently pairing with the first.
+pub fn series_colour(slot: usize) -> &'static str {
+    SERIES_COLOURS[slot.min(SERIES_COLOURS.len() - 1)]
+}
 
 const W: f64 = 760.0;
 const H: f64 = 260.0;
@@ -125,15 +139,52 @@ pub struct Series<'a> {
     pub slot: usize,
 }
 
+/// The chart's own stylesheet, emitted inside every chart.
+///
+/// These rules used to live in the app stylesheet. That made a chart depend on
+/// a file that never mentions charts, and the dependency was invisible: a
+/// rewrite of `style.css` dropped `.chart` and every graph in the app broke at
+/// once -- unsized, unlabelled, with the invisible hover targets rendering as
+/// solid grey slabs. Nothing failed to compile and no test noticed.
+///
+/// Carrying the styling here makes a chart one self-contained artefact. Adding
+/// a new one cannot depend on remembering to add CSS somewhere else, and no
+/// edit to the stylesheet can take the axes away.
+///
+/// Every colour falls back to a literal, so a chart still reads even if the
+/// Pico variables are renamed. The block repeats once per chart, which gzip
+/// reduces to almost nothing -- a cheaper price than the coupling it removes.
+const CHART_STYLE: &str = concat!(
+    "<style>",
+    "svg.chart{width:100%;height:auto;display:block;",
+    // The two-slot categorical palette, assigned by slot and never cycled.
+    // Kept in step with SERIES_COLOURS by `the_legend_and_the_lines_agree`;
+    // `concat!` takes literals only, so the values cannot be interpolated.
+    "--series-1:#3b82f6;--series-2:#f59e0b;",
+    "--chart-line:var(--pico-muted-border-color,#4a5568);",
+    "--chart-text:var(--pico-muted-color,#8b93a7)}",
+    "svg.chart .grid{stroke:var(--chart-line);stroke-width:1}",
+    "svg.chart .axis{fill:var(--chart-text);font-size:11px;font-family:inherit}",
+    "svg.chart .bar{fill:var(--series-1)}",
+    "svg.chart .bar.best{fill:var(--series-2)}",
+    "svg.chart path.bar{stroke:none}",
+    // Invisible until hovered: the wide rects exist to give a pointer
+    // somewhere to land for the native <title> tooltip.
+    "svg.chart .hit{fill:transparent}",
+    "svg.chart .hit:hover{fill:var(--chart-line);fill-opacity:.35}",
+    "</style>",
+);
+
 fn open_svg(svg: &mut String) {
     // No `preserveAspectRatio="none"`. With it, the viewBox stretched to the
     // container width while the height stayed fixed, so every glyph and stroke
-    // was distorted horizontally. Uniform scaling plus `height: auto` in the
-    // stylesheet keeps the geometry honest.
+    // was distorted horizontally. Uniform scaling plus the `height: auto` in
+    // CHART_STYLE keeps the geometry honest.
     let _ = write!(
         svg,
         r#"<svg class="chart" viewBox="0 0 {W} {H}" role="img">"#
     );
+    svg.push_str(CHART_STYLE);
 }
 
 fn y_axis(svg: &mut String, lo: f64, hi: f64, step: f64, unit: Unit) {
@@ -433,6 +484,67 @@ mod tests {
         assert!(svg.contains("viewBox=\"0 0 760 260\""));
         assert!(svg.contains("<path"), "the series was not drawn");
         assert!(svg.contains("<title>"), "hover tooltips are missing");
+    }
+
+    /// A chart must not depend on the app stylesheet.
+    ///
+    /// This is the regression that broke every graph at once: the rules lived
+    /// in `style.css`, a rewrite of that file dropped them, and nothing failed
+    /// to build. The charts rendered unsized, unlabelled, with the invisible
+    /// hover targets showing as solid slabs.
+    #[test]
+    fn a_chart_carries_everything_it_needs_to_render() {
+        let svg = line_chart(
+            &[Series {
+                label: "Rank 1",
+                slot: 0,
+                points: &points(&[100, 200, 150, 300]),
+            }],
+            Unit::Gold,
+            "no data",
+        );
+
+        assert!(svg.contains("<style>"), "the chart brings its own styling");
+        assert!(
+            svg.contains("width:100%") && svg.contains("height:auto"),
+            "an SVG with only a viewBox and no sizing overflows its container"
+        );
+        for hook in [".grid", ".axis", ".hit", ".bar"] {
+            assert!(
+                svg.contains(&format!("svg.chart {hook}")),
+                "{hook} is styled by the chart itself, not by a stylesheet \
+                 that has never heard of charts"
+            );
+        }
+        assert!(
+            svg.contains("--pico-muted-border-color,"),
+            "colours follow the theme but fall back to a literal"
+        );
+    }
+
+    /// The legend draws from `SERIES_COLOURS`; the lines draw from the
+    /// variables in `CHART_STYLE`. They have to be the same colours, and only
+    /// this test says so -- `concat!` cannot interpolate the constants.
+    #[test]
+    fn the_legend_and_the_lines_agree() {
+        for (slot, colour) in SERIES_COLOURS.iter().enumerate() {
+            assert!(
+                CHART_STYLE.contains(colour),
+                "slot {slot} is {colour} in the legend but not in the chart"
+            );
+        }
+    }
+
+    /// Every series colour has to resolve, or the line is drawn in nothing.
+    #[test]
+    fn series_colours_are_defined_by_the_chart() {
+        for (slot, series) in SERIES.iter().enumerate() {
+            let name = series.trim_start_matches("var(").trim_end_matches(')');
+            assert!(
+                CHART_STYLE.contains(&format!("{name}:")),
+                "series slot {slot} uses {name}, which nothing defines"
+            );
+        }
     }
 
     #[test]

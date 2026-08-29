@@ -1,10 +1,8 @@
-//! The internal cluster event model (CLAUDE.md 17).
+//! The internal cluster event model.
 //!
 //! Everything interesting that happens is an event: the UI event log, the
 //! structured logs and -- later -- replication and coordination all read from
 //! this one stream.
-
-use alloc::string::String;
 use serde::{Deserialize, Serialize};
 
 use crate::ids::{JobId, NodeId, TaskId};
@@ -122,28 +120,63 @@ impl ClusterEvent {
         }
     }
 
-    /// Human-readable one-liner, as shown in the UI event log.
+    /// Human-readable one-liner, as shown in the logs.
     pub fn message(&self) -> String {
-        use alloc::format;
+        let (pattern, args) = self.message_parts();
+        let mut out = pattern.to_string();
+        for arg in args {
+            if let Some(at) = out.find("{}") {
+                out.replace_range(at..at + 2, &arg);
+            }
+        }
+        out
+    }
+
+    /// The same message, split into a pattern and its substitutions.
+    ///
+    /// The UI needs the two apart: `"{} joined"` is a sentence that has to be
+    /// translated, `"node-03"` is an identifier that must not be. Composing
+    /// them here and translating afterwards would mean translating the node
+    /// name too.
+    pub fn message_parts(&self) -> (&'static str, Vec<String>) {
         match self {
-            ClusterEvent::NodeJoined { node } => format!("{node} joined"),
-            ClusterEvent::NodeLeft { node } => format!("{node} left"),
-            ClusterEvent::NodeUnhealthy { node } => format!("{node} heartbeat lost"),
-            ClusterEvent::NodeRecovered { node } => format!("{node} recovered"),
-            ClusterEvent::RoleAssigned { node, role } => format!("{role} assigned to {node}"),
-            ClusterEvent::RoleRemoved { node, role } => format!("{role} removed from {node}"),
-            ClusterEvent::LeaderElected { node } => format!("{node} elected coordinator"),
-            ClusterEvent::LeaderLost { node } => format!("{node} lost coordinator role"),
-            ClusterEvent::JobCreated { job } => format!("{job} created"),
-            ClusterEvent::JobCompleted { job } => format!("{job} completed"),
-            ClusterEvent::JobFailed { job } => format!("{job} failed"),
-            ClusterEvent::TaskAssigned { task, node } => format!("{task} assigned to {node}"),
-            ClusterEvent::TaskCompleted { task, node } => format!("{task} completed on {node}"),
+            ClusterEvent::NodeJoined { node } => ("{} joined", vec![node.to_string()]),
+            ClusterEvent::NodeLeft { node } => ("{} left", vec![node.to_string()]),
+            ClusterEvent::NodeUnhealthy { node } => ("{} heartbeat lost", vec![node.to_string()]),
+            ClusterEvent::NodeRecovered { node } => ("{} recovered", vec![node.to_string()]),
+            ClusterEvent::RoleAssigned { node, role } => (
+                "{} assigned to {}",
+                vec![role.to_string(), node.to_string()],
+            ),
+            ClusterEvent::RoleRemoved { node, role } => (
+                "{} removed from {}",
+                vec![role.to_string(), node.to_string()],
+            ),
+            ClusterEvent::LeaderElected { node } => {
+                ("{} elected coordinator", vec![node.to_string()])
+            }
+            ClusterEvent::LeaderLost { node } => {
+                ("{} lost coordinator role", vec![node.to_string()])
+            }
+            ClusterEvent::JobCreated { job } => ("{} created", vec![job.to_string()]),
+            ClusterEvent::JobCompleted { job } => ("{} completed", vec![job.to_string()]),
+            ClusterEvent::JobFailed { job } => ("{} failed", vec![job.to_string()]),
+            ClusterEvent::TaskAssigned { task, node } => (
+                "{} assigned to {}",
+                vec![task.to_string(), node.to_string()],
+            ),
+            ClusterEvent::TaskCompleted { task, node } => (
+                "{} completed on {}",
+                vec![task.to_string(), node.to_string()],
+            ),
             ClusterEvent::TaskFailed { task, node, reason } => match node {
-                Some(node) => format!("{task} failed on {node} ({reason})"),
-                None => format!("{task} failed ({reason})"),
+                Some(node) => (
+                    "{} failed on {} ({})",
+                    vec![task.to_string(), node.to_string(), reason.to_string()],
+                ),
+                None => ("{} failed ({})", vec![task.to_string(), reason.to_string()]),
             },
-            ClusterEvent::TaskRequeued { task } => format!("{task} requeued"),
+            ClusterEvent::TaskRequeued { task } => ("{} requeued", vec![task.to_string()]),
         }
     }
 

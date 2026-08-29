@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use cluster_core::{
     Clock, ClusterError, ClusterEvent, ClusterSnapshot, ClusterStore, Elector, EventRecord,
     FailureReason, HealthPolicy, Job, JobCounts, JobDetail, JobId, JobSpec, JobState, Millis, Node,
-    NodeId, NodeStatus, Role, RoleCounts, RoleSet, Scheduler, Task, TaskAttempt, TaskId,
-    TaskOutcome, TaskState,
+    NodeCapabilities, NodeId, NodeStatus, RejectReason, Role, RoleCounts, RoleSet, Scheduler, Task,
+    TaskAttempt, TaskId, TaskOutcome, TaskState,
 };
 use tokio::sync::{broadcast, mpsc, oneshot};
 
@@ -40,14 +40,65 @@ pub(crate) enum Command {
     PauseHeartbeat(NodeId, bool, Reply<Result<(), ClusterError>>),
     InjectFailures(NodeId, u32, Reply<Result<(), ClusterError>>),
     SetTaskDelay(NodeId, u64, Reply<Result<(), ClusterError>>),
+    /// A worker has connected and completed its handshake.
+    AttachRemote {
+        /// `None` when the worker is anonymous and wants an id allocated.
+        id: Option<NodeId>,
+        capabilities: NodeCapabilities,
+        inbox: mpsc::Sender<NodeInbox>,
+        shutdown: oneshot::Sender<()>,
+        reply: Reply<Result<RemoteAttachment, RejectReason>>,
+    },
+    /// Its connection has dropped. Arrives before the heartbeat timeout would
+    /// notice, which is why a worker that closes cleanly is marked offline
+    /// immediately instead of lingering as Suspect for six seconds.
+    DetachRemote {
+        id: NodeId,
+        /// Only detach if this is still the live connection. A reconnect that
+        /// races the old connection's cleanup must not evict the new one.
+        generation: u64,
+    },
+}
+
+/// What a freshly attached worker is told, and what its connection task needs
+/// in order to keep talking.
+pub(crate) struct RemoteAttachment {
+    /// The identity the worker was given, so the connection can tell it.
+    pub id: NodeId,
+    pub reports: mpsc::Sender<NodeReport>,
+    pub heartbeat_interval_ms: u64,
+    pub generation: u64,
+}
+
+/// Where a node actually runs. The supervisor needs this only at the edges --
+/// launching, stopping, bootstrapping -- never when scheduling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NodeKind {
+    /// A Tokio task in this process.
+    Simulated,
+    /// A worker process that connects over the network.
+    ///
+    /// `declared` separates the two kinds of remote worker, and it decides
+    /// what happens when one disconnects. A declared worker has a fixed
+    /// identity from configuration and stays in the registry as Offline, so
+    /// its roles survive a restart. An undeclared one was allocated an id when
+    /// it dialled in and is removed on disconnect: replicas are cattle, and a
+    /// registry that accumulated an entry per departed process would grow
+    /// without bound.
+    Remote { declared: bool },
 }
 
 struct NodeEntry {
     node: Node,
-    /// `None` while the node is stopped. The registry entry survives so that a
-    /// stopped node keeps its identity and roles (CLAUDE.md 19).
+    kind: NodeKind,
+    /// `None` while the node is stopped, or -- for a remote node -- while it
+    /// is simply not connected. The registry entry survives either way so the
+    /// node keeps its identity and roles.
     handle: Option<NodeHandle>,
     heartbeat_paused: bool,
+    /// Incremented on every attach, so a late `DetachRemote` from a dead
+    /// connection cannot evict the connection that replaced it.
+    generation: u64,
 }
 
 pub(crate) struct Supervisor<P, S, L, C> {
@@ -153,11 +204,38 @@ where
                 id,
                 NodeEntry {
                     node,
+                    kind: NodeKind::Simulated,
                     handle: None,
                     heartbeat_paused: false,
+                    generation: 0,
                 },
             );
         }
+
+        // A declared remote worker joins the registry immediately but Offline.
+        // That is what makes a role assignment survive the process restarting.
+        for declared in &self.config.remote_nodes {
+            if self.nodes.contains_key(&declared.id) {
+                tracing::error!(
+                    node = %declared.id,
+                    "remote node id collides with a simulated node; ignoring the declaration"
+                );
+                continue;
+            }
+            let mut node = Node::new(declared.id, declared.capabilities, now);
+            node.status = NodeStatus::Offline;
+            self.nodes.insert(
+                declared.id,
+                NodeEntry {
+                    node,
+                    kind: NodeKind::Remote { declared: true },
+                    handle: None,
+                    heartbeat_paused: false,
+                    generation: 0,
+                },
+            );
+        }
+
         self.assign_initial_roles();
         self.restore_roles().await;
 
@@ -165,8 +243,12 @@ where
         for id in ids {
             let roles = self.nodes[&id].node.roles;
             self.persist_roles(id, roles).await;
-            self.launch_node(id);
-            self.emit(ClusterEvent::NodeJoined { node: id }).await;
+            // A remote node is not launched -- it launches itself, by
+            // connecting. It joins the event log when it does, not now.
+            if self.nodes[&id].kind == NodeKind::Simulated {
+                self.launch_node(id);
+                self.emit(ClusterEvent::NodeJoined { node: id }).await;
+            }
         }
 
         self.restore_jobs().await;
@@ -192,20 +274,36 @@ where
                 continue;
             }
             for _ in 0..self.config.policies.get(role).min_replicas {
-                let id = ids[cursor % ids.len()];
-                cursor += 1;
-                if let Some(entry) = self.nodes.get_mut(&id)
-                    && (role != Role::Gateway || entry.node.capabilities.can_gateway())
-                {
-                    entry.node.roles.insert(role);
+                // Scan forward for a node that does not already hold this
+                // role, rather than taking whichever one the cursor happens to
+                // land on: a blind cursor hands the same node a role twice and
+                // leaves the minimum unmet with nothing logged.
+                let placed = (0..ids.len()).find_map(|offset| {
+                    let id = ids[(cursor + offset) % ids.len()];
+                    let entry = self.nodes.get_mut(&id)?;
+                    let eligible = !entry.node.roles.contains(role);
+                    eligible.then(|| {
+                        entry.node.roles.insert(role);
+                        offset
+                    })
+                });
+
+                match placed {
+                    Some(offset) => cursor += offset + 1,
+                    None => {
+                        tracing::warn!(
+                            role = %role,
+                            "no remaining node can hold this role; minimum left unmet"
+                        );
+                        break;
+                    }
                 }
             }
         }
     }
 
-    /// Replay stored role assignments over the startup defaults, so a role
-    /// changed at runtime survives a restart while node identity is unchanged
-    /// (CLAUDE.md 19/26).
+    /// Replay stored role assignments over the startup defaults so runtime
+    /// changes survive a restart without changing node identity.
     async fn restore_roles(&mut self) {
         let stored = match self.store.load_node_roles().await {
             Ok(stored) => stored,
@@ -287,8 +385,13 @@ where
     async fn shutdown(&mut self) {
         for (_, entry) in std::mem::take(&mut self.nodes) {
             if let Some(handle) = entry.handle {
+                // Ask first, then wait: a clean shutdown lets a node finish
+                // what it is doing. A remote node has no join handle to wait
+                // on -- closing its socket is the whole of the goodbye.
                 let _ = handle.shutdown.send(());
-                let _ = handle.join.await;
+                if let Some(join) = handle.join {
+                    let _ = join.await;
+                }
             }
         }
     }
@@ -415,17 +518,26 @@ where
                 continue;
             }
 
+            // `try_send`, never `send().await`.
+            //
+            // Awaiting here would let one unresponsive node freeze the entire
+            // supervisor: a mailbox fills only when the thing draining it has
+            // stopped, and for a remote worker that means a wedged socket.
+            // Blocking on it would stall health sweeps,
+            // commands and every other worker's work behind one wedged one. A
+            // full mailbox means "this node is not keeping up", which is
+            // exactly the condition the requeue path below already handles.
             let sent = match self.nodes.get(&chosen).and_then(|e| e.handle.as_ref()) {
                 Some(handle) => handle
                     .inbox
-                    .send(NodeInbox::Assign(Box::new(task.clone())))
-                    .await
+                    .try_send(NodeInbox::Assign(Box::new(task.clone())))
                     .is_ok(),
                 None => false,
             };
 
             if !sent {
-                // The node vanished between selection and send. Put it back.
+                // The node vanished, or stopped draining its mailbox, between
+                // selection and send. Put the task back.
                 let _ = task.requeue(now);
                 self.tasks.insert(task.id, task.clone());
                 self.queue.push_front(task.id);
@@ -474,8 +586,15 @@ where
     async fn handle_report(&mut self, report: NodeReport) {
         match report {
             NodeReport::Heartbeat(hb) => {
+                // Stamped on arrival by the supervisor's clock, not by the
+                // sender's. Worker clocks can have a different epoch, so
+                // trusting `hb.at` would classify a healthy node as stale.
+                // The sender's own timestamp stays on the wire because clock
+                // skew is worth being able to see, but it must not drive
+                // health.
+                let now = self.clock.now();
                 if let Some(entry) = self.nodes.get_mut(&hb.node) {
-                    entry.node.last_seen = hb.at;
+                    entry.node.last_seen = now;
                     entry.node.load = hb.load;
                 }
             }
@@ -548,7 +667,7 @@ where
     }
 
     /// A node went offline holding work: fail the attempt and re-run the task
-    /// from the beginning somewhere else (CLAUDE.md 16).
+    /// from the beginning somewhere else.
     async fn requeue_tasks_of(&mut self, node: NodeId) {
         let now = self.clock.now();
         let affected: Vec<TaskId> = self
@@ -722,6 +841,16 @@ where
                         .await,
                 );
             }
+            Command::AttachRemote {
+                id,
+                capabilities,
+                inbox,
+                shutdown,
+                reply,
+            } => {
+                let _ = reply.send(self.attach_remote(id, capabilities, inbox, shutdown).await);
+            }
+            Command::DetachRemote { id, generation } => self.detach_remote(id, generation).await,
             Command::SetTaskDelay(id, ms, reply) => {
                 let _ = reply.send(self.send_to_node(id, NodeInbox::SetDelay(ms)).await);
             }
@@ -784,11 +913,8 @@ where
             .nodes
             .get_mut(&id)
             .ok_or(ClusterError::UnknownNode(id))?;
-        if enabled && role == Role::Gateway && !entry.node.capabilities.can_gateway() {
-            return Err(ClusterError::Invalid(format!(
-                "{id} has no network interface and cannot be a gateway"
-            )));
-        }
+        // No capability veto: every worker in this deployment can host any
+        // role. Placement constraints belong in the scheduler.
         let changed = if enabled {
             entry.node.roles.insert(role)
         } else {
@@ -808,6 +934,162 @@ where
         Ok(())
     }
 
+    // --- worker processes ----------------------------------------------------
+
+    /// The lowest id no node currently holds.
+    ///
+    /// Reuses ids freed by departed workers rather than counting upwards
+    /// forever, so a long-lived coordinator that has seen thousands of
+    /// replicas come and go still shows `node-03` instead of `node-4291`.
+    fn next_free_id(&self) -> Option<NodeId> {
+        (1..=u16::MAX)
+            .map(NodeId)
+            .find(|id| !self.nodes.contains_key(id))
+    }
+
+    /// A worker finished its handshake. From here on it is an ordinary node:
+    /// nothing downstream of this function knows it is not a Tokio task.
+    async fn attach_remote(
+        &mut self,
+        id: Option<NodeId>,
+        capabilities: NodeCapabilities,
+        inbox: mpsc::Sender<NodeInbox>,
+        shutdown: oneshot::Sender<()>,
+    ) -> Result<RemoteAttachment, RejectReason> {
+        let now = self.clock.now();
+
+        // An anonymous worker -- the ordinary case -- is given an identity and
+        // a registry entry here. It is not declared anywhere, so it is also
+        // removed again when it disconnects.
+        let id = match id {
+            Some(id) => id,
+            None => {
+                let id = self.next_free_id().ok_or(RejectReason::Full)?;
+                let mut node = Node::new(id, capabilities, now);
+                node.status = NodeStatus::Starting;
+                // Every worker computes. The other roles describe where the
+                // web tier runs, which on a normal deployment is a matter for
+                // the process manager rather than for this registry.
+                node.roles.insert(Role::Compute);
+                self.nodes.insert(
+                    id,
+                    NodeEntry {
+                        node,
+                        kind: NodeKind::Remote { declared: false },
+                        handle: None,
+                        heartbeat_paused: false,
+                        generation: 0,
+                    },
+                );
+                id
+            }
+        };
+
+        let Some(entry) = self.nodes.get_mut(&id) else {
+            return Err(RejectReason::UnknownNode);
+        };
+        if !matches!(entry.kind, NodeKind::Remote { .. }) {
+            // That id belongs to a simulated node. Letting a worker claim it
+            // would give two different things the same identity.
+            return Err(RejectReason::UnknownNode);
+        }
+        if entry.handle.is_some() {
+            if entry.node.status.accepts_work() {
+                // Something healthy is already using this identity. For a
+                // declared worker that means two processes configured with the
+                // same fixed id.
+                return Err(RejectReason::AlreadyConnected);
+            }
+
+            // The node is not healthy, yet its connection slot is still held.
+            //
+            // This is what a killed worker looks like from the coordinator:
+            // it stops heartbeating, so it is correctly declared Offline, but
+            // no FIN ever arrives and TCP will hold that half-open socket for
+            // hours. Refusing the worker on that basis would mean one that is
+            // hard-killed can never rejoin under its fixed id -- it would be
+            // locked out by its own corpse.
+            //
+            // A worker dialling in is proof the old connection is dead, so
+            // evict it. The stale connection's own `DetachRemote` arrives
+            // later carrying the previous generation and is ignored.
+            tracing::info!(node = %id, "replacing the stale connection of an offline node");
+            if let Some(stale) = entry.handle.take() {
+                stale.terminate();
+            }
+        }
+
+        // The worker is the authority on its own resources. If it disagrees
+        // with what was declared, believe the worker -- it is the process that
+        // knows how many cores it was actually given.
+        if entry.node.capabilities != capabilities {
+            tracing::warn!(
+                node = %id,
+                "worker reports different capabilities than the topology declares; using the worker's"
+            );
+            entry.node.capabilities = capabilities;
+        }
+
+        entry.generation = entry.generation.wrapping_add(1);
+        entry.node.status = NodeStatus::Healthy;
+        entry.node.last_seen = now;
+        entry.node.load = Default::default();
+        entry.heartbeat_paused = false;
+        entry.handle = Some(NodeHandle {
+            inbox,
+            shutdown,
+            join: None,
+        });
+        let attachment = RemoteAttachment {
+            id,
+            reports: self.reports_tx.clone(),
+            heartbeat_interval_ms: self.config.health.heartbeat_interval_ms,
+            generation: entry.generation,
+        };
+
+        // Roles were assigned at bootstrap and possibly changed at runtime;
+        // re-persist so a worker's first connection cannot lose them.
+        let roles = entry.node.roles;
+        self.persist_roles(id, roles).await;
+        self.emit(ClusterEvent::NodeJoined { node: id }).await;
+        self.refresh_leadership().await;
+        self.dispatch().await;
+        Ok(attachment)
+    }
+
+    /// A worker's connection dropped. Its in-flight work is requeued at once
+    /// rather than waiting out the heartbeat timeout -- a closed socket is
+    /// proof, where silence is only evidence.
+    async fn detach_remote(&mut self, id: NodeId, generation: u64) {
+        let Some(entry) = self.nodes.get_mut(&id) else {
+            return;
+        };
+        if entry.generation != generation || entry.handle.is_none() {
+            // A stale detach from a connection that has already been replaced.
+            return;
+        }
+        entry.handle = None;
+        entry.node.status = NodeStatus::Offline;
+        entry.node.load = Default::default();
+        let declared = matches!(entry.kind, NodeKind::Remote { declared: true });
+
+        self.emit(ClusterEvent::NodeLeft { node: id }).await;
+        // Requeue *before* forgetting the node: the requeue path looks work up
+        // by the node it was assigned to.
+        self.requeue_tasks_of(id).await;
+
+        if !declared {
+            // An anonymous worker has no identity to come back to. Keeping a
+            // tombstone per departed replica would grow the registry without
+            // bound and fill the nodes page with things that no longer exist.
+            self.nodes.remove(&id);
+            self.persist_roles(id, RoleSet::EMPTY).await;
+        }
+
+        self.refresh_leadership().await;
+        self.dispatch().await;
+    }
+
     async fn stop_node(&mut self, id: NodeId) -> Result<(), ClusterError> {
         let entry = self
             .nodes
@@ -817,8 +1099,7 @@ where
             .handle
             .take()
             .ok_or(ClusterError::NodeNotRunning(id))?;
-        let _ = handle.shutdown.send(());
-        handle.join.abort();
+        handle.terminate();
         entry.node.status = NodeStatus::Offline;
         entry.node.load = Default::default();
 
@@ -834,6 +1115,13 @@ where
         if entry.handle.is_some() {
             return Err(ClusterError::NodeAlreadyRunning(id));
         }
+        if matches!(entry.kind, NodeKind::Remote { .. }) {
+            // Nothing here can make a worker reconnect: it dials in, not out.
+            // Saying so is more useful than pretending the button worked.
+            return Err(ClusterError::Unavailable(format!(
+                "{id} is a remote worker and rejoins by reconnecting on its own"
+            )));
+        }
         self.launch_node(id);
         self.emit(ClusterEvent::NodeJoined { node: id }).await;
         self.refresh_leadership().await;
@@ -847,10 +1135,12 @@ where
             .handle
             .as_ref()
             .ok_or(ClusterError::NodeNotRunning(id))?;
+        // Non-blocking for the same reason as dispatch: a control message must
+        // never be able to wedge the supervisor on a node that has stopped
+        // reading.
         handle
             .inbox
-            .send(message)
-            .await
+            .try_send(message)
             .map_err(|_| ClusterError::Unavailable(format!("{id} is not responding")))
     }
 

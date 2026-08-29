@@ -1,8 +1,4 @@
-//! Unit tests for the portable core (CLAUDE.md 34).
-
-use alloc::string::ToString;
-use alloc::vec;
-use alloc::vec::Vec;
+//! Unit tests for the cluster core.
 
 use crate::*;
 
@@ -50,7 +46,7 @@ fn a_node_may_hold_many_roles() {
         NodeStatus::Healthy,
         &[Role::Gateway, Role::Frontend, Role::Compute],
         0,
-        NodeCapabilities::ESP32_S3,
+        NodeCapabilities::new(2, 0),
     );
     assert_eq!(n.roles.len(), 3);
     assert!(n.has_role(Role::Gateway) && n.has_role(Role::Compute));
@@ -111,21 +107,21 @@ fn only_healthy_compute_nodes_take_work() {
         NodeStatus::Healthy,
         &[Role::Compute],
         0,
-        NodeCapabilities::HOST,
+        NodeCapabilities::new(4, 0),
     );
     let healthy_frontend = node(
         2,
         NodeStatus::Healthy,
         &[Role::Frontend],
         0,
-        NodeCapabilities::HOST,
+        NodeCapabilities::new(4, 0),
     );
     let suspect_compute = node(
         3,
         NodeStatus::Suspect,
         &[Role::Compute],
         0,
-        NodeCapabilities::HOST,
+        NodeCapabilities::new(4, 0),
     );
     assert!(healthy_compute.is_schedulable());
     assert!(!healthy_frontend.is_schedulable());
@@ -282,21 +278,21 @@ async fn least_loaded_picks_the_idle_node() {
             NodeStatus::Healthy,
             &[Role::Compute],
             3,
-            NodeCapabilities::HOST,
+            NodeCapabilities::new(4, 0),
         ),
         node(
             2,
             NodeStatus::Healthy,
             &[Role::Compute],
             0,
-            NodeCapabilities::ESP32_C3,
+            NodeCapabilities::new(1, 0),
         ),
         node(
             3,
             NodeStatus::Healthy,
             &[Role::Compute],
             1,
-            NodeCapabilities::HOST,
+            NodeCapabilities::new(4, 0),
         ),
     ];
     let chosen = LeastLoaded.select_node(&task(), &nodes).await.unwrap();
@@ -311,14 +307,14 @@ async fn least_loaded_breaks_ties_by_capability_then_id() {
             NodeStatus::Healthy,
             &[Role::Compute],
             0,
-            NodeCapabilities::ESP32_C3,
+            NodeCapabilities::new(1, 0),
         ),
         node(
             2,
             NodeStatus::Healthy,
             &[Role::Compute],
             0,
-            NodeCapabilities::ESP32_S3,
+            NodeCapabilities::new(2, 0),
         ),
     ];
     // Both idle; the dual-core S3 wins over the single-core C3.
@@ -336,14 +332,14 @@ async fn scheduling_skips_unhealthy_and_non_compute_nodes() {
             NodeStatus::Offline,
             &[Role::Compute],
             0,
-            NodeCapabilities::HOST,
+            NodeCapabilities::new(4, 0),
         ),
         node(
             2,
             NodeStatus::Healthy,
             &[Role::Backend],
             0,
-            NodeCapabilities::HOST,
+            NodeCapabilities::new(4, 0),
         ),
     ];
     assert_eq!(
@@ -360,14 +356,14 @@ async fn round_robin_rotates_across_tasks() {
             NodeStatus::Healthy,
             &[Role::Compute],
             0,
-            NodeCapabilities::HOST,
+            NodeCapabilities::new(4, 0),
         ),
         node(
             2,
             NodeStatus::Healthy,
             &[Role::Compute],
             0,
-            NodeCapabilities::HOST,
+            NodeCapabilities::new(4, 0),
         ),
     ];
     let task_n = |n: u64| {
@@ -392,21 +388,21 @@ async fn round_robin_is_deterministic() {
             NodeStatus::Healthy,
             &[Role::Compute],
             0,
-            NodeCapabilities::HOST,
+            NodeCapabilities::new(4, 0),
         ),
         node(
             2,
             NodeStatus::Healthy,
             &[Role::Compute],
             0,
-            NodeCapabilities::HOST,
+            NodeCapabilities::new(4, 0),
         ),
         node(
             3,
             NodeStatus::Healthy,
             &[Role::Compute],
             0,
-            NodeCapabilities::HOST,
+            NodeCapabilities::new(4, 0),
         ),
     ];
     let mut t = task();
@@ -427,21 +423,21 @@ fn the_lowest_healthy_id_leads() {
             NodeStatus::Healthy,
             &[Role::Coordinator],
             0,
-            NodeCapabilities::HOST,
+            NodeCapabilities::new(4, 0),
         ),
         node(
             1,
             NodeStatus::Offline,
             &[Role::Coordinator],
             0,
-            NodeCapabilities::HOST,
+            NodeCapabilities::new(4, 0),
         ),
         node(
             2,
             NodeStatus::Healthy,
             &[Role::Coordinator],
             0,
-            NodeCapabilities::HOST,
+            NodeCapabilities::new(4, 0),
         ),
     ];
     assert_eq!(LowestHealthyId.elect(&nodes), Some(NodeId(2)));
@@ -493,9 +489,473 @@ fn calendar_dates_round_trip_through_millis() {
         let at = Millis::from_utc_date(y, m, d);
         assert_eq!(
             at.to_date_string(),
-            alloc::format!("{y:04}-{m:02}-{d:02}"),
+            format!("{y:04}-{m:02}-{d:02}"),
             "round trip failed for {y}-{m}-{d}"
         );
     }
     assert_eq!(Millis::from_utc_date(1970, 1, 1), Millis(0));
+}
+
+// --- the node agent -------------------------------------------------------
+//
+// These are the behaviours that would otherwise only be observable by watching
+// process logs from a worker that is misbehaving.
+
+use crate::agent::{Action, Agent};
+use crate::protocol::{
+    NodeMessage, PROTOCOL_VERSION, RejectReason, SupervisorMessage, WireTaskSpec, decode_frame,
+    encode_frame, frame_len,
+};
+
+fn agent() -> Agent {
+    Agent::with_id(NodeId(3), NodeCapabilities::new(2, 0), 1_000)
+}
+
+fn welcome() -> SupervisorMessage {
+    SupervisorMessage::Welcome {
+        protocol: PROTOCOL_VERSION,
+        node: NodeId(3),
+        heartbeat_interval_ms: 1_000,
+    }
+}
+
+/// Everything the agent wants sent, in order.
+fn sent(actions: &[Action]) -> Vec<NodeMessage> {
+    actions
+        .iter()
+        .filter_map(|a| match a {
+            Action::Send(m) => Some(m.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_node_introduces_itself_with_its_own_capabilities() {
+    let agent = agent();
+    let NodeMessage::Hello {
+        protocol,
+        node,
+        capabilities,
+    } = agent.hello()
+    else {
+        panic!("hello is a Hello");
+    };
+    assert_eq!(protocol, PROTOCOL_VERSION);
+    assert_eq!(node, Some(NodeId(3)));
+    assert_eq!(
+        capabilities,
+        NodeCapabilities::new(2, 0),
+        "the worker reports what it is, rather than trusting server config"
+    );
+}
+
+#[test]
+fn a_welcomed_node_heartbeats_immediately_and_then_on_interval() {
+    let mut agent = agent();
+    let actions = agent.handle(welcome(), Millis(10_000));
+    assert!(agent.joined());
+    assert!(
+        matches!(sent(&actions).first(), Some(NodeMessage::Heartbeat(_))),
+        "a node proves it is alive at once rather than after a full interval"
+    );
+
+    // Nothing due yet.
+    assert!(sent(&agent.poll(Millis(10_500))).is_empty());
+    // Interval elapsed.
+    assert!(matches!(
+        sent(&agent.poll(Millis(11_000))).first(),
+        Some(NodeMessage::Heartbeat(_))
+    ));
+}
+
+#[test]
+fn a_node_runs_a_task_and_reports_the_result() {
+    let mut agent = agent();
+    agent.handle(welcome(), Millis(10_000));
+
+    let actions = agent.handle(
+        SupervisorMessage::Assign {
+            task: TaskId(7),
+            spec: WireTaskSpec::Primes {
+                start: 0,
+                end: 1_000,
+            },
+        },
+        Millis(10_000),
+    );
+    let messages = sent(&actions);
+    assert!(
+        matches!(messages[0], NodeMessage::TaskStarted { task: TaskId(7) }),
+        "the supervisor is told work has begun before it is finished"
+    );
+    let Some(NodeMessage::TaskFinished {
+        task: TaskId(7),
+        outcome: TaskOutcome::Completed { output },
+    }) = messages.get(1)
+    else {
+        panic!("compute finishes in the same pass: {messages:?}");
+    };
+    assert!(
+        output.contains("168"),
+        "the remote agent computes the same answer as the local runtime: {output}"
+    );
+}
+
+#[test]
+fn a_sleep_task_is_reported_only_once_its_time_has_passed() {
+    let mut agent = agent();
+    agent.handle(welcome(), Millis(10_000));
+
+    let actions = agent.handle(
+        SupervisorMessage::Assign {
+            task: TaskId(1),
+            spec: WireTaskSpec::Sleep { millis: 500 },
+        },
+        Millis(10_000),
+    );
+    assert_eq!(sent(&actions).len(), 1, "started, but not yet finished");
+    assert!(
+        actions
+            .iter()
+            .any(|a| matches!(a, Action::WakeIn(ms) if *ms <= 500)),
+        "the caller is told when to come back: {actions:?}"
+    );
+
+    assert!(sent(&agent.poll(Millis(10_400))).is_empty());
+    assert!(
+        matches!(
+            sent(&agent.poll(Millis(10_500))).first(),
+            Some(NodeMessage::TaskFinished { .. })
+        ),
+        "the result lands when the sleep is actually over"
+    );
+}
+
+#[test]
+fn a_busy_node_bounces_a_second_task_instead_of_queueing_it() {
+    let mut agent = agent();
+    agent.handle(welcome(), Millis(10_000));
+    agent.handle(
+        SupervisorMessage::Assign {
+            task: TaskId(1),
+            spec: WireTaskSpec::Sleep { millis: 500 },
+        },
+        Millis(10_000),
+    );
+
+    let messages = sent(&agent.handle(
+        SupervisorMessage::Assign {
+            task: TaskId(2),
+            spec: WireTaskSpec::Sleep { millis: 10 },
+        },
+        Millis(10_100),
+    ));
+    assert!(
+        matches!(
+            messages.first(),
+            Some(NodeMessage::TaskFinished {
+                task: TaskId(2),
+                outcome: TaskOutcome::Failed { .. }
+            })
+        ),
+        "the extra task fails fast so the supervisor can place it elsewhere: {messages:?}"
+    );
+}
+
+#[test]
+fn injected_failures_are_consumed_one_task_at_a_time() {
+    let mut agent = agent();
+    agent.handle(welcome(), Millis(10_000));
+    agent.handle(SupervisorMessage::InjectFailures(2), Millis(10_000));
+
+    for attempt in 1..=2 {
+        let messages = sent(&agent.handle(
+            SupervisorMessage::Assign {
+                task: TaskId(attempt),
+                spec: WireTaskSpec::Sleep { millis: 0 },
+            },
+            Millis(10_000),
+        ));
+        assert!(
+            matches!(
+                messages.get(1),
+                Some(NodeMessage::TaskFinished {
+                    outcome: TaskOutcome::Failed {
+                        reason: FailureReason::Injected,
+                        ..
+                    },
+                    ..
+                })
+            ),
+            "attempt {attempt} was armed to fail: {messages:?}"
+        );
+    }
+
+    // The third is not armed and succeeds.
+    let messages = sent(&agent.handle(
+        SupervisorMessage::Assign {
+            task: TaskId(3),
+            spec: WireTaskSpec::Sleep { millis: 0 },
+        },
+        Millis(10_000),
+    ));
+    assert!(matches!(
+        messages.get(1),
+        Some(NodeMessage::TaskFinished {
+            outcome: TaskOutcome::Completed { .. },
+            ..
+        })
+    ));
+}
+
+#[test]
+fn a_paused_node_stays_alive_but_stops_proving_it() {
+    let mut agent = agent();
+    agent.handle(welcome(), Millis(10_000));
+    agent.handle(SupervisorMessage::PauseHeartbeat(true), Millis(10_000));
+
+    assert!(
+        sent(&agent.poll(Millis(20_000))).is_empty(),
+        "a paused node emits nothing, so the supervisor must time it out"
+    );
+
+    // Resuming proves liveness at once rather than waiting out an interval:
+    // the node has a backlog of silence to make up for.
+    let resumed = agent.handle(SupervisorMessage::PauseHeartbeat(false), Millis(20_000));
+    assert!(matches!(
+        sent(&resumed).first(),
+        Some(NodeMessage::Heartbeat(_))
+    ));
+}
+
+#[test]
+fn a_rejected_or_dismissed_node_disconnects() {
+    for message in [
+        SupervisorMessage::Rejected {
+            reason: RejectReason::UnknownNode,
+        },
+        SupervisorMessage::Shutdown,
+    ] {
+        let mut agent = agent();
+        assert_eq!(agent.handle(message, Millis(0)), vec![Action::Disconnect]);
+    }
+}
+
+#[test]
+fn every_protocol_message_survives_a_round_trip() {
+    let node_messages = vec![
+        NodeMessage::Hello {
+            protocol: PROTOCOL_VERSION,
+            node: Some(NodeId(1)),
+            capabilities: NodeCapabilities::new(2, 0),
+        },
+        NodeMessage::Heartbeat(Heartbeat {
+            node: NodeId(1),
+            load: NodeLoad::default(),
+            at: Millis(1),
+        }),
+        NodeMessage::TaskStarted { task: TaskId(2) },
+        NodeMessage::TaskFinished {
+            task: TaskId(2),
+            outcome: TaskOutcome::Failed {
+                reason: FailureReason::NodeOffline,
+                detail: String::from("gone"),
+            },
+        },
+    ];
+    for message in node_messages {
+        let mut buf = Vec::new();
+        encode_frame(&message, &mut buf).expect("encode");
+        let len = frame_len([buf[0], buf[1]]).expect("length");
+        assert_eq!(len, buf.len() - 2, "the prefix describes the body");
+        assert_eq!(
+            decode_frame::<NodeMessage>(&buf[2..]).expect("decode"),
+            message
+        );
+    }
+
+    let supervisor_messages = vec![
+        SupervisorMessage::Welcome {
+            protocol: PROTOCOL_VERSION,
+            node: NodeId(1),
+            heartbeat_interval_ms: 1_000,
+        },
+        SupervisorMessage::Rejected {
+            reason: RejectReason::ProtocolMismatch,
+        },
+        SupervisorMessage::Assign {
+            task: TaskId(3),
+            spec: WireTaskSpec::Primes { start: 0, end: 10 },
+        },
+        SupervisorMessage::PauseHeartbeat(true),
+        SupervisorMessage::InjectFailures(2),
+        SupervisorMessage::SetDelay(50),
+        SupervisorMessage::Shutdown,
+    ];
+    for message in supervisor_messages {
+        let mut buf = Vec::new();
+        encode_frame(&message, &mut buf).expect("encode");
+        assert_eq!(
+            decode_frame::<SupervisorMessage>(&buf[2..]).expect("decode"),
+            message
+        );
+    }
+}
+
+#[test]
+fn a_heartbeat_frame_stays_within_the_protocol_budget() {
+    let mut buf = Vec::new();
+    encode_frame(
+        &NodeMessage::Heartbeat(Heartbeat {
+            node: NodeId(5),
+            load: NodeLoad {
+                load_percent: 100,
+                running_tasks: 1,
+                free_memory_bytes: 8 * 1024 * 1024,
+                simulated: false,
+            },
+            at: Millis(1_700_000_000_000),
+        }),
+        &mut buf,
+    )
+    .expect("encode");
+    // Sent once per second per node, forever. If this ever balloons, the
+    // cause is a String on the hot path and this test is the alarm.
+    assert!(
+        buf.len() <= 32,
+        "a heartbeat frame grew to {} bytes",
+        buf.len()
+    );
+}
+
+#[test]
+fn a_node_says_nothing_until_it_has_been_welcomed() {
+    let mut agent = agent();
+    // No Welcome yet: the supervisor has not agreed this node exists.
+    let actions = agent.poll(Millis(10_000));
+    assert!(
+        sent(&actions).is_empty(),
+        "heartbeating before the handshake puts frames on the wire the \
+         supervisor has not agreed to parse: {actions:?}"
+    );
+    assert_eq!(
+        agent.next_wake_ms(Millis(10_000)),
+        None,
+        "with nothing to do, the node must not ask to be woken immediately -- \
+         a zero deadline spins the worker while it waits for Welcome"
+    );
+}
+
+/// A compute task must not stop a node from proving it is alive.
+///
+/// This is the failure that would look like "the cluster breaks whenever I
+/// submit a real workload": the node runs the range to completion inside one
+/// call, misses every heartbeat while it does, is declared Offline, has its
+/// task requeued elsewhere -- and then reports a result nobody is waiting for.
+#[test]
+fn a_long_computation_does_not_starve_heartbeats() {
+    let mut agent = agent();
+    agent.handle(welcome(), Millis(0));
+
+    // Big enough that running it in one go would outlast any sane heartbeat
+    // timeout on a 240 MHz core.
+    let range = 0..200_000u64;
+    let assigned = agent.handle(
+        SupervisorMessage::Assign {
+            task: TaskId(9),
+            spec: WireTaskSpec::Primes {
+                start: range.start,
+                end: range.end,
+            },
+        },
+        Millis(0),
+    );
+    let messages = sent(&assigned);
+    assert!(matches!(
+        messages.first(),
+        Some(NodeMessage::TaskStarted { .. })
+    ));
+    assert!(
+        !messages
+            .iter()
+            .any(|m| matches!(m, NodeMessage::TaskFinished { .. })),
+        "the work is taken in slices, not run to completion inside one call"
+    );
+
+    // Drive the clock forward the way the worker loop does.
+    let mut last_heard = 0u64;
+    let mut longest_silence = 0u64;
+    let mut output = None;
+    let mut at = 0u64;
+    while output.is_none() && at < 600_000 {
+        at += 100;
+        for message in sent(&agent.poll(Millis(at))) {
+            match message {
+                NodeMessage::Heartbeat(_) => {
+                    longest_silence = longest_silence.max(at - last_heard);
+                    last_heard = at;
+                }
+                NodeMessage::TaskFinished {
+                    outcome: TaskOutcome::Completed { output: done },
+                    ..
+                } => output = Some(done),
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+    }
+    longest_silence = longest_silence.max(at - last_heard);
+
+    let output = output.expect("the task finishes");
+    // The real bound: the supervisor starts doubting a node after
+    // `suspect_after_ms` of silence and requeues its work after
+    // `offline_after_ms`. Computing must never take a node near either.
+    let suspect_after = HealthPolicy::default().suspect_after_ms;
+    assert!(
+        longest_silence < suspect_after,
+        "went {longest_silence}ms without a heartbeat while computing, and the \
+         supervisor grows suspicious at {suspect_after}ms"
+    );
+    assert_eq!(
+        output,
+        crate::workload::primes_output(
+            NodeId(3),
+            range.start,
+            range.end,
+            crate::workload::count_primes(range.start, range.end)
+        ),
+        "slicing the range must not change the answer or how it is reported"
+    );
+}
+
+#[test]
+fn re_assigning_the_task_a_node_is_already_running_is_not_a_failure() {
+    let mut agent = agent();
+    agent.handle(welcome(), Millis(0));
+
+    let assign = || SupervisorMessage::Assign {
+        task: TaskId(4),
+        spec: WireTaskSpec::Sleep { millis: 500 },
+    };
+    agent.handle(assign(), Millis(0));
+
+    // The supervisor requeued this task after a network hiccup and handed it
+    // back to the same node. The node is already doing exactly that work.
+    let messages = sent(&agent.handle(assign(), Millis(100)));
+    assert!(
+        !messages
+            .iter()
+            .any(|m| matches!(m, NodeMessage::TaskFinished { .. })),
+        "failing the duplicate would burn a retry on work already in flight: \
+         {messages:?}"
+    );
+
+    // And the original still completes on its own schedule.
+    assert!(matches!(
+        sent(&agent.poll(Millis(500))).first(),
+        Some(NodeMessage::TaskFinished {
+            task: TaskId(4),
+            outcome: TaskOutcome::Completed { .. }
+        })
+    ));
 }

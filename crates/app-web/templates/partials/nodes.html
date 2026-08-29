@@ -5,50 +5,56 @@
   <article class="node status-{{ node.status }}">
     <header>
       <h3>{{ node.id }}</h3>
-      <span class="badge {{ node.status }}">{{ node.status }}</span>
-      {% if node.is_leader %}<span class="badge leader">coordinator</span>{% endif %}
-      {% if node.is_gateway %}<span class="badge gateway">gateway</span>{% endif %}
+      <span class="badge {{ node.status }}">{{ node.status|t }}</span>
+      {% if node.is_leader %}<span class="badge leader">{{ "coordinator"|t }}</span>{% endif %}
+      {% if node.is_gateway %}<span class="badge gateway">{{ "gateway"|t }}</span>{% endif %}
     </header>
 
     <dl class="caps">
-      <dt>CPU</dt><dd>{{ node.cpu_class }} · {{ node.cores }} core(s)</dd>
-      <dt>RAM</dt><dd>{{ node.memory }}{% if node.psram != "none" %} + {{ node.psram }} PSRAM{% endif %}</dd>
-      <dt>Flash</dt><dd>{{ node.flash }}</dd>
-      <dt>Last seen</dt><dd>{{ node.last_seen }}</dd>
+      <dt>{{ "CPU"|t }}</dt><dd>{{ "{} core(s)"|t|fill(node.cores) }}</dd>
+      <dt>{{ "RAM"|t }}</dt><dd>{{ node.memory }}</dd>
+      <dt>{{ "Last seen"|t }}</dt><dd>{{ node.last_seen }}</dd>
     </dl>
 
     <div class="load">
-      <div class="bar"><span style="width: {{ node.load_percent }}%"></span></div>
+      {# Pico styles <progress> directly, so the hand-rolled bar-in-a-div and
+         its ARIA scaffolding are gone: the element already means this. #}
+      <progress class="bar" value="{{ node.load_percent }}" max="100"
+                aria-label='{{ "Node load"|t }}'></progress>
       <span class="load-text">
-        load {{ node.load_percent }}% · {{ node.running_tasks }} task(s) · free {{ node.free_memory }}
-        {% if node.simulated %}<em class="sim" title="These values are generated, not measured">simulated</em>{% endif %}
+        {{ "load {}%"|t|fill(node.load_percent) }} · {{ "{} task(s)"|t|fill(node.running_tasks) }} · {{ "free {}"|t|fill(node.free_memory) }}
+        {% if node.simulated %}<em class="sim" title='{{ "These values are generated, not measured"|t }}'>{{ "simulated"|t }}</em>{% endif %}
       </span>
     </div>
 
     <div class="roles">
       {% for chip in node.roles %}
-      <button class="chip {% if chip.held %}on{% endif %}"
+      {# Held roles are Pico's filled primary; the rest are its outline
+         variant, so "this role is on" is carried by Pico's own two button
+         styles rather than by a colour invented here. #}
+      <button type="button" class="chip{% if !chip.held %} outline secondary{% endif %}"
+              aria-pressed="{% if chip.held %}true{% else %}false{% endif %}"
               hx-post="/nodes/{{ node.raw_id }}/roles"
               hx-vals='{"role": "{{ chip.role }}", "enabled": {% if chip.held %}false{% else %}true{% endif %}}'
               hx-target="#node-list"
-              hx-swap="outerHTML">{{ chip.role }}</button>
+              hx-swap="outerHTML">{{ chip.role|t }}</button>
       {% endfor %}
     </div>
 
     {% if debug_controls %}
     <div class="controls">
       {% if node.online %}
-      <button class="danger" hx-post="/debug/nodes/{{ node.raw_id }}/stop"
-              hx-target="#node-list" hx-swap="outerHTML">stop</button>
-      <button hx-post="/debug/nodes/{{ node.raw_id }}/heartbeat?paused=true"
-              hx-target="#node-list" hx-swap="outerHTML">pause heartbeat</button>
-      <button hx-post="/debug/nodes/{{ node.raw_id }}/heartbeat?paused=false"
-              hx-target="#node-list" hx-swap="outerHTML">resume</button>
-      <button hx-post="/debug/nodes/{{ node.raw_id }}/fail"
-              hx-target="#node-list" hx-swap="outerHTML">fail next task</button>
+      <button type="button" class="outline contrast" hx-post="/debug/nodes/{{ node.raw_id }}/stop"
+              hx-target="#node-list" hx-swap="outerHTML">{{ "stop"|t }}</button>
+      <button type="button" class="outline secondary" hx-post="/debug/nodes/{{ node.raw_id }}/heartbeat?paused=true"
+              hx-target="#node-list" hx-swap="outerHTML">{{ "pause heartbeat"|t }}</button>
+      <button type="button" class="outline secondary" hx-post="/debug/nodes/{{ node.raw_id }}/heartbeat?paused=false"
+              hx-target="#node-list" hx-swap="outerHTML">{{ "resume"|t }}</button>
+      <button type="button" class="outline secondary" hx-post="/debug/nodes/{{ node.raw_id }}/fail"
+              hx-target="#node-list" hx-swap="outerHTML">{{ "fail next task"|t }}</button>
       {% else %}
-      <button hx-post="/debug/nodes/{{ node.raw_id }}/start"
-              hx-target="#node-list" hx-swap="outerHTML">start</button>
+      <button type="button" class="outline secondary" hx-post="/debug/nodes/{{ node.raw_id }}/start"
+              hx-target="#node-list" hx-swap="outerHTML">{{ "start"|t }}</button>
       {% endif %}
     </div>
     {% endif %}

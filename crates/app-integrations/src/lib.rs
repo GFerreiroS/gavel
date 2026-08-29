@@ -6,6 +6,8 @@ pub mod blizzard;
 pub mod discord;
 pub mod raiderio;
 
-pub use blizzard::{BlizzardAuctions, BlizzardConfig, BlizzardCredentials};
+pub use blizzard::{
+    BlizzardAuctions, BlizzardConfig, BlizzardCredentials, BlizzardItems, BlizzardRealms,
+};
 pub use discord::DiscordWebhook;
 pub use raiderio::{RaiderIoClient, RaiderIoConfig};

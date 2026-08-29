@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/wow/auctions">{{ "Auction House"|t }}</a></li>
+    <li>{{ gear.title|t }}</li>
+  </ul>
+</nav>
+<h1>{{ gear.title|t }}</h1>
+<p class="hint">{{ gear.blurb|t|fill(gear.expansion) }}</p>
+
+{% if gear.archived %}
+<div class="alert alert-archived" role="status">
+  <strong>{{ "{} is archived."|t|fill(gear.expansion) }}</strong>
+  {{ "These prices are kept for reference and are no longer collected or updated."|t }}
+</div>
+{% endif %}
+
+{% if gear.realms.is_empty() %}
+<div class="alert alert-error" role="alert">
+  {{ "No connected realms are configured, so no gear prices are being collected. Start the server with --market-realms eu:1403,us:60 to choose some."|t }}
+</div>
+{% else %}
+{# The realm choice sits outside the fragment it changes: a <select> swapped
+   from under the pointer mid-choice is worse than a picker that reloads. #}
+<form class="toolbar" method="get" action="{{ gear.path }}">
+  <input type="hidden" name="expansion" value="{{ gear.expansion_id }}">
+  {# Region rides in the URL beside the realm so a link reads
+     `?region=eu&realm=draenor`. Slugs are unique across the realms we
+     collect, so it is for the reader rather than for disambiguation. #}
+  <input type="hidden" name="region" value="{{ gear.region }}">
+  <label>
+    <span>{{ "Realm"|t }}</span>
+    <select name="realm"
+            hx-get="{{ gear.fragment_path }}"
+            hx-include="closest form"
+            hx-target="#gear-list"
+            hx-swap="innerHTML">
+      {# The empty value is a real choice, not a blank: it is the cross-realm
+         view this page opens on. #}
+      <option value="">{{ "All realms"|t }}</option>
+      {% for realm in gear.realms %}
+      <option value="{{ realm.value }}"{% if realm.selected %} selected{% endif %}>{{ realm.region }} · {{ realm.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">{{ "Apply"|t }}</button>
+</form>
+<small class="hint toolbar-note">
+  {% if let Some(realm) = gear.realm_label %}
+  {{ "Showing {} alone. Prices are the cheapest listing there."|t|fill(realm) }}
+  {% else %}
+  {{ "Each region summarises its own realms: the headline is the median of what a realm's cheapest copy costs, with the cheapest and dearest realm named. Regions are never mixed -- you cannot buy across one."|t }}
+  {% endif %}
+</small>
+{% endif %}
+
+<div id="gear-list">
+  {% include "partials/gear.html" %}
+</div>
+{% endblock %}

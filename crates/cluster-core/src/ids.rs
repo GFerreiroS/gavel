@@ -1,9 +1,9 @@
 //! Identifiers.
 //!
-//! Deliberately small integers rather than UUIDs: a `NodeId` has to fit in an
-//! ESP-NOW frame and be cheap to compare on a microcontroller.
+//! Deliberately small integers rather than UUIDs: ids cross the worker
+//! protocol frequently and are cheap to encode, compare, and display.
 
-use core::fmt;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 

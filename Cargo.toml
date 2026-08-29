@@ -1,44 +1,41 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-# The ESP32-S3 firmware is a separate build: different toolchain (Espressif's
-# Xtensa fork), different target, no std. Keeping it out of the workspace means
-# `cargo build` at the root stays a plain host build.
-exclude = ["firmware"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+# Let-chains (`if let ... && ...`) are used throughout and stabilised in 1.88.
+# The old 1.85 claim here was wrong: the workspace never built on it, and the
+# container build is where that surfaced.
+rust-version = "1.88"
 license = "MIT OR Apache-2.0"
 publish = false
 
 # Single source of truth for dependency versions.
-#
-# Rule of thumb for this project: anything listed under "portable core" must stay
-# `no_std`-capable, because those crates are the ones that will eventually be
-# compiled for xtensa/riscv32 ESP32 targets. Everything else is PC-side
-# infrastructure and may use std freely.
 [workspace.dependencies]
-# --- portable core (no_std + alloc) ---
-futures-core = { version = "0.3", default-features = false, features = ["alloc"] }
-serde = { version = "1", default-features = false, features = ["alloc", "derive"] }
-thiserror = { version = "2", default-features = false }
+futures-core = "0.3"
+# Wire codec for the coordinator <-> worker protocol. Chosen over JSON because
+# these frames are the hot path between processes: postcard decodes without
+# allocating and is roughly 10x more compact for these messages.
+# The protocol runs between ordinary host processes. Disable Postcard's
+# embedded/heapless defaults; the std codec is all this workspace uses.
+postcard = { version = "1", default-features = false, features = ["use-std"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
 
-# --- PC-side infrastructure ---
 anyhow = "1"
 argon2 = "0.5"
 askama = "0.14"
 axum = "0.8"
 getrandom = "0.3"
 clap = { version = "4", features = ["derive", "env"] }
-rand = "0.9"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde_json = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "tls-none", "sqlite", "migrate", "macros"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "signal"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
-tower-http = { version = "0.6", features = ["trace"] }
+tower-http = { version = "0.6", features = ["trace", "compression-gzip", "compression-br"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 

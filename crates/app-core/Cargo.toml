@@ -15,7 +15,7 @@ default = ["argon2"]
 argon2 = ["dep:argon2", "dep:getrandom"]
 
 [dependencies]
-cluster-core = { workspace = true, features = ["std"] }
+cluster-core = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 thiserror = { workspace = true, features = ["std"] }
 argon2 = { workspace = true, optional = true }

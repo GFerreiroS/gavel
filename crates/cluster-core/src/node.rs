@@ -1,6 +1,6 @@
 //! Nodes, capabilities and health.
 
-use core::fmt;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
@@ -8,113 +8,46 @@ use crate::ids::NodeId;
 use crate::role::{Role, RoleSet};
 use crate::time::Millis;
 
-/// Broad hardware family. Scheduling must never branch on a *specific* board
-/// (CLAUDE.md 12) -- only on capabilities.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum CpuClass {
-    /// The development host. Effectively unlimited by ESP standards.
-    Host,
-    /// Xtensa LX6/LX7 (ESP32, ESP32-S3, ...).
-    Xtensa,
-    /// RISC-V (ESP32-C3, C6, H2, ...).
-    RiscV32,
-}
-
-impl CpuClass {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            CpuClass::Host => "host",
-            CpuClass::Xtensa => "xtensa",
-            CpuClass::RiscV32 => "riscv32",
-        }
-    }
-}
-
-impl fmt::Display for CpuClass {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-/// What a node can physically do. Schedulers and role assignment read this;
-/// they never read a board name.
+/// What a worker can do.
+///
+/// Deliberately small and generic: how much work it can take, and how much
+/// memory it has to do it in. Anything scheduling needs to know belongs here;
+/// anything it does not need is noise the coordinator has to carry per worker
+/// on every placement pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeCapabilities {
-    pub cpu_class: CpuClass,
     pub cores: u8,
     pub memory_bytes: u64,
-    pub flash_bytes: u64,
-    pub psram_bytes: Option<u64>,
-    pub has_sd: bool,
-    pub has_display: bool,
-    pub has_wifi: bool,
-    pub has_ethernet: bool,
 }
 
 impl NodeCapabilities {
-    /// A worker process on the dev PC.
-    pub const HOST: NodeCapabilities = NodeCapabilities {
-        cpu_class: CpuClass::Host,
-        cores: 4,
-        memory_bytes: 512 * 1024 * 1024,
-        flash_bytes: 8 * 1024 * 1024 * 1024,
-        psram_bytes: None,
-        has_sd: true,
-        has_display: false,
-        has_wifi: true,
-        has_ethernet: true,
-    };
-
-    /// Roughly an ESP32-S3 with octal PSRAM.
-    pub const ESP32_S3: NodeCapabilities = NodeCapabilities {
-        cpu_class: CpuClass::Xtensa,
-        cores: 2,
-        memory_bytes: 512 * 1024,
-        flash_bytes: 8 * 1024 * 1024,
-        psram_bytes: Some(8 * 1024 * 1024),
-        has_sd: true,
-        has_display: true,
-        has_wifi: true,
-        has_ethernet: false,
-    };
-
-    /// Roughly an ESP32-C3: single RISC-V core, no PSRAM.
-    pub const ESP32_C3: NodeCapabilities = NodeCapabilities {
-        cpu_class: CpuClass::RiscV32,
-        cores: 1,
-        memory_bytes: 400 * 1024,
-        flash_bytes: 4 * 1024 * 1024,
-        psram_bytes: None,
-        has_sd: false,
-        has_display: false,
-        has_wifi: true,
-        has_ethernet: false,
-    };
-
-    /// Roughly an ESP32-C6.
-    pub const ESP32_C6: NodeCapabilities = NodeCapabilities {
-        cpu_class: CpuClass::RiscV32,
-        cores: 1,
-        memory_bytes: 512 * 1024,
-        flash_bytes: 4 * 1024 * 1024,
-        psram_bytes: None,
-        has_sd: false,
-        has_display: false,
-        has_wifi: true,
-        has_ethernet: false,
-    };
-
-    pub const fn usable_ram_bytes(&self) -> u64 {
-        match self.psram_bytes {
-            Some(psram) => self.memory_bytes + psram,
-            None => self.memory_bytes,
+    /// What this machine actually offers.
+    ///
+    /// A worker reports its own numbers rather than trusting coordinator
+    /// config, because a container may have been given a fraction of the host:
+    /// `available_parallelism` honours cgroup CPU limits where the host's core
+    /// count does not.
+    pub fn local() -> Self {
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get().min(u8::MAX as usize) as u8)
+            .unwrap_or(1);
+        Self {
+            cores,
+            // Not measured: reading real memory limits needs a platform crate,
+            // and nothing schedules on this yet. Workers that care can set it.
+            memory_bytes: 0,
         }
     }
 
-    /// Can this node serve HTTP to the outside world at all?
-    pub const fn can_gateway(&self) -> bool {
-        self.has_wifi || self.has_ethernet
+    pub const fn new(cores: u8, memory_bytes: u64) -> Self {
+        Self {
+            cores,
+            memory_bytes,
+        }
+    }
+
+    pub const fn usable_ram_bytes(&self) -> u64 {
+        self.memory_bytes
     }
 
     /// Rough capacity weight used by the scheduler as a tie-breaker.
@@ -123,7 +56,7 @@ impl NodeCapabilities {
     }
 }
 
-/// Health state machine: Healthy -> Suspect -> Offline (CLAUDE.md 18).
+/// Health state machine: Healthy -> Suspect -> Offline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum NodeStatus {
@@ -134,6 +67,15 @@ pub enum NodeStatus {
 }
 
 impl NodeStatus {
+    /// Every variant, so exhaustive checks (tests, translation coverage) do
+    /// not have to repeat the list and drift from it.
+    pub const ALL: [NodeStatus; 4] = [
+        NodeStatus::Starting,
+        NodeStatus::Healthy,
+        NodeStatus::Suspect,
+        NodeStatus::Offline,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             NodeStatus::Starting => "starting",
@@ -167,8 +109,8 @@ impl fmt::Display for NodeStatus {
     }
 }
 
-/// Sampled load. On the PC these numbers are SIMULATED; on real hardware they
-/// will come from the FreeRTOS idle-task counters and heap stats.
+/// Sampled load. In-process workers currently report simulated figures;
+/// remote workers can report measurements from their process or container.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct NodeLoad {
     pub load_percent: u8,
@@ -179,9 +121,8 @@ pub struct NodeLoad {
 }
 
 /// `Copy` on purpose: the supervisor clones the node list on every scheduling
-/// pass, and a heap allocation per node per pass is exactly the kind of cost a
-/// microcontroller cannot absorb. The display name was a `String` that only
-/// ever held `id.to_string()`, so it is derived at render time instead.
+/// pass. The display name was a `String` that only ever held `id.to_string()`,
+/// so it is derived at render time instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Node {
     pub id: NodeId,
@@ -227,8 +168,8 @@ pub struct Heartbeat {
     pub at: Millis,
 }
 
-/// Timeouts live here, in configuration, not scattered as magic numbers
-/// (CLAUDE.md 18).
+/// Heartbeat timeouts live in this configuration instead of being scattered
+/// through the coordinator as magic numbers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HealthPolicy {
     pub heartbeat_interval_ms: u64,

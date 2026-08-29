@@ -5,8 +5,8 @@
 //! slow fallback so the page still updates if the stream drops.
 //!
 //! Only the event *kind* goes over the wire: the page then re-fetches the
-//! fragments it cares about. That keeps the stream tiny -- which matters when
-//! the thing serving it is eventually a microcontroller.
+//! fragments it cares about. That keeps one live connection per browser
+//! inexpensive even when the cluster is busy.
 
 use std::convert::Infallible;
 use std::time::Duration;

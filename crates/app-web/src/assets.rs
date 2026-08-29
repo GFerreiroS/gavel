@@ -2,13 +2,24 @@
 //!
 //! Embedding rather than serving from disk keeps deployment to a single file
 //! and makes the asset budget visible at build time -- which matters, because
-//! this eventually has to fit in ESP32 flash alongside everything else.
+//! every byte here is on the critical path of a first page load.
+//!
+//! Those bytes are worth watching: CSS is render-blocking, and Pico is 70 KB
+//! of it uncompressed. The compression layer in `routes` is what makes that
+//! affordable -- the two stylesheets together are 17 KB gzipped, slightly less
+//! than this app's own stylesheet cost uncompressed before Pico existed.
 
 use std::sync::LazyLock;
 
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 
+/// Pico gives semantic HTML sane defaults -- typography, forms, buttons,
+/// tables -- so this app's own stylesheet only has to describe the things Pico
+/// has never heard of: item cards, cluster grids, price charts, item quality.
+///
+/// Loaded *before* `style.css`, so those components win where they disagree.
+const PICO_CSS: &str = include_str!("../static/pico.min.css");
 const STYLE_CSS: &str = include_str!("../static/style.css");
 const HTMX_JS: &str = include_str!("../static/htmx.min.js");
 const LIVE_JS: &str = include_str!("../static/live.js");
@@ -32,12 +43,18 @@ const fn fnv1a(bytes: &[u8]) -> u64 {
     hash
 }
 
+pub static PICO_VERSION: LazyLock<String> =
+    LazyLock::new(|| format!("{:x}", fnv1a(PICO_CSS.as_bytes())));
 pub static STYLE_VERSION: LazyLock<String> =
     LazyLock::new(|| format!("{:x}", fnv1a(STYLE_CSS.as_bytes())));
 pub static HTMX_VERSION: LazyLock<String> =
     LazyLock::new(|| format!("{:x}", fnv1a(HTMX_JS.as_bytes())));
 pub static LIVE_VERSION: LazyLock<String> =
     LazyLock::new(|| format!("{:x}", fnv1a(LIVE_JS.as_bytes())));
+
+pub async fn pico() -> Response {
+    asset(PICO_CSS, "text/css; charset=utf-8")
+}
 
 pub async fn style() -> Response {
     asset(STYLE_CSS, "text/css; charset=utf-8")

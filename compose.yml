@@ -1,0 +1,57 @@
+# A single server, with the work spread over several processes.
+#
+#   docker compose up --build          one web process, three workers
+#   docker compose up -d --scale worker=8
+#
+# The web container is the coordinator: it serves HTTP, owns the database and
+# hands out tasks. The workers hold no state at all -- they dial in, are given
+# an identity, take work, and are forgotten when they stop. That is why
+# `--scale` works on them and would not work on the web container.
+
+name: wow-auction-tracker
+
+services:
+  web:
+    build: .
+    command:
+      - --host=0.0.0.0
+      - --port=3000
+      # Accept workers from the other containers.
+      - --worker-listen=0.0.0.0:3001
+      # None in-process: with separate worker containers, an in-process pool
+      # would quietly do their work and make scaling look like it did nothing.
+      - --workers=0
+    environment:
+      # Secrets are never flags. Put them in a .env beside this file; compose
+      # substitutes them here and they stay out of the image and out of `ps`.
+      BLIZZARD_CLIENT_ID: ${BLIZZARD_CLIENT_ID:-}
+      BLIZZARD_CLIENT_SECRET: ${BLIZZARD_CLIENT_SECRET:-}
+      APP_LOG: ${APP_LOG:-info,sqlx=warn}
+    volumes:
+      - data:/data
+    ports:
+      - "127.0.0.1:3000:3000"
+    restart: unless-stopped
+    healthcheck:
+      # `/healthz` answers without touching the database, so a slow query
+      # cannot make a healthy process look dead.
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
+  worker:
+    build: .
+    command: ["--connect=web:3001"]
+    environment:
+      APP_LOG: ${APP_LOG:-info}
+    depends_on:
+      - web
+    restart: unless-stopped
+    # No ports, no volume, no database. A worker is pure compute; everything it
+    # needs arrives over the connection it opens.
+    deploy:
+      replicas: 3
+
+volumes:
+  data:

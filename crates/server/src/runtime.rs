@@ -12,13 +12,15 @@ use app_integrations::RaiderIoClient;
 use cluster_local::{LocalCluster, SystemClock};
 use storage::SqliteStore;
 
-use crate::market::{Alerts, Commodities};
+use crate::market::{Alerts, Commodities, Items, RealmAuctions};
 
 pub struct Inner {
     pub store: SqliteStore,
     pub cluster: LocalCluster,
     pub characters: RaiderIoClient<SystemClock>,
     pub commodities: Commodities,
+    pub realm_auctions: RealmAuctions,
+    pub items: Items,
     pub alerts: Alerts,
     pub catalogs: CatalogSet,
     pub market: MarketConfig,
@@ -49,6 +51,8 @@ impl Ports for Runtime {
     type Cluster = LocalCluster;
     type Characters = RaiderIoClient<SystemClock>;
     type Commodities = Commodities;
+    type RealmAuctions = RealmAuctions;
+    type Items = Items;
     type Alerts = Alerts;
     type Hasher = Argon2Hasher;
     type Tokens = OsTokens;
@@ -65,6 +69,12 @@ impl Ports for Runtime {
     }
     fn commodities(&self) -> &Self::Commodities {
         &self.0.commodities
+    }
+    fn realm_auctions(&self) -> &Self::RealmAuctions {
+        &self.0.realm_auctions
+    }
+    fn items(&self) -> &Self::Items {
+        &self.0.items
     }
     fn alert_sink(&self) -> &Self::Alerts {
         &self.0.alerts

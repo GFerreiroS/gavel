@@ -1,7 +1,7 @@
 //! Request-timing middleware.
 //!
 //! Feeds `app_core::Metrics`, which is what a future autoscaler reads to decide
-//! whether the frontend/backend roles need more replicas (CLAUDE.md 23).
+//! whether the frontend/backend roles need more replicas.
 
 use std::time::Instant;
 

@@ -1,13 +1,10 @@
 //! Time, behind a trait.
 //!
-//! `std::time` does not exist on the ESP target in the shape we want, and
-//! `chrono` is far too heavy, so the core model only ever speaks in
-//! "milliseconds since the Unix epoch" and gets them from a [`Clock`].
+//! The core model speaks in "milliseconds since the Unix epoch" and gets them
+//! from a [`Clock`], which keeps state transitions deterministic in tests.
 
-use core::fmt;
-
-use alloc::string::String;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 /// Milliseconds since the Unix epoch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
@@ -32,14 +29,12 @@ impl Millis {
 
     /// `YYYY-MM-DD HH:MM:SS` in UTC, without pulling in a date library.
     pub fn to_utc_string(self) -> String {
-        use alloc::format;
         let (y, mo, d, h, mi, s) = self.to_utc_parts();
         format!("{y:04}-{mo:02}-{d:02} {h:02}:{mi:02}:{s:02}")
     }
 
     /// `HH:MM:SS` in UTC -- what the event log shows.
     pub fn to_clock_string(self) -> String {
-        use alloc::format;
         let (_, _, _, h, mi, s) = self.to_utc_parts();
         format!("{h:02}:{mi:02}:{s:02}")
     }
@@ -59,7 +54,6 @@ impl Millis {
 
     /// `YYYY-MM-DD`, for config files and axis labels.
     pub fn to_date_string(self) -> String {
-        use alloc::format;
         let (y, mo, d, _, _, _) = self.to_utc_parts();
         format!("{y:04}-{mo:02}-{d:02}")
     }
@@ -100,8 +94,8 @@ impl fmt::Display for Millis {
 
 /// The only way core code is allowed to learn the time.
 ///
-/// PC implementation reads `SystemTime`; a future ESP implementation will read
-/// the RTC or an SNTP-disciplined counter.
+/// Runtime implementations decide whether this comes from `SystemTime` or a
+/// deterministic test clock.
 pub trait Clock: Send + Sync {
     fn now(&self) -> Millis;
 }

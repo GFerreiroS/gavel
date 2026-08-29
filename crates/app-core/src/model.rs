@@ -1,7 +1,7 @@
 //! Domain records.
 //!
 //! These are *our* types. Nothing here mirrors a database row or an upstream
-//! API response; adapters map into and out of these (CLAUDE.md 31).
+//! API response; adapters map into and out of these.
 
 use cluster_core::Millis;
 use serde::{Deserialize, Serialize};

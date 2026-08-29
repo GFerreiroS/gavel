@@ -1,6 +1,8 @@
 //! Small display helpers, kept out of the templates so the templates stay
 //! declarative and the formatting stays testable.
 
+use app_core::locale::Locale;
+
 pub(crate) fn bytes(value: u64) -> String {
     const UNITS: [&str; 4] = ["B", "KB", "MB", "GB"];
     let mut value = value as f64;
@@ -22,12 +24,15 @@ pub(crate) fn duration_ms(ms: u64) -> String {
     }
 }
 
-pub(crate) fn ago(ms: u64) -> String {
+/// "hace 3m 20s" / "3m 20s ago" -- the wording is translated, the number is
+/// not. Takes the locale because the sentence wraps the value: several
+/// languages put "ago" in front, so the two cannot be concatenated in the
+/// template.
+pub(crate) fn ago(locale: Locale, ms: u64) -> String {
     if ms < 1_500 {
-        "just now".to_string()
-    } else {
-        format!("{} ago", duration_ms(ms))
+        return crate::i18n::translate(locale, "just now").to_string();
     }
+    crate::i18n::translate(locale, "{} ago").replacen("{}", &duration_ms(ms), 1)
 }
 
 pub(crate) fn optional_f32(value: Option<f32>) -> String {

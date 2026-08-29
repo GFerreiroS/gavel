@@ -1,16 +1,29 @@
-use cluster_core::{HealthPolicy, NodeCapabilities, RolePolicies};
+use std::net::SocketAddr;
 
-/// Capability profiles cycled across the simulated nodes.
+use cluster_core::{HealthPolicy, NodeCapabilities, NodeId, RolePolicies};
+
+/// What an in-process worker claims to be.
 ///
-/// V0 mixes them on purpose: scheduling must never quietly assume every node
-/// is identical (CLAUDE.md 13).
+/// One profile, because in-process workers all share this machine. Workers on
+/// other machines report their own capabilities when they connect, so a mixed
+/// cluster is still described accurately -- the scheduler must never assume
+/// every worker is identical.
 pub fn default_profiles() -> Vec<NodeCapabilities> {
-    vec![
-        NodeCapabilities::ESP32_S3,
-        NodeCapabilities::ESP32_C6,
-        NodeCapabilities::ESP32_C3,
-        NodeCapabilities::ESP32_S3,
-    ]
+    vec![NodeCapabilities::local()]
+}
+
+/// A worker with a *fixed* identity, declared up front.
+///
+/// The unusual case. An ordinary worker is anonymous: it dials in, is given an
+/// id, and is forgotten when it leaves. Declare one only when its identity has
+/// to survive a restart -- for example, when it is pinned to a volume or a
+/// named host -- because a declared worker keeps its registry entry and its
+/// roles, while it is offline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RemoteNode {
+    pub id: NodeId,
+    /// What to assume about the worker until it connects and says otherwise.
+    pub capabilities: NodeCapabilities,
 }
 
 #[derive(Debug, Clone)]
@@ -30,8 +43,17 @@ pub struct LocalClusterConfig {
     pub max_task_attempts: u16,
     /// Capability profiles, cycled across nodes.
     pub profiles: Vec<NodeCapabilities>,
-    /// Fill in plausible load/memory numbers on heartbeats. Clearly SIMULATED;
-    /// real nodes will report measured values.
+    /// Workers with fixed identities, declared up front. Their ids must not
+    /// collide with the in-process workers, which occupy `1..=node_count`.
+    ///
+    /// Usually empty: workers normally arrive anonymously and are given an id.
+    pub remote_nodes: Vec<RemoteNode>,
+    /// Where to accept worker connections. `None` means this process runs
+    /// alone with its in-process pool, which is the default and is all a
+    /// single-server deployment needs until it outgrows one machine.
+    pub node_listen: Option<SocketAddr>,
+    /// Fill in plausible load/memory numbers for in-process workers. Remote
+    /// workers report their own values.
     pub simulate_load: bool,
 }
 
@@ -46,6 +68,8 @@ impl Default for LocalClusterConfig {
             job_buffer: 200,
             max_task_attempts: 3,
             profiles: default_profiles(),
+            remote_nodes: Vec::new(),
+            node_listen: None,
             simulate_load: true,
         }
     }

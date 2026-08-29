@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% import "macros.html" as tips %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/wow/auctions">{{ "Auction House"|t }}</a></li>
+    <li>{{ "Reagents"|t }}</li>
+  </ul>
+</nav>
+<h1>{{ "Crafting reagents"|t }}</h1>
+<p class="hint">
+  {{ "Every tracked material of {}, grouped by the profession that makes or gathers it. Prices are per unit; each quality rank is its own market."|t|fill(reagents.expansion) }}
+</p>
+
+{% if reagents.archived %}
+<div class="alert alert-archived" role="status">
+  <strong>{{ "{} is archived."|t|fill(reagents.expansion) }}</strong>
+  {{ "These prices are kept for reference and are no longer collected or updated."|t }}
+</div>
+{% endif %}
+
+<form class="toolbar" method="get" action="/wow/auctions/reagents">
+  {# Which expansion is a choice made on the Auction House index. Carried here
+     so applying a region does not silently drop it. #}
+  <input type="hidden" name="expansion" value="{{ reagents.expansion_id }}">
+  <label>
+    <span>{{ "Search"|t }}</span>
+    {# Live filtering for browsers with scripting, a plain GET form for the
+       rest: the same endpoint answers both. `hx-include` sends the whole
+       form, so a search keeps the expansion instead of jumping back to
+       whichever one is live. #}
+    <input type="search" name="q" value="{{ reagents.query }}"
+           placeholder='{{ "Item name"|t }}' autocomplete="off"
+           hx-get="/partials/reagents"
+           hx-include="closest form"
+           hx-trigger="keyup changed delay:250ms, search"
+           hx-target="#reagent-list"
+           hx-swap="innerHTML">
+  </label>
+  {# No submit button: the field filters as you type, and without scripting
+     the form still submits on Enter. A button would be a second control for
+     something already done. #}
+  {# Region and snapshot age describe the whole auction house and are shown on
+     its index, not repeated per category. #}
+</form>
+
+<div id="reagent-list">
+  {% include "partials/reagents.html" %}
+</div>
+{% endblock %}

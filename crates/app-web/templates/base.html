@@ -1,34 +1,71 @@
 <!doctype html>
-<html lang="en">
+<html lang="{{ layout.lang }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ layout.title }} · {{ layout.app_name }}</title>
+  {# Pico supplies the whole visual system. `style.css` below adds only the
+     things Pico has no opinion about -- item quality colours, the price
+     chart, a couple of grids. #}
+  <link rel="stylesheet" href="/static/pico.css?v={{ layout.pico_version }}">
   <link rel="stylesheet" href="/static/style.css?v={{ layout.css_version }}">
   <script src="/static/htmx.min.js?v={{ layout.htmx_version }}" defer></script>
   <script src="/static/live.js?v={{ layout.live_version }}" defer></script>
 </head>
 <body hx-headers='{"X-CSRF-Token": "{{ layout.csrf }}"}'>
-  <header class="topbar">
-    <a class="brand" href="/">{{ layout.app_name }}</a>
+  {# Pico's own nav: two lists in one <nav>, brand on the left, everything
+     else on the right. It spaces and aligns them itself -- the hand-rolled
+     flexbox this replaced collided with the brand at narrow widths. #}
+  <header class="container">
     <nav>
-      {% for item in layout.nav %}
-      <a href="{{ item.href }}"{% if item.active %} class="active"{% endif %}>{{ item.label }}</a>
-      {% endfor %}
+      <ul>
+        <li><a href="/" class="contrast"><strong>{{ layout.app_name }}</strong></a></li>
+      </ul>
+      <ul>
+        {% for item in layout.nav %}
+        <li>
+          <a href="{{ item.href }}"
+             {% if item.active %}aria-current="page"{% else %}class="secondary"{% endif %}>{{ item.label|t }}</a>
+        </li>
+        {% endfor %}
+        <li>
+          {# No JavaScript: a <details> of plain links, each keeping the
+             current path and replacing only the query. Menu items stay links
+             rather than buttons: this is a menu, and a stack of buttons in a
+             popover reads as a form. #}
+          <details class="dropdown">
+            <summary>{{ layout.language_label }}</summary>
+            <ul>
+              {% for language in layout.languages %}
+              <li>
+                <a href="{{ language.href }}"{% if language.selected %} aria-current="true"{% endif %}>
+                  {{ language.label }}
+                  {% if !language.interface %}
+                  <small>·
+                    {% if language.coverage_percent > 0 %}{{ "{}% translated"|t|fill(language.coverage_percent) }}
+                    {% else %}{{ "item text only"|t }}{% endif %}
+                  </small>
+                  {% endif %}
+                </a>
+              </li>
+              {% endfor %}
+            </ul>
+          </details>
+        </li>
+        <li>
+          {% if layout.signed_in %}<strong>{{ layout.username }}</strong>
+          {% else %}<a href="/account" role="button" class="outline secondary">{{ "Sign in"|t }}</a>{% endif %}
+        </li>
+      </ul>
     </nav>
-    <div class="who">
-      {% if layout.signed_in %}<span class="user">{{ layout.username }}</span>
-      {% else %}<a href="/account">Sign in</a>{% endif %}
-    </div>
   </header>
 
-  <main>
+  <main class="container">
     {% block content %}{% endblock %}
   </main>
 
-  <footer>
-    <span>V0 · running on simulated nodes</span>
-    {% if layout.debug_controls %}<span class="tag warn">debug controls enabled</span>{% endif %}
+  <footer class="container">
+    {% if layout.debug_controls %}<small class="tag warn">{{ "debug controls enabled"|t }}</small>{% endif %}
   </footer>
 </body>
 </html>

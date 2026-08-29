@@ -1,7 +1,5 @@
-//! Core error types. `no_std`-compatible: they carry ids and enums, not
+//! Core error types. Deliberately small: they carry ids and enums, not
 //! backtraces or `std::io::Error`.
-
-use alloc::string::String;
 use thiserror::Error;
 
 use crate::ids::{JobId, NodeId, TaskId};
@@ -41,8 +39,8 @@ pub enum ClusterError {
     State(#[from] StateError),
     #[error(transparent)]
     Scheduler(#[from] SchedulerError),
-    /// The transport/runtime underneath failed. On the PC this is a closed
-    /// channel; on hardware it will be a dropped packet or a dead radio.
+    /// The transport/runtime underneath failed, such as a closed channel or
+    /// disconnected worker socket.
     #[error("cluster runtime unavailable: {0}")]
     Unavailable(String),
 }

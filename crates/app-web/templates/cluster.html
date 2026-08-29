@@ -1,21 +1,21 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Cluster</h1>
+<h1>{{ "Cluster"|t }}</h1>
 
 <div id="stats" hx-get="/partials/stats" hx-trigger="cluster-changed from:body, every {{ layout.fallback_poll_ms }}ms" hx-swap="innerHTML">
   {% include "partials/stats.html" %}
 </div>
 
-<section class="panel">
-  <h2>Nodes</h2>
-  <p class="hint">Click a role chip to add or remove it. Node identity does not change.</p>
+<article>
+  <h2>{{ "Nodes"|t }}</h2>
+  <p class="hint">{{ "Click a role chip to add or remove it. Node identity does not change."|t }}</p>
   {% include "partials/nodes.html" %}
-</section>
+</article>
 
-<section class="panel">
-  <h2>Events</h2>
+<article>
+  <h2>{{ "Events"|t }}</h2>
   <div id="events" hx-get="/partials/events" hx-trigger="cluster-changed from:body, every {{ layout.fallback_poll_ms }}ms" hx-swap="innerHTML">
     {% include "partials/events.html" %}
   </div>
-</section>
+</article>
 {% endblock %}

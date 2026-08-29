@@ -2,13 +2,10 @@
 //!
 //! A Job is what a user submits; it splits into independent Tasks that the
 //! scheduler places on nodes. Tasks are re-executed from the beginning on
-//! failure -- V0 has no checkpoint/resume (CLAUDE.md 16).
+//! failure -- V0 has no checkpoint/resume.
 
-use core::fmt;
-
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::error::StateError;
 use crate::ids::{JobId, NodeId, TaskId};
@@ -17,7 +14,7 @@ use crate::time::Millis;
 /// What a user asked the cluster to do.
 ///
 /// Kept as a small closed enum on purpose: a task description has to be
-/// serialisable into a few dozen bytes to be shipped to an ESP32 later.
+/// serialisable into a few dozen bytes to be shipped to a worker.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum JobSpec {
@@ -42,7 +39,6 @@ impl JobSpec {
     }
 
     pub fn describe(&self) -> String {
-        use alloc::format;
         match *self {
             JobSpec::Sleep { total_ms, tasks } => format!("sleep {total_ms}ms over {tasks} tasks"),
             JobSpec::Primes { upper_bound, tasks } => {
@@ -92,7 +88,6 @@ pub enum TaskSpec {
 
 impl TaskSpec {
     pub fn describe(&self) -> String {
-        use alloc::format;
         match *self {
             TaskSpec::Sleep { millis } => format!("sleep {millis}ms"),
             TaskSpec::Primes { start, end } => format!("primes in {start}..{end}"),
@@ -119,6 +114,14 @@ pub enum JobState {
 }
 
 impl JobState {
+    pub const ALL: [JobState; 5] = [
+        JobState::Queued,
+        JobState::Running,
+        JobState::Completed,
+        JobState::Failed,
+        JobState::Cancelled,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             JobState::Queued => "queued",
@@ -180,6 +183,14 @@ pub enum TaskState {
 }
 
 impl TaskState {
+    pub const ALL: [TaskState; 5] = [
+        TaskState::Queued,
+        TaskState::Assigned,
+        TaskState::Running,
+        TaskState::Completed,
+        TaskState::Failed,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             TaskState::Queued => "queued",
@@ -405,7 +416,7 @@ impl Task {
 }
 
 /// A recorded failure. One row per failed attempt, never overwritten -- the UI
-/// has to be able to show the whole history (CLAUDE.md 16).
+/// has to be able to show the whole history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TaskAttempt {
     pub task_id: TaskId,

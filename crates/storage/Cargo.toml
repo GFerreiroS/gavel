@@ -10,16 +10,16 @@ publish.workspace = true
 #
 # This crate implements the ports declared in `app-core::repo` on top of
 # SQLite. It is the only crate in the workspace allowed to name SQLx. Swapping
-# SQLite for NVS/LittleFS/replicated cluster storage means adding a sibling
-# module here, not touching app-core or app-web.
+# SQLite for another database means adding a sibling module here, not touching
+# app-core or app-web.
 
 [dependencies]
 app-core = { workspace = true }
-cluster-core = { workspace = true, features = ["std"] }
+cluster-core = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }
-cluster-core = { workspace = true, features = ["std"] }
+cluster-core = { workspace = true }

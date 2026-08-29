@@ -1,10 +1,9 @@
 //! Roles.
 //!
-//! A node has a *set* of roles, never a single role (CLAUDE.md 11/14), and the
-//! set is a bitmask so that advertising it costs one byte on the wire and zero
-//! allocations on a microcontroller.
+//! A node has a *set* of roles, never a single role. The set is a bitmask so
+//! it stays compact on the wire and needs no heap allocation.
 
-use core::fmt;
+use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
@@ -29,7 +28,7 @@ pub const ALL_ROLES: [Role; 6] = [
 ];
 
 /// Which roles survive when the cluster is degraded and cannot satisfy every
-/// minimum (CLAUDE.md 20). Expressed as data so the policy can evolve without
+/// minimum. Expressed as data so the policy can evolve without
 /// touching scheduling code.
 pub const DEGRADATION_PRIORITY: [Role; 6] = [
     Role::Gateway,
@@ -141,7 +140,7 @@ impl fmt::Display for RoleSet {
     }
 }
 
-/// Desired replica count for one role (CLAUDE.md 23).
+/// Desired replica count for one role.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RolePolicy {
     pub min_replicas: usize,
@@ -183,8 +182,8 @@ impl RolePolicies {
     /// Roles whose minimum is not met, in degradation-priority order: the
     /// first entry is the one to fix first. This is the hook a future
     /// autoscaler / role-rebalancer plugs into.
-    pub fn unmet(&self, counts: impl Fn(Role) -> usize) -> alloc::vec::Vec<(Role, usize)> {
-        let mut deficits: alloc::vec::Vec<(Role, usize)> = ALL_ROLES
+    pub fn unmet(&self, counts: impl Fn(Role) -> usize) -> Vec<(Role, usize)> {
+        let mut deficits: Vec<(Role, usize)> = ALL_ROLES
             .into_iter()
             .filter_map(|role| {
                 let want = self.get(role).min_replicas;
@@ -200,7 +199,7 @@ impl RolePolicies {
 }
 
 impl Default for RolePolicies {
-    /// Mirrors the `[roles]` table in CLAUDE.md 19.
+    /// Default role replica policies.
     fn default() -> Self {
         let mut p = RolePolicies([RolePolicy::default(); 6]);
         p.set(Role::Gateway, RolePolicy::new(1));

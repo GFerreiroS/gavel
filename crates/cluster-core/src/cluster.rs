@@ -1,14 +1,12 @@
 //! The port the application talks to.
 //!
 //! `app-web` and `app-core` depend on this trait, never on `cluster-local`.
-//! Swapping the Tokio-task cluster for a QEMU or Wi-Fi one is then a matter of
+//! Swapping the in-process worker pool for networked workers is then a matter of
 //! providing another implementor.
 
-use core::future::Future;
-
-use alloc::vec::Vec;
 use futures_core::Stream;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 
 use crate::error::ClusterError;
 use crate::event::EventRecord;
@@ -95,8 +93,8 @@ pub trait ClusterControl: Send + Sync + 'static {
     ///
     /// A named associated type rather than `impl Stream`, so the stream is
     /// plainly independent of the borrow it was created from -- and a `Stream`
-    /// rather than a channel type, so the runtime stays swappable: a Tokio
-    /// broadcast today, a radio receiver later.
+    /// rather than a channel type, so the runtime stays swappable (for
+    /// example, from an in-process broadcast to an external event bus).
     type Events: Stream<Item = EventRecord> + Send + Unpin + 'static;
 
     fn snapshot(&self) -> impl Future<Output = ClusterSnapshot> + Send;
@@ -123,7 +121,7 @@ pub trait ClusterControl: Send + Sync + 'static {
         enabled: bool,
     ) -> impl Future<Output = Result<(), ClusterError>> + Send;
 
-    // --- failure simulation controls (CLAUDE.md 35) --------------------------
+    // --- failure simulation controls -----------------------------------------
     // Debug-only surface; the server mounts these behind a flag.
 
     fn stop_node(&self, node: NodeId) -> impl Future<Output = Result<(), ClusterError>> + Send;

@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/wow/auctions">{{ "Auction House"|t }}</a></li>
+    <li>{{ view.title|t }}</li>
+  </ul>
+</nav>
+<h1>{{ view.title|t }}</h1>
+<p class="hint">{{ view.blurb|t|fill(view.expansion) }}</p>
+
+{% if view.archived %}
+<div class="alert alert-archived" role="status">
+  <strong>{{ "{} is archived."|t|fill(view.expansion) }}</strong>
+  {{ "These prices are kept for reference and are no longer collected or updated."|t }}
+</div>
+{% endif %}
+
+<form class="toolbar" method="get" action="{{ view.path }}">
+  {# Which expansion is a choice made on the Auction House index. Carried here
+     so the search does not silently drop it. #}
+  <input type="hidden" name="expansion" value="{{ view.expansion_id }}">
+  <label>
+    <span>{{ "Search"|t }}</span>
+    {# Live filtering for browsers with scripting, a plain GET form for the
+       rest: the same endpoint answers both. #}
+    <input type="search" name="q" value="{{ view.query }}"
+           placeholder='{{ "Item name"|t }}' autocomplete="off"
+           hx-get="{{ view.fragment_path }}"
+           hx-include="closest form"
+           hx-trigger="keyup changed delay:250ms, search"
+           hx-target="#enhancement-list"
+           hx-swap="innerHTML">
+  </label>
+</form>
+
+<div id="enhancement-list">
+  {% include "partials/enhancements.html" %}
+</div>
+{% endblock %}

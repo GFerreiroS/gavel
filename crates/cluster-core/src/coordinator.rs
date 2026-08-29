@@ -1,12 +1,12 @@
 //! Leader election, behind a trait.
 //!
-//! V0 deliberately does NOT implement Raft (CLAUDE.md 22). What matters now is
+//! V0 deliberately does NOT implement Raft. What matters now is
 //! that the *state transitions* around gaining and losing leadership are
 //! exercised, so the policy is a one-method trait that a real protocol can
 //! replace later without touching callers.
 //!
 //! Gateway and Coordinator stay separate concepts even though V0 will often
-//! put both on the same node (CLAUDE.md 21).
+//! put both on the same node.
 
 use crate::ids::NodeId;
 use crate::node::Node;

@@ -1,4 +1,4 @@
-//! Integration tests for the runtime (CLAUDE.md 34).
+//! Integration tests for the runtime.
 //!
 //! The important one is `a_dead_worker_does_not_lose_its_task`: submit, kill
 //! the worker mid-flight, and assert the task is re-run elsewhere and the job
@@ -35,6 +35,21 @@ async fn wait_for(label: &str, mut predicate: impl AsyncFnMut() -> bool) {
         tokio::time::sleep(Duration::from_millis(25)).await;
     }
     panic!("timed out waiting for: {label}");
+}
+
+/// Wait until an event kind has been persisted.
+///
+/// Durable writes are drained by their own task so the supervisor never blocks
+/// on the store. That makes every "the runtime did X" and "X is in the store"
+/// pair two events rather than one, and asserting the second immediately after
+/// observing the first is a race that only shows up under load.
+async fn wait_for_events(store: &MemoryStore, kinds: &[&'static str]) {
+    for kind in kinds {
+        wait_for(&format!("{kind} is persisted"), async || {
+            store.event_kinds().contains(kind)
+        })
+        .await;
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -108,7 +123,7 @@ async fn a_job_is_split_across_workers_and_completes() {
     }
 }
 
-/// The test CLAUDE.md 34 calls out explicitly.
+/// The required worker-failure test.
 #[tokio::test(flavor = "multi_thread")]
 async fn a_dead_worker_does_not_lose_its_task() {
     let store = MemoryStore::new();
@@ -156,11 +171,24 @@ async fn a_dead_worker_does_not_lose_its_task() {
     assert_eq!(task.attempt, 2, "the second attempt is the one that worked");
 
     // The failure is recorded, not swallowed.
+    wait_for("the failure is persisted", async || {
+        store.failures().len() == 1
+    })
+    .await;
     let failures = store.failures();
-    assert_eq!(failures.len(), 1);
     assert_eq!(failures[0].node_id, Some(victim));
     assert_eq!(failures[0].reason, cluster_core::FailureReason::NodeOffline);
 
+    wait_for_events(
+        &store,
+        &[
+            "task_assigned",
+            "task_failed",
+            "task_requeued",
+            "job_completed",
+        ],
+    )
+    .await;
     let kinds = store.event_kinds();
     for expected in [
         "task_assigned",
@@ -203,11 +231,22 @@ async fn a_task_that_keeps_failing_eventually_fails_the_job() {
     })
     .await;
 
+    // The job state is held in memory; the failure rows are drained to the
+    // store by the writer task. Seeing the job fail therefore does not mean
+    // the last attempt's row has landed yet, so wait for it rather than
+    // racing it.
+    wait_for("every attempt is recorded", async || {
+        cluster
+            .job(job_id)
+            .await
+            .is_some_and(|d| d.failures.len() == 2)
+    })
+    .await;
+
     let detail = cluster.job(job_id).await.unwrap();
     assert_eq!(detail.job.tasks_failed, 1);
     assert_eq!(detail.tasks[0].state, TaskState::Failed);
     assert_eq!(detail.tasks[0].attempt, 2, "capped by max_task_attempts");
-    assert_eq!(detail.failures.len(), 2, "every attempt is recorded");
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -238,9 +277,7 @@ async fn a_missed_heartbeat_moves_a_node_through_suspect_to_offline() {
     })
     .await;
 
-    let kinds = store.event_kinds();
-    assert!(kinds.contains(&"node_unhealthy"));
-    assert!(kinds.contains(&"node_recovered"));
+    wait_for_events(&store, &["node_unhealthy", "node_recovered"]).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -280,8 +317,7 @@ async fn roles_can_be_changed_at_runtime_without_changing_identity() {
             .has_role(Role::Compute)
     );
 
-    assert!(store.event_kinds().contains(&"role_assigned"));
-    assert!(store.event_kinds().contains(&"role_removed"));
+    wait_for_events(&store, &["role_assigned", "role_removed"]).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -300,7 +336,7 @@ async fn losing_the_coordinator_elects_a_new_one() {
         cluster.snapshot().await.leader.is_some_and(|l| l != leader)
     })
     .await;
-    assert!(store.event_kinds().contains(&"leader_elected"));
+    wait_for_events(&store, &["leader_elected"]).await;
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -355,8 +391,16 @@ async fn role_changes_survive_a_restart() {
     .await;
 
     // Startup assignments are written out, not just held in memory.
+    //
+    // Waited for rather than asserted outright: durable writes are drained by
+    // their own task so the supervisor never blocks on the store, which means
+    // "the node is online" and "its roles have been persisted" are two events
+    // and not one.
     let assigned = cluster.node(NodeId(2)).await.unwrap().roles;
-    assert_eq!(store.stored_roles(NodeId(2)), Some(assigned));
+    wait_for("startup roles are persisted", async || {
+        store.stored_roles(NodeId(2)) == Some(assigned)
+    })
+    .await;
 
     cluster
         .set_role(NodeId(2), Role::Storage, true)
@@ -364,11 +408,12 @@ async fn role_changes_survive_a_restart() {
         .unwrap();
     let after = cluster.node(NodeId(2)).await.unwrap().roles;
     assert!(after.contains(Role::Storage));
-    assert_eq!(
-        store.stored_roles(NodeId(2)),
-        Some(after),
-        "the change is persisted immediately, not at shutdown"
-    );
+    // Promptly, and without waiting for shutdown -- but still through the
+    // write-behind task, so this is a short wait rather than an assertion.
+    wait_for("the role change is persisted", async || {
+        store.stored_roles(NodeId(2)) == Some(after)
+    })
+    .await;
 
     // A second cluster over the same store is what a restart looks like.
     drop(cluster);

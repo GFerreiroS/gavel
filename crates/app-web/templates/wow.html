@@ -1,18 +1,16 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>World of Warcraft</h1>
+<h1>{{ "World of Warcraft"|t }}</h1>
 <p class="hint">
-  One vertical slice: look up a character, normalise the upstream response into
-  our own model, cache it briefly, render it.
+  {{ "One vertical slice: look up a character, normalise the upstream response into our own model, cache it briefly, render it."|t }}
 </p>
 
-<section class="panel">
-  <form class="job-form"
-        hx-get="/wow/character"
+<article>
+  <form class="toolbar" hx-get="/wow/character"
         hx-target="#character"
         hx-swap="innerHTML"
         hx-indicator="#character-loading">
-    <label>Region
+    <label>{{ "Region"|t }}
       <select name="region">
         <option value="eu">EU</option>
         <option value="us">US</option>
@@ -20,14 +18,14 @@
         <option value="tw">TW</option>
       </select>
     </label>
-    <label>Realm <input type="text" name="realm" placeholder="Silvermoon" required></label>
-    <label>Character <input type="text" name="name" placeholder="Name" required></label>
-    <button type="submit">Search</button>
+    <label>{{ "Realm"|t }} <input type="text" name="realm" placeholder="Silvermoon" required></label>
+    <label>{{ "Character"|t }} <input type="text" name="name" placeholder='{{ "Name"|t }}' required></label>
+    <button type="submit">{{ "Search"|t }}</button>
   </form>
-  <span id="character-loading" class="htmx-indicator">searching…</span>
-</section>
+  <span id="character-loading" class="htmx-indicator">{{ "searching…"|t }}</span>
+</article>
 
 <div id="character">
-  <p class="muted">No character loaded yet.</p>
+  <p class="muted">{{ "No character loaded yet."|t }}</p>
 </div>
 {% endblock %}

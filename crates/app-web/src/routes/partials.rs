@@ -1,12 +1,16 @@
 //! HTMX fragments. Same view models as the pages, rendered without the layout.
 
+use app_core::locale::Locale;
 use app_core::{AppError, Ports};
 use askama::Template;
+use axum::Extension;
 use axum::extract::{Path, State};
 use axum::response::Html;
 use cluster_core::{ClusterControl, JobId};
 
 use crate::error::WebResult;
+use crate::i18n::filters;
+use crate::prefs::MarketPrefs;
 use crate::render::page;
 use crate::views::{EventView, JobDetailView, JobRow, MetricsView, NodeView, Stats};
 
@@ -47,50 +51,77 @@ pub struct JobDetailFragment {
     pub detail: JobDetailView,
 }
 
-pub async fn stats<E: Ports>(State(env): State<E>) -> WebResult<Html<String>> {
+pub async fn stats<E: Ports>(
+    State(env): State<E>,
+    Extension(prefs): Extension<MarketPrefs>,
+) -> WebResult<Html<String>> {
     let snapshot = env.cluster().snapshot().await;
-    page(&StatsFragment {
-        stats: Stats::from_snapshot(&snapshot),
-    })
+    page(
+        &StatsFragment {
+            stats: Stats::from_snapshot(&snapshot),
+        },
+        prefs.locale,
+    )
 }
 
-pub async fn nodes<E: Ports>(State(env): State<E>) -> WebResult<Html<String>> {
-    page(&nodes_fragment(&env).await)
+pub async fn nodes<E: Ports>(
+    State(env): State<E>,
+    Extension(prefs): Extension<MarketPrefs>,
+) -> WebResult<Html<String>> {
+    page(&nodes_fragment(&env, prefs.locale).await, prefs.locale)
 }
 
 /// Shared with the role-toggle and debug handlers so a control click swaps in
 /// a freshly rendered node list.
-pub async fn nodes_fragment<E: Ports>(env: &E) -> NodesFragment {
+pub async fn nodes_fragment<E: Ports>(env: &E, locale: Locale) -> NodesFragment {
     let snapshot = env.cluster().snapshot().await;
     let nodes = env.cluster().nodes().await;
     let now = env.now();
     NodesFragment {
         nodes: nodes
             .iter()
-            .map(|n| NodeView::new(n, now, &snapshot))
+            .map(|n| NodeView::new(n, now, &snapshot, locale))
             .collect(),
         debug_controls: env.config().debug_controls,
     }
 }
 
-pub async fn metrics<E: Ports>(State(env): State<E>) -> WebResult<Html<String>> {
-    page(&MetricsFragment {
-        metrics: MetricsView::new(&env.metrics().snapshot()),
-    })
+pub async fn metrics<E: Ports>(
+    State(env): State<E>,
+    Extension(prefs): Extension<MarketPrefs>,
+) -> WebResult<Html<String>> {
+    page(
+        &MetricsFragment {
+            metrics: MetricsView::new(&env.metrics().snapshot()),
+        },
+        prefs.locale,
+    )
 }
 
-pub async fn events<E: Ports>(State(env): State<E>) -> WebResult<Html<String>> {
+pub async fn events<E: Ports>(
+    State(env): State<E>,
+    Extension(prefs): Extension<MarketPrefs>,
+) -> WebResult<Html<String>> {
     let events = env
         .cluster()
         .recent_events(env.config().event_log_limit)
         .await;
-    page(&EventsFragment {
-        events: events.iter().map(EventView::new).collect(),
-    })
+    page(
+        &EventsFragment {
+            events: events
+                .iter()
+                .map(|e| EventView::new(e, prefs.locale))
+                .collect(),
+        },
+        prefs.locale,
+    )
 }
 
-pub async fn jobs<E: Ports>(State(env): State<E>) -> WebResult<Html<String>> {
-    page(&jobs_fragment(&env).await)
+pub async fn jobs<E: Ports>(
+    State(env): State<E>,
+    Extension(prefs): Extension<MarketPrefs>,
+) -> WebResult<Html<String>> {
+    page(&jobs_fragment(&env).await, prefs.locale)
 }
 
 pub async fn jobs_fragment<E: Ports>(env: &E) -> JobsFragment {
@@ -103,6 +134,7 @@ pub async fn jobs_fragment<E: Ports>(env: &E) -> JobsFragment {
 
 pub async fn job_detail<E: Ports>(
     State(env): State<E>,
+    Extension(prefs): Extension<MarketPrefs>,
     Path(id): Path<u64>,
 ) -> WebResult<Html<String>> {
     let detail = env
@@ -110,7 +142,10 @@ pub async fn job_detail<E: Ports>(
         .job(JobId(id))
         .await
         .ok_or(AppError::NotFound)?;
-    page(&JobDetailFragment {
-        detail: JobDetailView::new(&detail, env.now()),
-    })
+    page(
+        &JobDetailFragment {
+            detail: JobDetailView::new(&detail, env.now()),
+        },
+        prefs.locale,
+    )
 }

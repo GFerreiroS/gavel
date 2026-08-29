@@ -8,6 +8,7 @@ use serde::Deserialize;
 
 use crate::csrf::Csrf;
 use crate::error::WebResult;
+use crate::prefs::MarketPrefs;
 use crate::render::page;
 use crate::routes::partials;
 
@@ -21,11 +22,11 @@ pub struct RoleForm {
     pub csrf_token: String,
 }
 
-/// Change a node's roles at runtime without changing its identity
-/// (CLAUDE.md 19).
+/// Change a node's roles at runtime without changing its identity.
 pub async fn set_role<E: Ports>(
     State(env): State<E>,
     Extension(csrf): Extension<Csrf>,
+    Extension(prefs): Extension<MarketPrefs>,
     headers: HeaderMap,
     Path(id): Path<u16>,
     axum::Form(form): axum::Form<RoleForm>,
@@ -38,5 +39,8 @@ pub async fn set_role<E: Ports>(
         .set_role(NodeId(id), role, form.enabled)
         .await?;
 
-    page(&partials::nodes_fragment(&env).await)
+    page(
+        &partials::nodes_fragment(&env, prefs.locale).await,
+        prefs.locale,
+    )
 }

@@ -5,11 +5,14 @@ use app_core::repo::Store;
 use app_core::service::{CharacterService, Freshness};
 use app_core::wow::CharacterProvider;
 use askama::Template;
+use axum::Extension;
 use axum::extract::{Query, State};
 use axum::response::Html;
 use serde::Deserialize;
 
 use crate::error::WebResult;
+use crate::i18n::filters;
+use crate::prefs::MarketPrefs;
 use crate::render::page;
 use crate::views::CharacterView;
 
@@ -29,6 +32,7 @@ struct CharacterFragment {
 /// `GET /wow/character` -> a character card fragment for HTMX to swap in.
 pub async fn character<E: Ports>(
     State(env): State<E>,
+    Extension(prefs): Extension<MarketPrefs>,
     Query(params): Query<CharacterQueryParams>,
 ) -> WebResult<Html<String>> {
     let store = env.store();
@@ -45,11 +49,14 @@ pub async fn character<E: Ports>(
     )?;
     let (character, freshness) = service.lookup(&query, env.now()).await?;
 
-    page(&CharacterFragment {
-        character: CharacterView::new(
-            &character,
-            env.characters().provider_name(),
-            freshness == Freshness::Cached,
-        ),
-    })
+    page(
+        &CharacterFragment {
+            character: CharacterView::new(
+                &character,
+                env.characters().provider_name(),
+                freshness == Freshness::Cached,
+            ),
+        },
+        prefs.locale,
+    )
 }

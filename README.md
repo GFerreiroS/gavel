@@ -1,10 +1,11 @@
-# ESP Web Cluster — V0
+# WoW Auction Tracker
 
-A web application whose runtime is modelled as a cluster from day one, so that
-the cluster can later become actual ESP32 hardware instead of Tokio tasks.
+A server-rendered web application in Rust with a work cluster built in. Prices,
+raid consumables and crafting reagents from the Battle.net auction-house API;
+character lookups from Raider.IO; and a job runner that spreads heavy work over
+as many worker processes as you care to start.
 
-V0 runs entirely on a development PC. There is no ESP32, no QEMU, no Docker,
-no Redis, no broker. One command starts everything.
+It runs on one ordinary server. No Redis, no broker, no Kubernetes needed.
 
 ```bash
 cargo run
@@ -12,8 +13,21 @@ cargo run
 ```
 
 ```bash
-cargo run -- --nodes 8 --port 3000
+docker compose up --build              # web + 3 workers
+docker compose up -d --scale worker=8
 ```
+
+---
+
+## Two things it is built around
+
+**Pages are fast.** Server-rendered HTML, HTMX for partial updates, CSS and JS
+embedded in the binary, no JavaScript framework. Pico supplies the semantic
+defaults, while a small app stylesheet handles the cluster and market views.
+
+**Failure is visible.** Kill a worker holding a task and the task is re-run
+elsewhere, the attempt is recorded, and the event log says what happened. That
+is a feature of the app, not a test fixture.
 
 ---
 
@@ -21,32 +35,33 @@ cargo run -- --nodes 8 --port 3000
 
 - Server-rendered UI (Axum + Askama + HTMX) at `/`, `/cluster`, `/nodes`,
   `/jobs`, `/jobs/{id}`, `/account`, `/wow`
-- Eight simulated nodes with mixed ESP32 capability profiles, registering,
-  heartbeating, advertising capabilities and taking work
-- Roles as a set per node, changeable at runtime without changing node identity
-- Deterministic leader election, tracked separately from the gateway role
-- Job submission, splitting into tasks, least-loaded scheduling across workers,
-  progress and result aggregation
+- **One binary, two roles**: the web server and the workers are the same
+  executable, chosen by flags, so a worker can never be a different build
+- In-process workers by default; worker *processes* on this or any other
+  machine via `--connect`, which is what `--scale worker=N` drives
+- Anonymous workers: a worker dials in, is given an identity, and is forgotten
+  when it leaves — nothing about a replica is configured in advance
+- Job submission, splitting into tasks, least-loaded scheduling, progress and
+  result aggregation
 - Health state machine: `Healthy → Suspect → Offline` from heartbeat age
 - **Failure handling**: a worker that dies mid-task has the task requeued and
-  re-run from the beginning elsewhere; every attempt is recorded and shown
+  re-run elsewhere; every attempt is recorded and shown
+- Roles as a set per node, changeable at runtime; deterministic leader election
 - Cluster event log, in the UI and in the structured logs
-- **Live updates over SSE** — one stream tells the page *that* something
-  changed and it refetches only the affected fragments; slow polling remains as
-  a fallback
-- Request metrics (count, mean latency, in-flight, peak, 4xx/5xx) alongside the
-  cluster's own queue-depth and load signals
+- **Live updates over SSE** — the stream says only *that* something changed and
+  the page refetches the affected fragments; polling remains as a fallback
+- Request metrics (count, mean latency, in-flight, peak, 4xx/5xx)
 - SQLite persistence for users, sessions, jobs, tasks, failures, events, cache,
-  boot configuration and **role assignments** — a role changed at runtime
-  survives a restart while node identity does not change
+  boot configuration and role assignments
 - Registration / login / logout with Argon2id, session cookies, CSRF protection
-- Raider.IO character lookup with a short-lived cache (verified against the
-  live API)
+- Auction-house prices with per-patch history, raid consumables and crafting
+  reagents, in twelve locales for item text and a translated interface
+- Raider.IO character lookup with a short-lived cache
 - Failure-simulation controls (stop, start, pause heartbeat, inject failure,
   add delay)
 
-Not implemented on purpose: ESP32 firmware, QEMU, ESP-NOW, Raft, distributed
-storage, real autoscaling, Battle.net OAuth. See CLAUDE.md §40.
+Not implemented on purpose: Raft, distributed storage, autoscaling, Battle.net
+OAuth, and horizontal scaling of the *web* tier — see "Scaling" below.
 
 ---
 
@@ -54,23 +69,24 @@ storage, real autoscaling, Battle.net OAuth. See CLAUDE.md §40.
 
 ```text
 crates/
-  cluster-core/       no_std + alloc. The portable model and the ports.
-  cluster-local/      PC runtime: one Tokio task per node, one supervisor.
+  cluster-core/       Job/task model, scheduler, events, worker protocol.
+  cluster-local/      Coordinator, in-process worker pool, TCP transport.
   app-core/           Domain types, services, and the ports they need.
   storage/            SQLite adapters for those ports.
-  app-integrations/   Raider.IO adapter; Battle.net config placeholder.
+  app-integrations/   Blizzard and Raider.IO clients.
   app-web/            Axum routes, view models, Askama templates, assets.
-  server/             Composition root: config, tracing, wiring, serving.
-firmware/             ESP32-S3 node firmware. Own toolchain, own target.
-scripts/              QEMU fetch/run/test helpers.
+  server/             Composition root; also the worker binary.
+locales/              gettext catalogues, compiled in at build time.
 migrations/           SQL schema.
 data/                 SQLite database (gitignored).
-tools/                Espressif QEMU (fetched, gitignored).
+Dockerfile            One image for both roles.
+compose.yml           Web + scalable workers on one host.
 ```
 
-Dependencies point inwards. `cluster-core` depends on nothing but `serde` and
-`thiserror`; `app-core` depends on `cluster-core`; the adapters depend on the
-core; `server` is the only crate that knows every concrete implementation.
+Dependencies point inwards. `cluster-core` depends only on `serde`,
+`thiserror`, `postcard` and `futures-core`; `app-core` depends on
+`cluster-core`; the adapters depend on the core; `server` is the only crate
+that knows every concrete implementation.
 
 ```text
                  server  (composition root)
@@ -86,94 +102,64 @@ core; `server` is the only crate that knows every concrete implementation.
 
 ---
 
-## The ESP32 constraint
-
-The long-term target is a cluster of microcontrollers with a few hundred KB of
-RAM each. Three rules follow from that, and they shape the code:
-
-**1. `cluster-core` is `no_std` and must stay that way.** It is the crate that
-will eventually be cross-compiled for xtensa/riscv32. It contains ids, roles,
-capabilities, jobs, tasks, events, scheduling policy, election policy and the
-persistence/cluster ports — and no I/O, no threads, no runtime, no clock.
-Verified by:
-
-```bash
-./check-portable.sh
-```
-
-which does three things, each catching what the one before it cannot:
-
-1. `--no-default-features` on the host — proves it does not **use** std
-2. cross-compiles for device targets — proves it can **be built** for one
-3. boots it under QEMU — proves it **runs correctly** on one
-
-Level 1 alone is not enough, and that is not hypothetical: it passed happily
-while the crate could not build for `riscv32imc` at all, because `RoundRobin`
-held an `AtomicUsize` and **the ESP32-C3 has no atomic instructions**. It is
-now stateless.
-
-| Target | Chips | Atomics |
-|---|---|---|
-| `xtensa-esp32s3-none-elf` | **ESP32-S3 — the target** | yes (needs `espup`) |
-| `riscv32imc-unknown-none-elf` | ESP32-C3, C2 | no |
-| `riscv32imac-unknown-none-elf` | ESP32-C6, H2 | yes |
-
-The S3 is what this is built for; the others are checked so the core does not
-quietly acquire an S3-only dependency. `cluster-core`'s entire dependency tree
-is 21 crates.
-
-**2. No boxing on the hot paths.** Every port is declared as
-`fn f(&self) -> impl Future<Output = T> + Send`, not `async fn` and not
-`#[async_trait]`. That keeps calls allocation-free and the traits usable from an
-embedded executor such as embassy. Implementations still write plain `async fn`.
-The web layer takes one type parameter (`E: Ports`) rather than a bag of
-`Box<dyn …>`.
-
-**3. Message passing, not shared memory.** All cluster state lives inside one
-supervisor task and is reached only by sending it a message. There is no mutex
-in the runtime. A node knows its own id, its capabilities and its mailbox —
-exactly what an ESP32 will know.
-
-Smaller consequences: `RoleSet` is a one-byte bitmask; ids are `u16`/`u64`, not
-UUIDs; timestamps are `u64` milliseconds with the date formatting written by
-hand rather than pulling in `chrono`; CSS and JS are embedded in the binary so
-the asset budget is visible at build time.
-
-`Argon2` is the deliberate exception — correct on a PC, far too memory-hungry
-for a node — which is why it sits behind `PasswordHasher` rather than being
-called directly.
-
----
-
 ## Configuration
 
 Every setting is a CLI flag backed by an environment variable, with a default.
 
 | Flag | Env | Default | Meaning |
 |---|---|---|---|
-| `--host` | `ESP_HOST` | `127.0.0.1` | Bind address |
-| `--port` | `ESP_PORT` | `3000` | Bind port |
-| `--database` | `ESP_DATABASE` | `data/cluster.db` | SQLite file, or `:memory:` |
-| `--nodes` | `ESP_NODES` | `8` | Simulated nodes |
-| `--heartbeat-ms` | `ESP_HEARTBEAT_MS` | `1000` | Heartbeat interval |
-| `--suspect-ms` | `ESP_SUSPECT_MS` | `3000` | Silence before Suspect |
-| `--offline-ms` | `ESP_OFFLINE_MS` | `6000` | Silence before Offline |
-| `--max-task-attempts` | `ESP_MAX_ATTEMPTS` | `3` | Attempts before a task fails for good |
-| `--poll-ms` | `ESP_POLL_MS` | `2000` | Fallback refresh interval (SSE is primary) |
-| `--gateway-min` etc. | `ESP_GATEWAY_MIN` … | `1,2,2,1,1` | Role minimums |
-| `--debug-controls` | `ESP_DEBUG_CONTROLS` | `true` | Mount `/debug/*` |
-| `--secure-cookies` | `ESP_SECURE_COOKIES` | `false` | Requires HTTPS |
-| `--log` | `ESP_LOG` | `info,sqlx=warn` | Tracing filter |
+| `--host` | `APP_HOST` | `127.0.0.1` | Bind address |
+| `--port` | `APP_PORT` | `3000` | Bind port |
+| `--database` | `APP_DATABASE` | `data/cluster.db` | SQLite file, or `:memory:` |
+| `--workers` | `APP_WORKERS` | `4` | Workers inside this process |
+| `--worker-listen` | `APP_WORKER_LISTEN` | off | Accept worker connections, e.g. `0.0.0.0:3001` |
+| `--connect` | `APP_CONNECT` | off | Run as a worker against this coordinator |
+| `--heartbeat-ms` | `APP_HEARTBEAT_MS` | `1000` | Heartbeat interval |
+| `--suspect-ms` | `APP_SUSPECT_MS` | `3000` | Silence before Suspect |
+| `--offline-ms` | `APP_OFFLINE_MS` | `6000` | Silence before Offline |
+| `--max-task-attempts` | `APP_MAX_ATTEMPTS` | `3` | Attempts before a task fails for good |
+| `--poll-ms` | `APP_POLL_MS` | `2000` | Fallback refresh interval (SSE is primary) |
+| `--gateway-min` etc. | `APP_GATEWAY_MIN` … | `1,2,2,1,1` | Role minimums |
+| `--debug-controls` | `APP_DEBUG_CONTROLS` | `true` | Mount `/debug/*` |
+| `--secure-cookies` | `APP_SECURE_COOKIES` | `false` | Requires HTTPS |
+| `--log` | `APP_LOG` | `info,sqlx=warn` | Tracing filter |
+| `--market-regions` | `APP_MARKET_REGIONS` | `eu,us,kr,tw` | Auction regions to collect and offer in the picker |
+| `--market-interval-min` | `APP_MARKET_INTERVAL_MIN` | `30` | Commodity poll interval |
+| `--market-retain-days` | `APP_MARKET_RETAIN_DAYS` | `90` | Price history kept |
 
-Secrets are never flags. Battle.net credentials are read from
-`BATTLENET_CLIENT_ID` / `BATTLENET_CLIENT_SECRET` by the adapter that needs
-them, and never logged.
+Each collected region costs one commodities call per cycle (25 against
+Battle.net's hourly budget of 36,000) and its own price rows. Narrow the list
+if you only care about one market -- the region picker then offers only what
+is collected.
+
+Language is a separate axis from region, and site-wide -- it is picked in the
+top bar, not on the market page. A visitor's language comes from `?lang=`, then
+the `wow_tracker_market` cookie, then `Accept-Language`, then English.
+
+It moves two different kinds of text:
+
+* **Item names, effects and tooltips** come from Battle.net in all twelve
+  locales. Every region's static endpoint returns all of them, so this needs no
+  translator and no catalogue.
+* **The interface itself** is translated from gettext PO files in `locales/`,
+  compiled into static tables at build time. English and Spanish exist today;
+  the language menu marks the rest as *item text only* rather than pretending.
+  See [locales/README.md](locales/README.md) for the translator workflow --
+  the layout is the standard one Weblate, Crowdin and Transifex all consume.
+
+Secrets are never flags, and never logged:
+
+* `BLIZZARD_CLIENT_ID` / `BLIZZARD_CLIENT_SECRET` -- the Game Data API client,
+  used for auction prices and item tooltips. Without them the app still runs;
+  it just collects no prices and shows untranslated catalog names.
+* `BATTLENET_CLIENT_ID` / `BATTLENET_CLIENT_SECRET` -- the OAuth client, for
+  account linking. Not wired up yet.
 
 ---
 
 ## Watching a failure
 
-The point of V0 is that failover is real, not narrated. To see it:
+Failover is real, not narrated. To see it:
 
 1. `cargo run` and open <http://127.0.0.1:3000/jobs>
 2. Submit a `sleep` job of `30000` ms across `4` tasks
@@ -192,8 +178,58 @@ job-01 completed
 
 5. `/jobs/1` shows the failure row, and attempt `2` on the task that moved
 
-The same sequence is asserted in
-`crates/cluster-local/tests/failover.rs::a_dead_worker_does_not_lose_its_task`.
+The same sequence is asserted twice: in
+`crates/cluster-local/tests/failover.rs::a_dead_worker_does_not_lose_its_task`
+for in-process workers, and in
+`crates/cluster-local/tests/remote.rs::a_worker_that_vanishes_mid_task_loses_no_work`
+for a worker on the far side of a socket that gets yanked -- which is how a
+killed process actually fails.
+
+Or do it for real: start a coordinator and two workers, submit a job, and
+`kill` one of the worker processes.
+
+---
+
+## Deployment
+
+One image, two roles. The web server and the workers are the same executable
+started with different flags, so a worker can never be a different build from
+the thing that was tested.
+
+```bash
+docker compose up --build              # web + 3 workers
+docker compose up -d --scale worker=8  # more workers, no config change
+```
+
+Or without Docker, on one host:
+
+```bash
+server --host 0.0.0.0 --worker-listen 0.0.0.0:3001 --workers 0   # coordinator
+server --connect coordinator:3001                                # each worker
+```
+
+Put a reverse proxy in front for TLS. Workers need no ports, no volume and no
+database: everything they need arrives over the connection they open.
+
+### Scaling
+
+Do not hand-roll what the deployment already provides:
+
+| Concern | Who owns it |
+|---|---|
+| HTTP load balancing, TLS | reverse proxy, or a k8s Service + Ingress |
+| Restarts, supervision | compose / systemd / k8s |
+| Worker count | `--scale`, or a Deployment's replicas |
+| **Job splitting, placement, retry, aggregation** | **this codebase** |
+
+Workers scale horizontally today. **The web tier does not yet**, and two things
+block it — both fine on one server, both mandatory before running two:
+
+1. **SQLite** is single-writer on one filesystem. A second web replica needs
+   Postgres. The storage ports make that an adapter swap, not a rewrite.
+2. **The SSE bus is an in-process `tokio::broadcast`.** With two web processes,
+   an event on one never reaches a browser connected to the other. Needs
+   Postgres `LISTEN/NOTIFY`, Redis pub/sub, or sticky sessions.
 
 ---
 
@@ -201,11 +237,9 @@ The same sequence is asserted in
 
 ```bash
 cargo run                                        # start everything
-cargo test --workspace                           # 56 tests
+cargo test --workspace                           # 168 tests
 cargo fmt --all
 cargo clippy --workspace --all-targets
-./check-portable.sh                              # host + cross-compile + QEMU
-./scripts/qemu-test.sh                           # just the device tests
 ```
 
 Tests live next to what they cover:
@@ -215,64 +249,12 @@ Tests live next to what they cover:
 - `crates/cluster-local/tests/failover.rs` — the runtime end to end: worker
   death, retry exhaustion, heartbeat loss, runtime role changes, role
   persistence across a restart, leader failover, the live event stream
+- `crates/cluster-local/tests/remote.rs` — worker *processes* over a real
+  socket: anonymous registration, identity reuse, a yanked connection, and a
+  restarted worker reclaiming its identity from a half-open one
 - `crates/storage/tests/repositories.rs` — persistence round-trips
 - `crates/app-core/tests/domain.rs` — validation, hashing, submission limits
 - `crates/app-core/tests/metrics.rs` — counter accounting
-
----
-
-## Running on an emulated ESP32-S3
-
-`firmware/` is a real ESP32-S3 binary. It links `cluster-core` — the same crate
-the server links, not a copy — and runs the domain logic on Xtensa: role sets,
-health transitions, the task state machine, job splitting, scheduling, election,
-and the prime workload, asserting each result. QEMU today, silicon unchanged.
-
-```bash
-./scripts/fetch-qemu.sh     # Espressif's QEMU fork; stock QEMU has no ESP machines
-./scripts/qemu-test.sh      # build for S3, boot, check the verdict
-```
-
-```text
-=== esp-web-cluster node firmware ===
-chip      : ESP32-S3 (xtensa lx7)
-target    : xtensa-esp32s3-none-elf
-heap      : 32768 bytes (bump)
-caps      : xtensa x2 cores, 512 KB RAM, usable 8704 KB
-...
-  ok    counts primes correctly (pi(1000) = 168)
-  ok    run_task computes on-device
-heap peak : 505 / 32768 bytes (0 allocation failures)
-checks    : 28 passed, 0 failed
-RESULT: PASS
-```
-
-The whole run takes under a second, and the harness exits non-zero when a check
-fails — verified by breaking one on purpose.
-
-**What it measures that host tests cannot:**
-
-| | |
-|---|---|
-| Flash footprint | 57 KB text, 2 KB data |
-| Heap needed by the domain layer | **505 bytes** peak |
-| `pi(1000)` on device | 168 — identical to the host |
-
-That 505-byte figure is the number worth watching. It is what says the domain
-layer could plausibly share a node with a network stack, and it will move the
-moment someone adds a `String` to a hot path.
-
-**Two things to know if you extend the firmware.** It does not call
-`esp_hal::init()` — that configures clocks and PLLs QEMU does not model, and
-hangs there; a node driving real peripherals would need it. And the allocator is
-a bump allocator that never reclaims, which fits a binary that boots, checks and
-halts, but not a node serving tasks indefinitely.
-
-Requires `espup` for the Xtensa toolchain (it is not in upstream rustc):
-
-```bash
-cargo install espup && espup install
-```
 
 ---
 
@@ -287,8 +269,11 @@ hx-trigger="cluster-changed from:body, every 20000ms"
 ```
 
 The second trigger is the fallback — if the stream is unavailable the UI still
-converges, just less promptly. Only the kind crosses the wire because the thing
-serving this eventually has a radio, not a datacentre NIC.
+converges, just less promptly. Only the kind crosses the wire, so a busy
+cluster costs one tiny frame per change rather than a rendered page per client.
+
+Note this bus is in-process: it is why the web tier does not scale to two
+replicas yet. See "Scaling".
 
 `/api/cluster` and `/api/metrics` return the same state as JSON for scripts.
 
@@ -304,8 +289,11 @@ serving this eventually has a radio, not a datacentre NIC.
 | Add a page | `app-web/src/views.rs`, `templates/`, `app-web/src/routes/` |
 | Add a provider | implement `app_core::wow::CharacterProvider` in `app-integrations` |
 | Change persistence | implement the `app_core::repo` / `cluster_core::persist` ports |
-| Run on real nodes | implement `cluster_core::ClusterControl` beside `cluster-local` |
-| Test on a device | add checks to `firmware/src/main.rs`, run `scripts/qemu-test.sh` |
+| Change the worker protocol | `cluster-core/src/protocol.rs`, then both sides follow |
+| Change worker behaviour | `cluster-core/src/agent.rs` — one implementation, host-tested |
+| Add another transport | a peer of `cluster-local/src/remote.rs`; the coordinator does not change |
+| Change what a worker process does | `crates/server/src/worker.rs` |
 
-Nothing in that last row requires touching `app-web` or `app-core`. That is the
-whole point of V0.
+Nothing in the transport rows requires touching `app-web` or `app-core`. That
+separation is the point: the coordinator reaches an in-process worker and a
+worker on another machine the same way — by pushing a message into a channel.

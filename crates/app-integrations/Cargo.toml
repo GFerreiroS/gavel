@@ -11,7 +11,7 @@ publish.workspace = true
 
 [dependencies]
 app-core = { workspace = true }
-cluster-core = { workspace = true, features = ["std"] }
+cluster-core = { workspace = true }
 httpdate = "1.0.3"
 reqwest = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }

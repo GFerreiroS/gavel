@@ -1,9 +1,12 @@
 //! Application services. Handlers call these; handlers contain no logic
-//! themselves (CLAUDE.md 7).
+//! themselves.
 
 use cluster_core::{ClusterControl, JobId, JobSpec, Millis};
 
 use crate::error::{AppError, AppResult};
+use crate::item::{ItemDetailProvider, ItemTooltip};
+use crate::locale::Locale;
+use crate::market::{ItemId, Region};
 use crate::repo::CacheStore;
 use crate::wow::{Character, CharacterProvider, CharacterQuery};
 
@@ -73,11 +76,19 @@ pub struct CharacterService<'a, P, K> {
     ttl_ms: u64,
 }
 
-/// Whether a rendered character came from the cache or from the upstream.
+/// Where a rendered record came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Freshness {
     Cached,
     Fetched,
+    /// The upstream does not know this item -- an id that has left the game
+    /// data, which happens to old expansions. The caller got a name-only
+    /// placeholder, and so will the next caller: the answer is cached, because
+    /// "this item does not exist" is as static as the item data itself.
+    Missing,
+    /// Neither: the upstream could not answer and the caller got whatever
+    /// could be assembled locally. Not cached, so the next call retries.
+    Unavailable,
 }
 
 impl<'a, P: CharacterProvider, K: CacheStore> CharacterService<'a, P, K> {
@@ -130,5 +141,108 @@ impl<'a, P: CharacterProvider, K: CacheStore> CharacterService<'a, P, K> {
             let _ = self.cache.put(&key, &bytes, now.plus_ms(self.ttl_ms)).await;
         }
         Ok((character, Freshness::Fetched))
+    }
+}
+
+/// Item tooltips, cached hard.
+///
+/// Static item data changes only on a patch, so this cache is measured in
+/// days rather than the minutes the character cache uses. That matters: the
+/// tooltip is fetched on hover, and a page of forty cards must not turn into
+/// forty upstream calls every time someone moves the mouse across it.
+pub struct ItemTooltipService<'a, P, K> {
+    provider: &'a P,
+    cache: &'a K,
+    ttl_ms: u64,
+}
+
+impl<'a, P: ItemDetailProvider, K: CacheStore> ItemTooltipService<'a, P, K> {
+    pub fn new(provider: &'a P, cache: &'a K, ttl_ms: u64) -> Self {
+        Self {
+            provider,
+            cache,
+            ttl_ms,
+        }
+    }
+
+    /// Cache-only read. Never touches the upstream, so it is safe to call
+    /// while rendering a page: a page render must not be able to block on
+    /// Battle.net.
+    pub async fn cached(&self, locale: Locale, item: ItemId, now: Millis) -> Option<ItemTooltip> {
+        let key = ItemTooltip::cache_key(item, locale);
+        let bytes = self.cache.get(&key, now).await.ok().flatten()?;
+        serde_json::from_slice::<ItemTooltip>(&bytes).ok()
+    }
+
+    /// The tooltip for one item in one language, fetching if it is not cached.
+    ///
+    /// A miss fetches *every* language in one request and caches them all,
+    /// because that is what the upstream returns anyway. Switching language is
+    /// then free. `region` only decides which regional host is asked; the text
+    /// that comes back is the same either way.
+    pub async fn lookup(
+        &self,
+        region: Region,
+        locale: Locale,
+        item: ItemId,
+        fallback_name: &str,
+        now: Millis,
+    ) -> (ItemTooltip, Freshness) {
+        if let Some(tooltip) = self.cached(locale, item, now).await {
+            return (tooltip, Freshness::Cached);
+        }
+
+        if !self.provider.is_configured() {
+            return (
+                ItemTooltip::placeholder(item, locale, fallback_name, now),
+                Freshness::Unavailable,
+            );
+        }
+
+        match self.provider.tooltips(region, item).await {
+            Ok(localized) => {
+                self.store_all(item, &localized, now).await;
+                match localized.into_iter().find(|(l, _)| *l == locale) {
+                    Some((_, tooltip)) => (tooltip, Freshness::Fetched),
+                    // The upstream answered but not in this language. Treat it
+                    // as missing rather than falling back silently to another
+                    // language, which would look like a rendering bug.
+                    None => (
+                        ItemTooltip::placeholder(item, locale, fallback_name, now),
+                        Freshness::Missing,
+                    ),
+                }
+            }
+            // A missing item is a permanent answer, so cache the placeholder.
+            // Without this, an id the upstream has dropped would be re-fetched
+            // on every hover, for ever.
+            Err(AppError::NotFound) => {
+                tracing::debug!(item = %item, region = %region, "item is not in the game data");
+                let placeholder = ItemTooltip::placeholder(item, locale, fallback_name, now);
+                self.store(locale, item, &placeholder, now).await;
+                (placeholder, Freshness::Missing)
+            }
+            Err(e) => {
+                tracing::warn!(item = %item, region = %region, error = %e, "item tooltip lookup failed");
+                (
+                    ItemTooltip::placeholder(item, locale, fallback_name, now),
+                    Freshness::Unavailable,
+                )
+            }
+        }
+    }
+
+    async fn store_all(&self, item: ItemId, localized: &[(Locale, ItemTooltip)], now: Millis) {
+        for (locale, tooltip) in localized {
+            self.store(*locale, item, tooltip, now).await;
+        }
+    }
+
+    /// A cache write failure must not fail the request that triggered it.
+    async fn store(&self, locale: Locale, item: ItemId, tooltip: &ItemTooltip, now: Millis) {
+        if let Ok(bytes) = serde_json::to_vec(tooltip) {
+            let key = ItemTooltip::cache_key(item, locale);
+            let _ = self.cache.put(&key, &bytes, now.plus_ms(self.ttl_ms)).await;
+        }
     }
 }

@@ -1,51 +1,49 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Account</h1>
+<h1>{{ "Account"|t }}</h1>
 
 {% if signed_in %}
-<section class="panel">
-  <h2>Signed in as {{ username }}</h2>
+<article>
+  <h2>{{ "Signed in as {}"|t|fill(username) }}</h2>
   <form hx-post="/account/logout">
     <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
-    <button type="submit">Sign out</button>
+    <button type="submit">{{ "Sign out"|t }}</button>
   </form>
-</section>
+</article>
 
-<section class="panel">
-  <h2>Linked accounts</h2>
+<article>
+  <h2>{{ "Linked accounts"|t }}</h2>
   {% if linked.is_empty() %}
-  <p class="muted">No linked accounts.</p>
+  <p class="muted">{{ "No linked accounts."|t }}</p>
   {% else %}
   <ul>{% for account in linked %}<li>{{ account }}</li>{% endfor %}</ul>
   {% endif %}
   <p class="hint">
-    Battle.net linking is not implemented in V0. The architecture is in place
-    (see <code>app-integrations/src/battlenet.rs</code>); the real OAuth flow
-    will be written against the current official documentation.
+    {{ "Battle.net linking is not implemented in V0. The architecture is in place (see {}); the real OAuth flow will be written against the current official documentation."|t|fill("app-integrations/src/battlenet.rs") }}
   </p>
-</section>
+</article>
 
 {% else %}
 <div class="two-col">
-  <section class="panel">
-    <h2>Sign in</h2>
+  <article>
+    <h2>{{ "Sign in"|t }}</h2>
     <form hx-post="/account/login" hx-target="#auth-error" hx-swap="innerHTML">
       <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
-      <label>Username <input type="text" name="username" autocomplete="username" required></label>
-      <label>Password <input type="password" name="password" autocomplete="current-password" required></label>
-      <button type="submit">Sign in</button>
+      <label>{{ "Username"|t }} <input type="text" name="username" autocomplete="username" required></label>
+      <label>{{ "Password"|t }} <input type="password" name="password" autocomplete="current-password" required></label>
+      <button type="submit">{{ "Sign in"|t }}</button>
     </form>
-  </section>
+  </article>
 
-  <section class="panel">
-    <h2>Register</h2>
+  <article>
+    <h2>{{ "Register"|t }}</h2>
     <form hx-post="/account/register" hx-target="#auth-error" hx-swap="innerHTML">
       <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
-      <label>Username <input type="text" name="username" autocomplete="username" required minlength="3" maxlength="32"></label>
-      <label>Password <input type="password" name="password" autocomplete="new-password" required minlength="8"></label>
-      <button type="submit">Create account</button>
+      <label>{{ "Username"|t }} <input type="text" name="username" autocomplete="username" required minlength="3" maxlength="32"></label>
+      <label>{{ "Password"|t }} <input type="password" name="password" autocomplete="new-password" required minlength="8"></label>
+      <button type="submit">{{ "Create account"|t }}</button>
     </form>
-  </section>
+  </article>
 </div>
 <div id="auth-error"></div>
 {% endif %}

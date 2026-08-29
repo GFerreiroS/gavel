@@ -3,12 +3,10 @@
 //! Note the trait shape: `fn ... -> impl Future<Output = _> + Send` rather than
 //! `async fn` or `#[async_trait]`. That keeps the call allocation-free (no
 //! `Box<dyn Future>` per task placement) and keeps the trait usable from a
-//! `no_std` executor such as embassy. Implementations may still be written as
-//! plain `async fn`.
+//! trait object-free and cheap. Implementations may still be written as plain
+//! `async fn`.
 
-use core::future::Future;
-
-use alloc::vec::Vec;
+use std::future::Future;
 
 use crate::error::SchedulerError;
 use crate::ids::NodeId;
@@ -29,7 +27,7 @@ pub fn schedulable<'a>(nodes: &'a [Node], _task: &Task) -> Vec<&'a Node> {
     nodes.iter().filter(|n| n.is_schedulable()).collect()
 }
 
-/// Fewest running tasks wins; ties broken by more capable hardware, then by id
+/// Fewest running tasks wins; ties broken by greater worker capacity, then by id
 /// so the result is deterministic and therefore testable.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct LeastLoaded;
@@ -42,7 +40,7 @@ impl Scheduler for LeastLoaded {
                 (
                     n.load.running_tasks,
                     n.load.load_percent,
-                    core::cmp::Reverse(n.capabilities.compute_weight()),
+                    std::cmp::Reverse(n.capabilities.compute_weight()),
                     n.id.get(),
                 )
             })
@@ -55,10 +53,9 @@ impl Scheduler for LeastLoaded {
 /// spread obvious in the UI while developing.
 ///
 /// Deliberately stateless. An earlier version held an `AtomicUsize` cursor,
-/// which does not compile for `riscv32imc-unknown-none-elf` -- the ESP32-C3
-/// has no atomic instructions at all. Deriving the slot from the task id needs
-/// no shared mutable state, works on every target, and has the bonus property
-/// that two schedulers looking at the same cluster agree on the answer.
+/// which made two coordinators looking at the same cluster disagree about the
+/// answer. Deriving the slot from the task id needs no shared mutable state and
+/// is reproducible, which is what makes placement testable.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RoundRobin;
 

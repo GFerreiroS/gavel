@@ -3,13 +3,10 @@
 //! These live in `cluster-core` rather than in the application layer on
 //! purpose: jobs, tasks, failures and events are cluster concepts, and the
 //! runtime must be able to durably record them without depending on anything
-//! application-shaped. `storage` implements them over SQLite today; a future
-//! node might implement them over NVS or over replicated cluster storage.
+//! application-shaped. `storage` implements them over SQLite today; another
+//! adapter could implement them over a shared database.
 
-use core::future::Future;
-
-use alloc::string::String;
-use alloc::vec::Vec;
+use std::future::Future;
 use thiserror::Error;
 
 use crate::event::EventRecord;
@@ -119,7 +116,7 @@ pub trait EventLog: Send + Sync + 'static {
 ///
 /// Today that means role assignments, which are mutable at runtime and must
 /// survive a restart: a node keeps its identity *and* the roles it was given
-/// (CLAUDE.md 19/26). Bundling the three stores behind one supertrait keeps the
+/// Bundling the three stores behind one supertrait keeps the
 /// runtime to a single store type parameter.
 pub trait ClusterStore: JobStore + EventLog {
     /// Record the roles a node currently holds.

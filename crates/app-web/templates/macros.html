@@ -1,0 +1,123 @@
+{#
+  Shared item-tooltip markup.
+
+  Used from two places: inlined into a page next to the icon it describes, and
+  returned on its own by /wow/item/{id}/tooltip for the icons whose tooltip was
+  not in the cache when the page was rendered.
+#}
+
+{% macro tooltip_card(tip) %}
+<div class="tip-card quality-{{ tip.quality }}" lang="{{ tip.lang }}">
+  <p class="tip-name">{{ tip.name }}</p>
+
+  {% if let Some(line) = tip.item_level %}<p class="tip-line">{{ line }}</p>{% endif %}
+  {% if let Some(line) = tip.binding %}<p class="tip-line">{{ line }}</p>{% endif %}
+  {% if let Some(line) = tip.unique %}<p class="tip-line">{{ line }}</p>{% endif %}
+  {% if let Some(line) = tip.type_line %}<p class="tip-line muted">{{ line }}</p>{% endif %}
+  {% if let Some(line) = tip.required_level %}<p class="tip-line">{{ line }}</p>{% endif %}
+
+  {% for stat in tip.stats %}<p class="tip-line tip-stat">{{ stat }}</p>{% endfor %}
+  {% for effect in tip.effects %}<p class="tip-line tip-effect">{{ effect }}</p>{% endfor %}
+  {# Under the effect, which is where the game draws a gem's own requirement. #}
+  {% if let Some(line) = tip.required_item_level %}<p class="tip-line">{{ line }}</p>{% endif %}
+
+  {% if let Some(line) = tip.crafting_reagent %}<p class="tip-line muted">{{ line }}</p>{% endif %}
+  {% if let Some(line) = tip.flavor %}<p class="tip-line tip-flavor">"{{ line }}"</p>{% endif %}
+  {% if let Some(line) = tip.sell_price %}<p class="tip-line muted">{{ line }}</p>{% endif %}
+
+  {% if let Some(line) = tip.rank_line %}<p class="tip-line tip-rank">{{ line }}</p>{% endif %}
+  {% if let Some(note) = tip.note %}<p class="tip-line tip-note">{{ note }}</p>{% endif %}
+</div>
+{% endmacro %}
+
+{#
+  An item icon that shows its tooltip on hover.
+
+  The tooltip is already in the page whenever the cache had it at render time,
+  which is the normal case -- then hovering costs nothing at all. Only the
+  cold-cache path carries the hx-* attributes and fetches on first hover.
+#}
+{% macro item_icon(item_id, name, icon, size, tooltip) %}
+<span class="tip" tabindex="0" aria-label='{{ "Item details for {}"|t|fill(name) }}'
+      {% if tooltip.is_none() %}hx-get="/wow/item/{{ item_id }}/tooltip"
+      hx-trigger="mouseenter once, focus once"
+      hx-target="find .tip-panel"
+      hx-swap="innerHTML"{% endif %}>
+  <img class="item-icon{% if size > 40 %} lg{% endif %}" src="{{ icon }}"
+       alt="" width="{{ size }}" height="{{ size }}" loading="lazy">
+  <span class="tip-panel" role="tooltip">
+    {%- if let Some(tip) = tooltip -%}
+    {% call tooltip_card(tip) %}
+    {%- else -%}
+    <span class="tip-loading">{{ "Loading…"|t }}</span>
+    {%- endif -%}
+  </span>
+</span>
+{% endmacro %}
+
+{#
+  One market as a card: the item, and a column of figures per quality rank.
+
+  Shared by the consumables and reagents pages. They group differently -- by
+  raid role and by profession -- but a market is a market, and two copies of
+  this would drift the first time a column was added.
+#}
+{% macro item_card(card, baseline_days) %}
+<article class="item-card">
+  {# Fixed height, icon and text side by side: cards sit in a grid, and a name
+     that wraps to two lines must not push this card's prices a line below its
+     neighbours'. The name is clamped to two lines for the same reason. #}
+  <header>
+    {% if let Some(icon) = card.icon %}
+    {% call item_icon(card.tooltip_item_id, card.name, icon, 40, card.tooltip) %}
+    {% endif %}
+    <div class="item-head-text">
+      <h3 title="{{ card.name }}">{{ card.name }}</h3>
+      <span class="sub">
+        {%- if let Some(material) = card.material -%}
+        {{ material }}
+        {%- else -%}
+        {{ card.category|t }}{% if card.stat != "none" %} · {{ card.stat|t }}{% endif %}
+        {%- endif -%}
+      </span>
+    </div>
+  </header>
+
+  {% if card.any_data %}
+  <div class="rank-cols cols-{{ card.columns.len() }}">
+    {% for col in card.columns %}
+    <div class="rank-col">
+      {# "vs usual" rides on the label line rather than between the price and
+         the figures below it: it is present on some ranks and not others, and
+         a line that comes and goes knocks every column out of alignment. #}
+      <span class="rank-head">
+        <span class="rank-label">{{ col.label }}</span>
+        {% if col.has_data && (col.cheap || col.dear) %}
+        <span class="delta {% if col.cheap %}down{% else %}up{% endif %}"
+              title='{{ "Against the average of the last {} days"|t|fill(baseline_days) }}'>
+          {%- if col.dear %}+{% endif %}{{ col.delta_percent }}%
+        </span>
+        {% endif %}
+      </span>
+      {% if col.has_data %}
+      <span class="now">{{ col.current }}</span>
+      <dl class="rank-stats">
+        <dt>{{ "Avg"|t }}</dt><dd>{{ col.mean }}</dd>
+        <dt>{{ "Low"|t }}</dt><dd>{{ col.low }} <small class="muted">{{ col.low_when }}</small></dd>
+        <dt>{{ "High"|t }}</dt><dd>{{ col.high }} <small class="muted">{{ col.high_when }}</small></dd>
+        <dt>{{ "Stock"|t }}</dt><dd>{{ col.quantity }}</dd>
+      </dl>
+      <a class="rank-link outline secondary" role="button" href="/wow/item/{{ col.item_id }}">{{ "Stats & graphs"|t }} →</a>
+      {% else %}
+      <p class="muted rank-empty">{{ "Not listed."|t }}</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {# The snapshot age is the page's, not the card's: every card here was
+     priced from the same collection cycle, so it is stated once above. #}
+  {% else %}
+  <p class="muted">{{ "No observations yet."|t }}</p>
+  {% endif %}
+</article>
+{% endmacro %}

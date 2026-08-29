@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% import "macros.html" as tips %}
+{% block content %}
+<h1>{{ "Auction House"|t }}</h1>
+<p class="hint">
+  {{ "Every tracked market lives here. Prices come from the Battle.net auction-house API and are recorded on every collection cycle."|t }}
+</p>
+
+{# The choice is made once, here, and carried into every category below: an
+   expansion and a region picked separately per category is how you end up
+   comparing two different markets without noticing. #}
+<form class="toolbar" method="get" action="{{ auctions.picker.action }}">
+  {% if auctions.picker.has_expansions() %}
+  <label>
+    <span>{{ "Expansion"|t }}</span>
+    {# Grouped rather than badged: which expansions are still being collected
+       is what you need to know before choosing. #}
+    <select name="expansion">
+      {% if !auctions.picker.live_expansions.is_empty() %}
+      <optgroup label='{{ "Live"|t }}'>
+        {% for opt in auctions.picker.live_expansions %}
+        <option value="{{ opt.value }}"{% if opt.selected %} selected{% endif %}>{{ opt.label }}</option>
+        {% endfor %}
+      </optgroup>
+      {% endif %}
+      {% if !auctions.picker.archived_expansions.is_empty() %}
+      <optgroup label='{{ "Archived"|t }}'>
+        {% for opt in auctions.picker.archived_expansions %}
+        <option value="{{ opt.value }}"{% if opt.selected %} selected{% endif %}>{{ opt.label }}</option>
+        {% endfor %}
+      </optgroup>
+      {% endif %}
+    </select>
+  </label>
+  {% endif %}
+  <label>
+    <span>{{ "Region"|t }}</span>
+    <select name="region" {% if auctions.picker.single_region %}disabled{% endif %}>
+      {% for opt in auctions.picker.regions %}
+      <option value="{{ opt.value }}"{% if opt.selected %} selected{% endif %}>{{ opt.label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {# The comparison window belongs beside the expansion and the region for the
+     same reason they are here: it changes the +/-% on every price under this
+     tab, and one page comparing against a week while another compares against
+     a month is two different answers to the same question. #}
+  <label>
+    <span>{{ "Compare against"|t }}</span>
+    <select name="baseline">
+      {% for opt in auctions.baselines %}
+      <option value="{{ opt.days }}"{% if opt.selected %} selected{% endif %}>{{ opt.label|t }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">{{ "Apply"|t }}</button>
+</form>
+<small class="hint toolbar-note">
+  {{ "Every price carries a +/− against its own average over the comparison window: −20% means it is a fifth cheaper than usual for the last {} days. A short window follows the market; a long one says whether today is a good day to buy."|t|fill(auctions.baseline_days) }}
+  {% if auctions.picker.single_region %}
+  {{ "This instance only collects one region. Start it with --market-regions eu,us,kr,tw to offer more."|t }}
+  {% else %}
+  {{ "Prices are region-wide and independent of the language, which is set in the top bar."|t }}
+  {% endif %}
+</small>
+
+{% if auctions.archived %}
+<div class="alert alert-archived" role="status">
+  <strong>{{ "{} is archived."|t|fill(auctions.expansion) }}</strong>
+  {{ "These prices are kept for reference and are no longer collected or updated."|t }}
+</div>
+{% endif %}
+
+<div class="stat-grid">
+  <div class="stat"><span class="label">{{ "Expansion"|t }}</span><span class="value">{{ auctions.expansion }}</span></div>
+  <div class="stat"><span class="label">{{ "Region"|t }}</span><span class="value">{{ auctions.region }}</span></div>
+  <div class="stat"><span class="label">{{ "Tracked items"|t }}</span><span class="value">{{ auctions.tracked_items }}</span></div>
+  <div class="stat"><span class="label">{{ "With data"|t }}</span><span class="value">{{ auctions.samples_held }}</span></div>
+  <div class="stat"><span class="label">{{ "Last snapshot"|t }}</span><span class="value">{{ auctions.last_observed }}</span></div>
+</div>
+
+<div class="card-grid">
+  {% for category in auctions.categories %}
+  <article class="item-card">
+    <header>
+      <div class="item-head-text">
+        <h3>{{ category.name|t }}</h3>
+        <span class="sub">{{ category.scope|t }}</span>
+      </div>
+    </header>
+    <p class="muted">{{ category.summary|t }}</p>
+    <div class="rank-cols cols-2">
+      <div class="rank-col">
+        <span class="rank-label">{{ "Tracked items"|t }}</span>
+        <span class="now">{{ category.tracked_items }}</span>
+      </div>
+      <div class="rank-col">
+        <span class="rank-label">{{ "Status"|t }}</span>
+        <span class="now">
+          {% if category.live %}<span class="tag ok">{{ "live"|t }}</span>
+          {% else %}<span class="tag">{{ "archived"|t }}</span>{% endif %}
+        </span>
+      </div>
+    </div>
+    <a class="rank-link outline secondary" role="button" href="{{ category.href }}">{{ "Open"|t }} →</a>
+  </article>
+  {% endfor %}
+</div>
+{% endblock %}

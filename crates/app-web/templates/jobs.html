@@ -1,33 +1,39 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Jobs</h1>
+<h1>{{ "Jobs"|t }}</h1>
 
-<section class="panel">
-  <h2>Submit a job</h2>
-  <form class="job-form" hx-post="/jobs" hx-target="#job-list" hx-swap="outerHTML">
+<article>
+  <h2>{{ "Submit a job"|t }}</h2>
+  {# Pico's `.grid`, not `role="group"`: a group joins bare controls into one
+     bar and has nowhere to put a label, which clipped the hint under "Size"
+     and stretched the submit button over the field beside it. #}
+  <form class="toolbar" hx-post="/jobs" hx-target="#job-list" hx-swap="outerHTML">
     <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
     <label>
-      Workload
+      {{ "Workload"|t }}
       <select name="kind">
-        <option value="sleep">Sleep (scheduling demo)</option>
-        <option value="primes">Primes (CPU)</option>
+        <option value="sleep">{{ "Sleep (scheduling demo)"|t }}</option>
+        <option value="primes">{{ "Primes (CPU)"|t }}</option>
       </select>
     </label>
     <label>
-      Size
+      {{ "Size"|t }}
       <input type="number" name="size" value="4000" min="1" required>
-      <small>milliseconds, or prime upper bound</small>
     </label>
     <label>
-      Tasks
+      {{ "Tasks"|t }}
       <input type="number" name="tasks" value="8" min="1" max="64" required>
     </label>
-    <button type="submit">Submit</button>
+    <button type="submit">{{ "Submit"|t }}</button>
   </form>
-</section>
+  {# Under the row, not inside a label: a hint in the flex line pushes its own
+     control off the baseline the others share, and inherits the label's
+     uppercase. #}
+  <small class="hint toolbar-note">{{ "milliseconds, or prime upper bound"|t }}</small>
+</article>
 
-<section class="panel">
-  <h2>Recent jobs</h2>
+<article>
+  <h2>{{ "Recent jobs"|t }}</h2>
   {% include "partials/jobs.html" %}
-</section>
+</article>
 {% endblock %}

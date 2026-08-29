@@ -6,10 +6,12 @@
 //! variant that reports the problem at the point of use.
 
 use app_core::error::{AppError, AppResult};
+use app_core::item::{ItemDetailProvider, LocalizedTooltips};
 use app_core::market::{
-    Alert, AlertSink, CommodityProvider, ItemId, MarketConfig, Region, Snapshot,
+    Alert, AlertSink, CommodityProvider, ItemId, MarketConfig, Realm, RealmAuctionProvider,
+    RealmId, RealmSnapshot, Region, Snapshot,
 };
-use app_integrations::{BlizzardAuctions, DiscordWebhook};
+use app_integrations::{BlizzardAuctions, BlizzardItems, BlizzardRealms, DiscordWebhook};
 use cluster_core::Millis;
 use cluster_local::SystemClock;
 
@@ -49,6 +51,89 @@ impl CommodityProvider for Commodities {
     }
 }
 
+/// The per-realm gear source. Same credentials as [`Commodities`], different
+/// endpoint and a price that means something different.
+pub enum RealmAuctions {
+    Live(Box<BlizzardRealms<SystemClock>>),
+    Unconfigured,
+}
+
+impl RealmAuctionProvider for RealmAuctions {
+    fn provider_name(&self) -> &'static str {
+        match self {
+            RealmAuctions::Live(inner) => inner.provider_name(),
+            RealmAuctions::Unconfigured => "unconfigured",
+        }
+    }
+
+    fn is_configured(&self) -> bool {
+        matches!(self, RealmAuctions::Live(_))
+    }
+
+    async fn auctions(
+        &self,
+        region: Region,
+        realm: RealmId,
+        wanted: &[ItemId],
+        if_modified_since: Option<Millis>,
+    ) -> AppResult<RealmSnapshot> {
+        match self {
+            RealmAuctions::Live(inner) => {
+                inner
+                    .auctions(region, realm, wanted, if_modified_since)
+                    .await
+            }
+            RealmAuctions::Unconfigured => Err(unconfigured()),
+        }
+    }
+
+    async fn realms(&self, region: Region, wanted: &[RealmId]) -> AppResult<Vec<Realm>> {
+        match self {
+            RealmAuctions::Live(inner) => inner.realms(region, wanted).await,
+            RealmAuctions::Unconfigured => Err(unconfigured()),
+        }
+    }
+}
+
+fn unconfigured() -> AppError {
+    AppError::Integration(
+        "Battle.net credentials are not configured: set BLIZZARD_CLIENT_ID and \
+         BLIZZARD_CLIENT_SECRET"
+            .into(),
+    )
+}
+
+/// Static item data for tooltips. Shares the credential check with
+/// [`Commodities`]: one set of Battle.net credentials serves both.
+pub enum Items {
+    Live(Box<BlizzardItems<SystemClock>>),
+    Unconfigured,
+}
+
+impl ItemDetailProvider for Items {
+    fn provider_name(&self) -> &'static str {
+        match self {
+            Items::Live(inner) => inner.provider_name(),
+            Items::Unconfigured => "unconfigured",
+        }
+    }
+
+    fn is_configured(&self) -> bool {
+        matches!(self, Items::Live(_))
+    }
+
+    async fn tooltips(&self, region: Region, item: ItemId) -> AppResult<LocalizedTooltips> {
+        match self {
+            Items::Live(inner) => inner.tooltips(region, item).await,
+            Items::Unconfigured => Err(AppError::Integration(
+                "Battle.net credentials are not configured: set BLIZZARD_CLIENT_ID and \
+                 BLIZZARD_CLIENT_SECRET"
+                    .into(),
+            )),
+        }
+    }
+}
+
 /// Outbound alert channel. Alerts are always stored and shown in the UI; this
 /// is the extra push.
 pub enum Alerts {
@@ -66,9 +151,15 @@ impl AlertSink for Alerts {
 }
 
 /// Build the market configuration from CLI settings.
-pub fn config(regions: Vec<Region>, interval_minutes: u64, retain_days: u64) -> MarketConfig {
+pub fn config(
+    regions: Vec<Region>,
+    realms: Vec<(Region, RealmId)>,
+    interval_minutes: u64,
+    retain_days: u64,
+) -> MarketConfig {
     MarketConfig {
         regions,
+        realms,
         collect_interval_ms: interval_minutes.max(1) * 60 * 1000,
         retain_ms: retain_days.max(1) * 24 * 60 * 60 * 1000,
         ..MarketConfig::default()

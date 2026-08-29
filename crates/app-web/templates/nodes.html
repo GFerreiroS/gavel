@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<h1>Nodes</h1>
-<p class="hint">Capability profiles are mixed on purpose: scheduling must not assume identical hardware.</p>
+<h1>{{ "Nodes"|t }}</h1>
+<p class="hint">{{ "Capability profiles are mixed on purpose: scheduling must not assume identical hardware."|t }}</p>
 {% include "partials/nodes.html" %}
 {% endblock %}

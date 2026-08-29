@@ -19,7 +19,7 @@ path = "src/main.rs"
 app-core = { workspace = true }
 app-integrations = { workspace = true }
 app-web = { workspace = true }
-cluster-core = { workspace = true, features = ["std"] }
+cluster-core = { workspace = true }
 cluster-local = { workspace = true }
 storage = { workspace = true }
 

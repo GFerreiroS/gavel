@@ -1,13 +1,13 @@
 //! The single-item page: every statistic we hold, plus charts.
 
 use app_core::market::{
-    Catalog, CatalogItem, ItemId, Region, analysis, analysis::WEEKDAY_NAMES, downsample,
+    Catalog, CatalogItem, ItemId, ItemKind, analysis, analysis::WEEKDAY_NAMES, downsample,
 };
 use app_core::repo::{PriceRepository, Store};
 use app_core::{AppError, Ports};
 use askama::Template;
 use axum::Extension;
-use axum::extract::{Path, State};
+use axum::extract::{OriginalUri, Path, State};
 use axum::http::HeaderMap;
 use axum::response::Html;
 use cluster_core::Millis;
@@ -15,6 +15,8 @@ use cluster_core::Millis;
 use crate::chart::{self, Series, Unit};
 use crate::csrf::Csrf;
 use crate::error::WebResult;
+use crate::i18n::filters;
+use crate::prefs::MarketPrefs;
 use crate::render::page;
 use crate::session::current_user;
 use crate::views::{ItemDetail, Layout, PatchStatRow, TrendView};
@@ -32,6 +34,8 @@ struct ItemPage {
 pub async fn detail<E: Ports>(
     State(env): State<E>,
     Extension(csrf): Extension<Csrf>,
+    Extension(prefs): Extension<MarketPrefs>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     Path(item_id): Path<u32>,
 ) -> WebResult<Html<String>> {
@@ -43,27 +47,33 @@ pub async fn detail<E: Ports>(
         .map(|(c, i)| ((*c).clone(), (*i).clone()))
         .ok_or(AppError::NotFound)?;
 
-    let detail = build(&env, &catalog, &entry, item).await?;
+    let detail = build(&env, prefs, &catalog, &entry, item).await?;
     let user = current_user(&env, &headers).await?;
-    page(&ItemPage {
-        layout: Layout::new(
-            env.config(),
-            &detail.name,
-            "/wow/consumables",
-            user.map(|u| u.username),
-            csrf.0.clone(),
-        ),
-        item: detail,
-    })
+    page(
+        &ItemPage {
+            layout: Layout::new(
+                env.config(),
+                prefs.locale,
+                &detail.name,
+                "/wow/auctions",
+                &uri,
+                user.map(|u| u.username),
+                csrf.0.clone(),
+            ),
+            item: detail,
+        },
+        prefs.locale,
+    )
 }
 
 async fn build<E: Ports>(
     env: &E,
+    prefs: MarketPrefs,
     catalog: &Catalog,
     entry: &CatalogItem,
     item: ItemId,
 ) -> WebResult<ItemDetail> {
-    let region = env.market().regions.first().copied().unwrap_or(Region::Eu);
+    let region = prefs.region;
     let prices = env.store().prices();
     let now = env.now();
 
@@ -183,17 +193,36 @@ async fn build<E: Ports>(
         cheaper: t.percent < 0,
     };
 
+    let tooltip = super::tooltip::cached_one(env, prefs, entry, item, now).await;
+    let (section, section_path) = match entry.kind {
+        ItemKind::Consumable => ("Consumables", "/wow/consumables"),
+        ItemKind::Reagent => ("Reagents", "/wow/auctions/reagents"),
+        ItemKind::Enchant => ("Enchants", "/wow/auctions/enchants"),
+        ItemKind::Gem => ("Gems", "/wow/auctions/gems"),
+        ItemKind::Boe => ("Bind-on-equip gear", "/wow/auctions/gear"),
+        ItemKind::Recipe => ("Recipes", "/wow/auctions/recipes"),
+    };
+
     Ok(ItemDetail {
         item_id: item.get(),
-        name: entry.display_name(item),
+        // The localised name when the tooltip cache has it; the catalog's
+        // English otherwise. The rank suffix stays ours either way.
+        name: match (&tooltip, entry.ranks.len(), entry.rank_of(item)) {
+            (Some(tip), total, Some(rank)) if total > 1 => format!("{} (R{rank})", tip.name),
+            (Some(tip), _, _) => tip.name.clone(),
+            (None, _, _) => entry.display_name(item),
+        },
         icon: entry.icon_url(),
+        tooltip,
         category: entry.category.label(),
         audience: entry.audience.as_str(),
         stat: entry.stat.as_str(),
         rank: entry.rank_of(item).unwrap_or(1),
         ranks_total: entry.ranks.len(),
         expansion: catalog.expansion.clone(),
-        catalog_id: catalog.id.clone(),
+        section,
+        section_href: format!("{section_path}?expansion={}", catalog.id),
+        expansion_href: format!("/wow/auctions?expansion={}", catalog.id),
         region: region.to_string().to_uppercase(),
         archived: !catalog.is_active(),
 
@@ -242,12 +271,14 @@ async fn build<E: Ports>(
         weekday_chart,
         series_labels: all_ranks
             .iter()
-            .map(|(rank, _)| {
-                if entry.ranks.len() > 1 {
+            .enumerate()
+            .map(|(slot, (rank, _))| crate::views::SeriesKey {
+                colour: crate::chart::series_colour(slot),
+                label: if entry.ranks.len() > 1 {
                     format!("Rank {rank}")
                 } else {
                     "Price".into()
-                }
+                },
             })
             .collect(),
         patches,

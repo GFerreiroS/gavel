@@ -213,7 +213,11 @@ fn catalog_lookups_resolve_ranks() {
     assert_eq!(stone.audience, Audience::Melee);
 
     assert!(catalog.find(ItemId(1)).is_none());
-    assert_eq!(catalog.index().len(), catalog.tracked_ids().len());
+    // The index spans both markets; the two filters partition it.
+    assert_eq!(
+        catalog.index().len(),
+        catalog.tracked_ids().len() + catalog.realm_tracked_ids().len()
+    );
 }
 
 #[test]
@@ -573,4 +577,187 @@ async fn re_collecting_the_same_hour_does_not_alert_twice() {
         .await
         .unwrap();
     assert_eq!(prices.alerts.lock().unwrap().len(), before);
+}
+
+// --- reagents --------------------------------------------------------------
+// The catalogue carries two kinds of market. They share collection and
+// storage, and are told apart only by `ItemKind`, so the filters that separate
+// them are worth pinning down.
+
+#[test]
+fn the_embedded_catalog_carries_every_kind() {
+    use app_core::market::ItemKind;
+
+    let set = CatalogSet::embedded();
+    let active = set.active().expect("an active catalog");
+
+    let mut total = 0;
+    for kind in ItemKind::ALL {
+        let count = active.of_kind(kind).count();
+        assert!(count > 0, "{} is tracked", kind.as_str());
+        total += count;
+    }
+    // Every entry has exactly one kind, so the kinds sum to the catalog.
+    assert_eq!(total, active.items.len());
+    assert!(
+        active.of_kind(ItemKind::Reagent).count() > 100,
+        "the reagent catalog covers the expansion rather than a hand-picked few"
+    );
+}
+
+#[test]
+fn reagents_do_not_leak_onto_the_consumables_page() {
+    use app_core::market::{Audience, ItemKind};
+
+    let set = CatalogSet::embedded();
+    let active = set.active().expect("an active catalog");
+    // Reagents, enchants and gems are all `common` audience, so an audience
+    // filter alone would show them next to the flasks.
+    for item in active.by_audience(Audience::Common) {
+        assert_eq!(
+            item.kind,
+            ItemKind::Consumable,
+            "{} is not a consumable",
+            item.name
+        );
+    }
+}
+
+/// A profession belongs to a reagent, and a slot to anything worn. Either one on
+/// the wrong kind is an item that vanishes from its own page: the grouping
+/// filters on both, so a gem carrying a slot would be listed under an enchant
+/// heading and nowhere else.
+#[test]
+fn only_reagents_carry_a_profession_and_only_enchants_carry_a_slot() {
+    use app_core::market::ItemKind;
+
+    let set = CatalogSet::embedded();
+    let active = set.active().expect("an active catalog");
+    for item in &active.items {
+        let (profession, slot) = (item.profession.is_some(), item.slot.is_some());
+        let (wants_profession, wants_slot) = match item.kind {
+            // A recipe belongs to the profession that reads it, which for
+            // once is Blizzard's own subclass rather than a judgement.
+            ItemKind::Reagent | ItemKind::Recipe => (true, false),
+            // An enchant carries the slot it applies to; a BoE the slot it
+            // occupies. Same field, same meaning.
+            ItemKind::Enchant | ItemKind::Boe => (false, true),
+            ItemKind::Consumable | ItemKind::Gem => (false, false),
+        };
+        assert_eq!(
+            profession,
+            wants_profession,
+            "{} ({}) has the wrong profession",
+            item.name,
+            item.kind.as_str()
+        );
+        assert_eq!(
+            slot,
+            wants_slot,
+            "{} ({}) has the wrong slot",
+            item.name,
+            item.kind.as_str()
+        );
+    }
+}
+
+#[test]
+fn professions_partition_the_recipes() {
+    use app_core::market::{ALL_PROFESSIONS, ItemKind};
+
+    let set = CatalogSet::embedded();
+    let active = set.active().expect("an active catalog");
+    let grouped: usize = ALL_PROFESSIONS
+        .into_iter()
+        .map(|p| active.recipes_for(p).count())
+        .sum();
+    assert_eq!(
+        grouped,
+        active.of_kind(ItemKind::Recipe).count(),
+        "every recipe appears in exactly one profession group"
+    );
+}
+
+#[test]
+fn slots_partition_the_enchants() {
+    use app_core::market::{ALL_SLOTS, ItemKind};
+
+    let set = CatalogSet::embedded();
+    let active = set.active().expect("an active catalog");
+    let grouped: usize = ALL_SLOTS
+        .into_iter()
+        .map(|s| active.by_slot(s).count())
+        .sum();
+    assert_eq!(
+        grouped,
+        active.of_kind(ItemKind::Enchant).count(),
+        "every enchant appears in exactly one slot group"
+    );
+}
+
+#[test]
+fn professions_partition_the_reagents() {
+    use app_core::market::{ALL_PROFESSIONS, ItemKind};
+
+    let set = CatalogSet::embedded();
+    let active = set.active().expect("an active catalog");
+    let grouped: usize = ALL_PROFESSIONS
+        .into_iter()
+        .map(|p| active.by_profession(p).count())
+        .sum();
+    assert_eq!(
+        grouped,
+        active.of_kind(ItemKind::Reagent).count(),
+        "every reagent appears in exactly one profession group"
+    );
+}
+
+/// The two markets are separate endpoints, separate tables and separate
+/// meanings. A BoE reaching the commodity filter would be an item asked for
+/// in a payload that can never contain it.
+#[test]
+fn per_realm_items_stay_out_of_the_commodity_filter() {
+    use app_core::market::ItemKind;
+
+    let set = CatalogSet::embedded();
+    let active = set.active().expect("an active catalog");
+    let commodities = active.tracked_ids();
+    let realm = active.realm_tracked_ids();
+
+    assert!(!realm.is_empty(), "BoEs are tracked");
+    for id in &realm {
+        assert!(
+            !commodities.contains(id),
+            "{id:?} is per-realm but reached the commodity filter"
+        );
+    }
+    for item in active.items.iter().filter(|i| i.kind == ItemKind::Boe) {
+        for id in item.item_ids() {
+            assert!(
+                realm.contains(&id),
+                "{} is missing from the realm filter",
+                item.name
+            );
+        }
+    }
+    assert_eq!(
+        commodities.len() + realm.len(),
+        active.index().len(),
+        "every tracked id belongs to exactly one market"
+    );
+}
+
+#[test]
+fn tracked_ids_cover_both_kinds_without_duplicates() {
+    let set = CatalogSet::embedded();
+    let active = set.active().expect("an active catalog");
+    let ids = active.tracked_ids();
+    let mut sorted = ids.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(ids.len(), sorted.len(), "an item id is tracked once");
+    assert!(
+        ids.len() > 300,
+        "every kind is collected, not just consumables"
+    );
 }

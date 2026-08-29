@@ -2,11 +2,14 @@
 #![forbid(unsafe_code)]
 
 mod assets;
+mod cards;
 mod chart;
 mod csrf;
 mod error;
 mod format;
+mod i18n;
 mod metrics;
+mod prefs;
 mod render;
 mod routes;
 mod session;

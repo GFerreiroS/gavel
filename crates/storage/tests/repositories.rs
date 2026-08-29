@@ -474,3 +474,40 @@ async fn alerts_round_trip_and_support_the_cooldown() {
     assert_eq!(recent.len(), 1);
     assert_eq!(recent[0], alert, "the alert survives the round trip intact");
 }
+
+/// An in-memory database must outlive the recycling of its pool.
+///
+/// A `mode=memory` SQLite database exists only while some connection to it is
+/// open. sqlx recycles connections at `max_lifetime` -- 30 minutes by default
+/// -- and when the last one went, the whole schema went with it: the next
+/// query failed with "no such table", half an hour into a run that had
+/// reported a clean start.
+///
+/// The lifetime is squeezed to milliseconds here so the failure takes a second
+/// rather than half an hour.
+#[tokio::test]
+async fn an_in_memory_database_survives_connection_recycling() {
+    let mut config = SqliteConfig::in_memory();
+    config.max_lifetime_ms = Some(50);
+    let store = SqliteStore::connect(&config).await.expect("connect");
+
+    store
+        .kv()
+        .put("canary", b"present")
+        .await
+        .expect("write before recycling");
+
+    // Comfortably longer than the lifetime above, so every connection the pool
+    // started with has been retired and replaced at least once.
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+
+    assert_eq!(
+        store
+            .kv()
+            .get("canary")
+            .await
+            .expect("read after recycling"),
+        Some(b"present".to_vec()),
+        "the schema and its rows outlive the connections that created them"
+    );
+}

@@ -20,7 +20,7 @@ use crate::clock::SystemClock;
 use crate::config::LocalClusterConfig;
 use crate::supervisor::{Command, Supervisor};
 
-/// Simulated cluster running inside this process.
+/// Cluster coordinator with optional in-process and remote workers.
 ///
 /// Cheap to clone; every clone talks to the same supervisor task.
 pub struct LocalCluster {
@@ -64,6 +64,7 @@ impl LocalCluster {
     {
         let (command_tx, command_rx) = mpsc::channel(64);
         let (event_tx, _) = broadcast::channel(config.event_buffer.max(16));
+        let listen = config.node_listen;
         // Durable writes are drained by their own task so the supervisor never
         // blocks on the store while there are messages to process.
         let (writer, _writer_task) = crate::persistence::Writer::spawn(store.clone());
@@ -78,6 +79,27 @@ impl LocalCluster {
             event_tx.clone(),
         );
         let handle = tokio::spawn(supervisor.run());
+
+        // Remote workers, if this deployment expects any. Bound before the
+        // workers can connect and independent of the supervisor task, so a
+        // worker that dials in during startup simply waits in the accept queue
+        // rather than being refused.
+        if let Some(address) = listen {
+            let commands = command_tx.clone();
+            tokio::spawn(async move {
+                match tokio::net::TcpListener::bind(address).await {
+                    Ok(listener) => crate::remote::serve(listener, commands).await,
+                    // Not fatal: the in-process part of the cluster still runs,
+                    // and saying so beats exiting with a bind error on a port
+                    // the user may not have meant to use.
+                    Err(e) => tracing::error!(
+                        %address, error = %e,
+                        "could not listen for workers; only in-process ones can run"
+                    ),
+                }
+            });
+        }
+
         (
             Self {
                 commands: command_tx,

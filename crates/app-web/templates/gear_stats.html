@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% import "macros.html" as tips %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/wow/auctions">{{ "Auction House"|t }}</a></li>
+    <li><a href="{{ stats.section_href }}">{{ stats.section|t }}</a></li>
+    <li>{{ stats.name }}</li>
+  </ul>
+</nav>
+
+<div class="item-head">
+  {% if let Some(icon) = stats.icon %}
+  {% call tips::item_icon(stats.item_id, stats.name, icon, 56, stats.tooltip) %}
+  {% endif %}
+  <div>
+    <h1>{{ stats.name }}</h1>
+    <p class="muted">
+      {% if stats.item_level > 0 %}{{ "ilvl {}"|t|fill(stats.item_level) }} · {{ stats.upgrade }}{% endif %}
+      {% if !stats.slot.is_empty() %}{% if stats.item_level > 0 %} · {% endif %}{{ stats.slot|t }}{% endif %}
+    </p>
+  </div>
+</div>
+
+{# The other item levels of the same item. Each is its own market, so this is
+   navigation between markets rather than a filter within one. #}
+{% if !stats.siblings.is_empty() %}
+<div class="roles level-links">
+  {% for level in stats.siblings %}
+  {# The one being read is filled in; the rest are outlines, so the ladder
+     shows where you are without comparing eight labels. #}
+  <a class="chip{% if level.current %} on{% endif %}" role="button"
+     href="{{ level.href }}?region={{ stats.region }}&realm={{ stats.realm_slug }}"
+     {% if level.current %}aria-current="page"{% endif %}>
+    {{ "ilvl {}"|t|fill(level.item_level) }} · {{ level.upgrade }}
+  </a>
+  {% endfor %}
+</div>
+{% endif %}
+
+<form class="toolbar" method="get"
+      action="{% if stats.item_level > 0 %}/wow/gear/{{ stats.item_id }}/{{ stats.item_level }}{% else %}/wow/recipe/{{ stats.item_id }}{% endif %}">
+  <input type="hidden" name="region" value="{{ stats.region }}">
+  <label>
+    <span>{{ "Realm"|t }}</span>
+    <select name="realm">
+      <option value="">{{ "All realms"|t }}</option>
+      {% for realm in stats.realms %}
+      <option value="{{ realm.value }}"{% if realm.selected %} selected{% endif %}>{{ realm.region }} · {{ realm.name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">{{ "Apply"|t }}</button>
+</form>
+<small class="hint toolbar-note">
+  {% if let Some(realm) = stats.scope %}
+  {{ "Showing {} alone."|t|fill(realm) }}
+  {% else %}
+  {{ "Every realm, one line per region."|t }}
+  {% endif %}
+  {{ "Figures cover the last {} days."|t|fill(stats.window_days) }}
+</small>
+
+{% if stats.unlisted %}
+<p class="muted rank-empty">{{ "No listings in this snapshot."|t }}</p>
+{% else %}
+<div class="stat-grid">
+  <div class="stat"><span class="label">{{ "Cheapest"|t }}</span><span class="value">{{ stats.cheapest_now }}</span></div>
+  <div class="stat"><span class="label">{{ "Highest"|t }}</span><span class="value">{{ stats.highest_now }}</span></div>
+  <div class="stat"><span class="label">{{ "Cheapest seen"|t }}</span><span class="value">{{ stats.cheapest_ever }}</span></div>
+  <div class="stat"><span class="label">{{ "Highest seen"|t }}</span><span class="value">{{ stats.highest_ever }}</span></div>
+  <div class="stat"><span class="label">{{ "Listings"|t }}</span><span class="value">{{ stats.listings_now }}</span></div>
+  <div class="stat"><span class="label">{{ "Snapshot"|t }}</span><span class="value">{{ stats.observed }}</span></div>
+</div>
+
+<article>
+  <h2>{{ "What it has cost"|t }}</h2>
+  {{ stats.price_chart|safe }}
+  <p class="hint">{{ "The cheapest copy on sale, at each collection. Hover the chart for the exact value at a point in time."|t }}</p>
+</article>
+
+<article>
+  <h2>{{ "How many are for sale"|t }}</h2>
+  {{ stats.listings_chart|safe }}
+  <p class="hint">{{ "A price with two listings behind it is a different fact from the same price with forty."|t }}</p>
+</article>
+
+<article>
+  <h2>{{ "Sockets and tertiary stats"|t }}</h2>
+  {% if stats.modifiers.is_empty() %}
+  <p class="muted">{{ "None seen at this item level."|t }}</p>
+  {% else %}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>{{ "Bonus"|t }}</th><th>{{ "On sale now"|t }}</th>
+        <th>{{ "Seen over {} days"|t|fill(stats.window_days) }}</th><th>{{ "Share"|t }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for modifier in stats.modifiers %}
+      <tr>
+        <td>{{ modifier.name|t }}</td>
+        <td>{{ modifier.now }}</td>
+        <td>{{ modifier.seen }}</td>
+        <td>{{ modifier.share }}%</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  <p class="hint">
+    {# Said plainly, because the number invites the wrong reading: an auction
+       that sits unsold for six collections is six observations, not six
+       items. #}
+    {{ "These do not split the market -- a socketed piece is the same piece. \"Seen\" counts listing observations across {} snapshots, so an auction that sat unsold for six collections counts six times; it measures how common a bonus is, not how many were sold."|t|fill(stats.snapshots) }}
+  </p>
+</article>
+{% endif %}
+{% endblock %}

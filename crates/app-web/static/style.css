@@ -1,379 +1,456 @@
-/* Deliberately small and framework-free.
-   The whole stylesheet has to fit in ESP32 flash alongside everything else,
-   so: no reset library, no icon font, no web font. */
+/* Everything Pico has an opinion about is Pico's: colour, typography, forms,
+   buttons, tables, cards, nav, dropdowns. This file adds only what a CSS
+   framework cannot know about -- item quality colours, a price chart, the
+   grids this app lays content out in.
 
+   If a rule here is fighting Pico rather than extending it, the rule is wrong.
+   Every value below is derived from a `--pico-*` token so the two layers stay
+   in step through theme changes. */
+
+/* --- density -------------------------------------------------------------
+   Pico scales its root type with the viewport, 100% up to 131% at 1536px.
+   That is right for prose and wrong for a dashboard: at 125% a node grid and
+   a price table stop fitting on a screen. Pinning the root size opts out of
+   the scaling without overriding a single one of Pico's own rules. */
+:root { --pico-font-size: 100%; }
+
+/* --- domain colour -------------------------------------------------------
+   Item quality is the game's own palette. Players read these hues faster than
+   any label, so they are the one place this app overrides Pico's colours
+   outright rather than deriving from them. Light and dark need different
+   values only because several are unreadable on one background or the other. */
 :root {
-  --bg: #10131a;
-  --panel: #181c26;
-  --panel-2: #1f2430;
-  --line: #2b3242;
-  --text: #dfe4ee;
-  --muted: #8b93a7;
-  --accent: #5aa9e6;
-  --ok: #4ec9a0;
-  --warn: #e0b95c;
-  --bad: #e06c75;
+  --q-poor: #6f6f6f;
+  --q-common: #2a2f3c;
+  --q-uncommon: #128a12;
+  --q-rare: #1268c9;
+  --q-epic: #7a2ec4;
+  --q-legendary: #b85c00;
+  --q-artifact: #8a6f28;
+  --q-heirloom: #007f9f;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    --bg: #f5f6f9;
-    --panel: #ffffff;
-    --panel-2: #eef0f5;
-    --line: #d8dce6;
-    --text: #1b2030;
-    --muted: #5f6982;
-    --accent: #1f6fb2;
-    --ok: #128a63;
-    --warn: #8a6a12;
-    --bad: #b3392f;
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --q-poor: #9d9d9d;
+    --q-common: #e4e6ec;
+    --q-uncommon: #1eff00;
+    --q-rare: #4a9dff;
+    --q-epic: #b463f0;
+    --q-legendary: #ff8000;
+    --q-artifact: #e6cc80;
+    --q-heirloom: #00ccff;
   }
 }
 
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  background: var(--bg);
-  color: var(--text);
-  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+[data-theme="dark"] {
+  --q-poor: #9d9d9d;
+  --q-common: #e4e6ec;
+  --q-uncommon: #1eff00;
+  --q-rare: #4a9dff;
+  --q-epic: #b463f0;
+  --q-legendary: #ff8000;
+  --q-artifact: #e6cc80;
+  --q-heirloom: #00ccff;
 }
 
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-h1 { font-size: 1.5rem; margin: 0 0 1rem; }
-h2 { font-size: 1.05rem; margin: 0 0 .75rem; }
-h3 { font-size: 1rem; margin: 0; }
-code { background: var(--panel-2); padding: .1em .35em; border-radius: 3px; }
+.quality-poor { color: var(--q-poor); }
+.quality-common { color: var(--q-common); }
+.quality-uncommon { color: var(--q-uncommon); }
+.quality-rare { color: var(--q-rare); }
+.quality-epic { color: var(--q-epic); }
+.quality-legendary { color: var(--q-legendary); }
+.quality-artifact { color: var(--q-artifact); }
+.quality-heirloom { color: var(--q-heirloom); }
 
-/* --- chrome ------------------------------------------------------------- */
+/* --- text helpers -------------------------------------------------------- */
+.muted, .hint, .sub, .load-text, .rank-label { color: var(--pico-muted-color); }
+.hint, .sub, .load-text, .rank-label { font-size: .85em; }
+.good { color: var(--pico-ins-color); }
+.bad { color: var(--pico-del-color); }
+.now { font-size: 1.25rem; font-weight: 600; }
 
-.topbar {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 1rem;
-  padding: .75rem 1.25rem;
-  background: var(--panel);
-  border-bottom: 1px solid var(--line);
+/* --- layout grids --------------------------------------------------------
+   Pico's `.grid` is equal columns that collapse to one at every breakpoint.
+   These wrap by content width instead, which is what a wall of item cards or
+   node cards actually wants. */
+.card-grid, .node-grid {
+  display: grid;
+  gap: var(--pico-block-spacing-horizontal);
+  grid-template-columns: repeat(auto-fill, minmax(21rem, 1fr));
 }
-.brand { font-weight: 600; color: var(--text); }
-.topbar nav { display: flex; gap: .35rem; flex-wrap: wrap; }
-.topbar nav a {
-  padding: .3rem .7rem;
-  border-radius: 5px;
-  color: var(--muted);
-}
-.topbar nav a:hover { background: var(--panel-2); text-decoration: none; }
-.topbar nav a.active { background: var(--panel-2); color: var(--text); }
-.who { margin-left: auto; color: var(--muted); }
-.who .user { color: var(--text); }
-
-main { max-width: 1100px; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }
-
-footer {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 0 1.25rem 2rem;
-  color: var(--muted);
-  font-size: .8rem;
-  display: flex;
-  gap: .75rem;
-}
-
-.panel {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 1rem;
-  margin-bottom: 1.25rem;
-}
-
-.two-col { display: grid; gap: 1.25rem; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
-.muted { color: var(--muted); }
-.hint { color: var(--muted); font-size: .85rem; margin: 0 0 .75rem; }
-.bad { color: var(--bad); }
-.good { color: var(--ok); font-weight: 600; }
-
-/* --- stats -------------------------------------------------------------- */
-
 .stat-grid {
   display: grid;
-  gap: .75rem;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  margin-bottom: 1rem;
+  gap: var(--pico-block-spacing-horizontal);
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  margin-bottom: var(--pico-block-spacing-vertical);
 }
+/* Quality ranks sit side by side inside an item card, so the minimum has to
+   be small enough that two fit within one card's width -- at 11rem they
+   silently stacked, which reads as two separate items. */
+.rank-cols {
+  display: grid;
+  gap: .75rem;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+}
+.two-col {
+  display: grid;
+  gap: var(--pico-block-spacing-horizontal);
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+}
+
+/* A table wider than its column scrolls itself rather than the page. */
+.scroll-x { overflow-x: auto; }
+
+/* --- small compositions --------------------------------------------------
+   `.stat` and `.rank-col` are label-over-value pairs. Pico has no such
+   component, and a <dl> puts them side by side rather than stacked. */
+/* Each figure in its own tile. A row of bare label/value pairs reads as one
+   run-on sentence; boxing them makes the count of things being reported
+   obvious before any of them is read. */
 .stat {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: .7rem .85rem;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: .15rem;
+  padding: .55rem .7rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  background: var(--pico-card-background-color);
+}
+/* `align-items: start` matters: a flex column stretches its children, which
+   pulled the "vs usual" pill out to the full width of the column. An
+   inline-block does not opt out of that -- the alignment has to. */
+.rank-col { display: flex; flex-direction: column; align-items: flex-start; gap: .1rem; }
+/* The rank label and its "vs usual" figure share one line. The figure is on
+   some ranks and not others, and a line that appears only sometimes is what
+   knocked the columns of a card out of alignment with each other. */
+.rank-head { display: flex; align-items: baseline; gap: .4rem; }
+.delta {
+  font-size: .75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.delta.down { color: var(--pico-ins-color); }
+.delta.up { color: var(--q-legendary); }
+.stat .label, .rank-label {
+  font-size: .7rem;
+  text-transform: uppercase;
+  letter-spacing: .04em;
+  color: var(--pico-muted-color);
+}
+.stat .value { font-size: 1.15rem; font-weight: 600; line-height: 1.2; }
+
+/* --- chips ---------------------------------------------------------------
+   Role toggles: six per node card, several cards per row. Pico's buttons are
+   sized for page actions, and at that size a node grid stops fitting on a
+   screen, so these are deliberately smaller than anything Pico ships. */
+.chip {
+  /* Buttons inherit their size from the document, not from `--pico-font-size`
+     (that variable is the root scale), so this has to be set directly. */
+  font-size: .75rem;
+  margin: 0;
+  padding: .2rem .55rem;
+  width: auto;
+  border-radius: var(--pico-border-radius);
+  line-height: 1.4;
+}
+.roles, .controls { display: flex; flex-wrap: wrap; gap: .3rem; }
+.controls { margin-top: var(--pico-block-spacing-vertical); }
+.controls button { font-size: .75rem; margin: 0; width: auto; padding: .2rem .55rem; }
+
+/* --- form toolbars -------------------------------------------------------
+   A row of labelled controls ending in a button: an expansion picker, a job
+   submission. Pico has no component for it -- `role="group"` joins bare
+   controls and has nowhere to put a label, and `.grid` gives every child an
+   equal column, which turns "Apply" into the largest thing on the page. */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: .6rem .75rem;
+  margin-bottom: var(--pico-block-spacing-vertical);
+}
+.toolbar label {
   display: flex;
   flex-direction: column;
   gap: .2rem;
-}
-.stat .label { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .04em; }
-.stat .value { font-size: 1.15rem; font-weight: 600; }
-.status-healthy { color: var(--ok); }
-.status-degraded { color: var(--warn); }
-.status-down { color: var(--bad); }
-
-.role-bar { display: flex; flex-wrap: wrap; gap: .4rem; margin-bottom: 1.25rem; }
-.role-count {
-  font-size: .78rem;
-  padding: .2rem .55rem;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  background: var(--panel);
-  color: var(--muted);
-}
-.role-count.ok b { color: var(--ok); }
-.role-count.bad { border-color: var(--bad); }
-.role-count.bad b { color: var(--bad); }
-
-/* --- nodes -------------------------------------------------------------- */
-
-.node-grid {
-  display: grid;
-  gap: .85rem;
-  grid-template-columns: repeat(auto-fit, minmax(255px, 1fr));
-}
-.node {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: .85rem;
-}
-.node.status-offline { opacity: .55; }
-.node header { display: flex; align-items: center; gap: .4rem; flex-wrap: wrap; margin-bottom: .6rem; }
-
-.badge {
-  font-size: .7rem;
-  padding: .12rem .45rem;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-  color: var(--muted);
-  text-transform: lowercase;
-}
-.badge.healthy { color: var(--ok); border-color: var(--ok); }
-.badge.suspect { color: var(--warn); border-color: var(--warn); }
-.badge.offline { color: var(--bad); border-color: var(--bad); }
-.badge.leader, .badge.gateway { color: var(--accent); border-color: var(--accent); }
-.badge.state-completed { color: var(--ok); border-color: var(--ok); }
-.badge.state-running, .badge.state-assigned { color: var(--accent); border-color: var(--accent); }
-.badge.state-failed { color: var(--bad); border-color: var(--bad); }
-.badge.state-queued { color: var(--muted); }
-
-.caps { display: grid; grid-template-columns: auto 1fr; gap: .15rem .6rem; margin: 0 0 .6rem; font-size: .82rem; }
-.caps dt { color: var(--muted); }
-.caps dd { margin: 0; }
-
-.bar { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; }
-.bar span { display: block; height: 100%; background: var(--accent); }
-.bar.small { width: 90px; display: inline-block; vertical-align: middle; }
-.load-text { font-size: .76rem; color: var(--muted); display: block; margin-top: .25rem; }
-.sim { color: var(--warn); font-style: normal; font-size: .7rem; border: 1px dashed var(--warn); padding: 0 .25rem; border-radius: 3px; }
-
-.roles, .controls { display: flex; flex-wrap: wrap; gap: .3rem; margin-top: .6rem; }
-
-button, .chip {
-  font: inherit;
-  font-size: .78rem;
-  padding: .25rem .6rem;
-  border-radius: 5px;
-  border: 1px solid var(--line);
-  background: var(--panel-2);
-  color: var(--muted);
-  cursor: pointer;
-}
-button:hover, .chip:hover { border-color: var(--accent); color: var(--text); }
-.chip.on { background: var(--accent); border-color: var(--accent); color: #0b1016; font-weight: 600; }
-button.danger:hover { border-color: var(--bad); color: var(--bad); }
-
-/* --- forms -------------------------------------------------------------- */
-
-form { display: flex; flex-direction: column; gap: .6rem; }
-.job-form { flex-direction: row; flex-wrap: wrap; align-items: flex-end; gap: .75rem; }
-label { display: flex; flex-direction: column; gap: .25rem; font-size: .8rem; color: var(--muted); }
-label small { color: var(--muted); font-size: .7rem; }
-input, select {
-  font: inherit;
-  padding: .35rem .5rem;
-  border-radius: 5px;
-  border: 1px solid var(--line);
-  background: var(--bg);
-  color: var(--text);
-}
-.job-form button { padding: .45rem 1rem; font-size: .85rem; }
-
-/* --- tables and logs ---------------------------------------------------- */
-
-.table { width: 100%; border-collapse: collapse; font-size: .85rem; }
-.table th, .table td { text-align: left; padding: .4rem .5rem; border-bottom: 1px solid var(--line); }
-.table th { color: var(--muted); font-weight: 500; font-size: .75rem; text-transform: uppercase; }
-.table .output { color: var(--muted); font-size: .78rem; }
-
-.event-log { list-style: none; margin: 0; padding: 0; font-size: .82rem; }
-.event-log li { display: flex; gap: .6rem; padding: .25rem 0; border-bottom: 1px solid var(--line); }
-.event-log time { color: var(--muted); font-variant-numeric: tabular-nums; }
-.event-log .kind { color: var(--muted); min-width: 9rem; }
-.severity-warn .message { color: var(--warn); }
-.severity-error .message { color: var(--bad); }
-
-.alert { padding: .6rem .8rem; border-radius: 6px; margin: .5rem 0; font-size: .85rem; }
-.alert-error { background: rgba(224, 108, 117, .12); border: 1px solid var(--bad); color: var(--bad); }
-.tag { font-size: .7rem; padding: .1rem .45rem; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
-.tag.warn { color: var(--warn); border-color: var(--warn); }
-
-.catalog-tabs { display: flex; gap: .4rem; flex-wrap: wrap; margin-bottom: 1rem; }
-.catalog-tabs a {
-  display: inline-flex; align-items: center; gap: .4rem;
-  padding: .3rem .7rem; border-radius: 6px;
-  border: 1px solid var(--line); background: var(--panel); color: var(--muted);
-}
-.catalog-tabs a:hover { border-color: var(--accent); text-decoration: none; }
-.catalog-tabs a.active { background: var(--panel-2); color: var(--text); border-color: var(--accent); }
-.tag.ok { color: var(--ok); border-color: var(--ok); }
-
-.alert-archived {
-  background: rgba(224, 185, 92, .10);
-  border: 1px solid var(--warn);
-  color: var(--warn);
-}
-
-/* Wide tables scroll inside their own box rather than the page. */
-.scroll-x { overflow-x: auto; }
-.patch-table td { vertical-align: top; }
-.patch-table small { font-size: .7rem; }
-
-.character .portrait { border-radius: 6px; float: right; margin-left: .75rem; }
-.character header { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; margin-bottom: .75rem; }
-
-/* htmx indicator */
-.htmx-indicator { opacity: 0; transition: opacity .2s; color: var(--muted); font-size: .8rem; }
-.htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
-
-/* --- item cards --------------------------------------------------------- */
-
-.card-grid {
-  display: grid;
-  gap: .8rem;
-  /* Wide enough for two rank columns side by side. */
-  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-}
-.item-card {
-  display: flex;
-  flex-direction: column;
-  gap: .55rem;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: .8rem;
-}
-.item-card header { display: flex; gap: .6rem; align-items: flex-start; }
-.item-card h3 { font-size: .92rem; line-height: 1.25; }
-.item-card .sub { color: var(--muted); font-size: .72rem; }
-.item-icon {
-  border-radius: 6px;
-  border: 1px solid var(--line);
-  flex: none;
-  background: var(--panel-2);
-}
-.item-icon.lg { width: 56px; height: 56px; }
-
-/* One column per quality rank, side by side inside a single card. */
-.rank-cols { display: grid; gap: .55rem; }
-.rank-cols.cols-1 { grid-template-columns: 1fr; }
-.rank-cols.cols-2 { grid-template-columns: 1fr 1fr; }
-.rank-cols.cols-3 { grid-template-columns: repeat(3, 1fr); }
-
-.rank-col {
-  display: flex;
-  flex-direction: column;
-  gap: .25rem;
-  padding: .5rem;
-  border-radius: 6px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-}
-.rank-label {
-  font-size: .62rem;
+  margin: 0;
+  font-size: .75rem;
   text-transform: uppercase;
-  letter-spacing: .06em;
-  color: var(--muted);
-  font-weight: 700;
+  letter-spacing: .04em;
+  color: var(--pico-muted-color);
 }
-.rank-col .now { font-size: 1.1rem; font-weight: 650; line-height: 1.1; }
-.rank-col .tag { align-self: flex-start; }
-.rank-empty { font-size: .78rem; margin: .2rem 0; }
+.toolbar input,
+.toolbar select,
+.toolbar button { margin: 0; width: auto; }
+.toolbar input, .toolbar select { min-width: 9rem; }
+.toolbar button { padding: var(--pico-form-element-spacing-vertical) 1.25rem; }
+.toolbar small { display: block; margin-top: .15rem; }
+/* The hint sits under the row rather than in it. */
+.toolbar-note { display: block; margin: -.35rem 0 var(--pico-block-spacing-vertical); }
+/* What every figure below was measured from: the snapshot it came out of and
+   the window it is compared against. Once per page, above the cards. */
+.page-meta { display: block; margin: -.25rem 0 var(--pico-block-spacing-vertical); }
 
-.rank-stats {
+/* --- groups --------------------------------------------------------------
+   A heading over a grid of cards. Deliberately not an <article>: the cards
+   inside are already boxes, and a box of boxes adds a border and a background
+   without adding meaning. */
+.group { margin-bottom: calc(var(--pico-block-spacing-vertical) * 1.5); }
+.group > h2 { margin-bottom: .25rem; }
+
+/* --- tags and badges -----------------------------------------------------
+   Inline status words next to a heading. `mark` would be Pico's answer but it
+   is a highlighter, and these need to carry a state colour. */
+.tag, .badge {
+  display: inline-block;
+  padding: .1rem .45rem;
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: 1rem;
+  font-size: .7rem;
+  line-height: 1.6;
+  color: var(--pico-muted-color);
+  white-space: nowrap;
+}
+.tag.ok, .badge.ok { color: var(--pico-ins-color); border-color: currentColor; }
+.tag.warn, .badge.warn { color: var(--q-legendary); border-color: currentColor; }
+.tag.bad, .badge.bad { color: var(--pico-del-color); border-color: currentColor; }
+.sim { font-style: normal; }
+
+/* --- alerts --------------------------------------------------------------
+   An <article> with a colour down one edge: enough to separate a warning from
+   the page without inventing a second card style. */
+.alert {
+  border-left: 4px solid var(--pico-muted-border-color);
+  padding: var(--pico-block-spacing-vertical) var(--pico-block-spacing-horizontal);
+  margin-bottom: var(--pico-block-spacing-vertical);
+  background: var(--pico-card-background-color);
+  border-radius: var(--pico-border-radius);
+}
+.alert-archived { border-left-color: var(--q-legendary); }
+.alert-error { border-left-color: var(--pico-del-color); }
+
+/* --- the language menu ---------------------------------------------------
+   Pico gives a nav dropdown `display: inline`, which leaves its menu hanging
+   off a line box rather than off the button: at narrow widths it opened
+   *beside* the trigger instead of under it. An inline-block gives the
+   absolutely-positioned menu a box to anchor to, and `right: 0` pins it to
+   the button's own edge -- it is the last control in the bar, so it has to
+   open leftwards.
+
+   This replaces a `dir="rtl"` on the menu, which achieved the same opening
+   direction by making every label right-aligned and ragged. */
+nav details.dropdown { display: inline-block; position: relative; }
+/* The label is a language name and a chevron; wrapping it turns the control
+   into two ragged lines the moment the bar gets crowded. */
+nav details.dropdown > summary { white-space: nowrap; }
+nav details.dropdown > ul {
+  left: auto;
+  right: 0;
+  min-width: max-content;
+}
+
+/* A link that changes the page is styled as a button, so that "goes somewhere"
+   looks the same everywhere it appears. Breadcrumbs and the nav bar are the
+   exception: they are navigation furniture, and a row of buttons there reads
+   as a toolbar. In a table cell the button carries no top margin. */
+td > .rank-link { margin: 0; }
+
+/* --- item cards ----------------------------------------------------------
+   The icon and name of a tracked item, above its per-rank prices.
+
+   Cards sit in a grid, so the head has to be the same height on every one of
+   them: a name that wraps to two lines would otherwise start this card's
+   prices a line lower than its neighbours', and a row of cards whose figures
+   do not line up cannot be read across. Hence a fixed height, a name clamped
+   to two lines, and the whole thing centred against the 40px icon. */
+.item-head { display: flex; align-items: center; gap: .6rem; }
+.item-card > header {
+  display: flex;
+  align-items: center;
+  gap: .7rem;
+}
+/* Two lines of name plus one of category, whether or not the name needs them.
+   The height lives here rather than on the header because the header's own
+   padding is Pico's and would otherwise have to be subtracted from it. */
+.item-head-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  min-height: 3.9rem;
+}
+.item-card > header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.25;
+  /* Two lines, then an ellipsis. `title` on the element carries the rest. */
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
+.item-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--pico-border-radius);
+  flex: none;
+}
+.card-foot { color: var(--pico-muted-color); font-size: .8em; }
+/* Pico sizes `role="button"` for page actions; this one sits at the foot of a
+   price column, two to a card. */
+.rank-link {
+  display: inline-block;
+  width: auto;
+  margin: .35rem 0 0;
+  padding: .25rem .6rem;
+  font-size: .75rem;
+}
+.rank-empty { color: var(--pico-muted-color); }
+
+/* --- gear cards ----------------------------------------------------------
+   A BoE card is denser than a commodity one: a block per region, and an
+   upgrade ladder inside each. Wider than the other cards because two regions
+   of tiers do not fit in 21rem. */
+/* Wide enough that two regions genuinely sit side by side inside one card:
+   the whole point of the cross-realm view is comparing them at a glance, and
+   a EU block stacked above a US block is two screens of scrolling apart. */
+.gear-grid { grid-template-columns: repeat(auto-fill, minmax(34rem, 1fr)); }
+.gear-regions {
+  display: grid;
+  gap: var(--pico-block-spacing-horizontal);
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+}
+/* The ladder of item levels at the top of a statistics page: one chip per
+   market, the current one filled in and the rest outlined. Written here
+   rather than with Pico's `.outline` because these are chips, which already
+   override the button sizing -- two systems fighting over one element is how
+   the legend swatches lost their colour once already. */
+.level-links { margin-bottom: var(--pico-block-spacing-vertical); }
+.level-links .chip {
+  background: transparent;
+  border: 1px solid var(--pico-primary);
+  color: var(--pico-primary);
+}
+.level-links .chip.on {
+  background: var(--pico-primary);
+  color: var(--pico-primary-inverse);
+}
+
+/* A card is a stack of item levels; each level is a row of cells, one per
+   region. The column count comes from the markup rather than `auto-fit`,
+   because auto-fit would collapse two regions into one column at a width
+   where they still fit -- and a card whose regions sometimes stack and
+   sometimes do not is exactly the unevenness this layout exists to remove.
+
+   The cells themselves are `.rank-col`, the same component the consumable and
+   reagent cards use, so a gear card reads as the same kind of object rather
+   than as a second design that happens to live next door. */
+.gear-cells {
+  display: grid;
+  gap: var(--pico-block-spacing-horizontal);
+  grid-template-columns: repeat(var(--scopes, 1), minmax(0, 1fr));
+}
+.gear-scopes { margin-bottom: .35rem; }
+.gear-level + .gear-level {
+  margin-top: .6rem;
+  padding-top: .5rem;
+  border-top: 1px solid var(--pico-muted-border-color);
+}
+.gear-level-name { display: block; margin-bottom: .1rem; }
+/* One line, whatever it holds: the full list is on the element's title. */
+.gear-extras { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Two regions of figures need the room; below that they stack, which is
+   honest at a width where side by side would be unreadable. */
+@media (max-width: 40rem) {
+  .gear-cells { grid-template-columns: 1fr; }
+  .gear-scopes { display: none; }
+}
+
+/* --- definition lists ----------------------------------------------------
+   Pico stacks <dt> above <dd>, which is right for a glossary. These are
+   label/value pairs in a card, so they read as two columns. */
+.caps, .rank-stats {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: .1rem .45rem;
-  margin: .15rem 0 0;
-  font-size: .72rem;
+  gap: .15rem .75rem;
+  margin: 0 0 .4rem;
 }
-.rank-stats dt { color: var(--muted); font-size: .64rem; text-transform: uppercase; letter-spacing: .03em; }
-.rank-stats dd { margin: 0; font-weight: 600; }
-.rank-stats dd small { display: block; font-weight: 400; font-size: .6rem; }
+.caps dt, .rank-stats dt { color: var(--pico-muted-color); font-size: .8em; }
+.caps dd, .rank-stats dd { margin: 0; font-size: .85em; }
+/* The date under a low or a high goes on its own line, always. Left inline it
+   fits a three-digit price and wraps a four-digit one, which makes the two
+   ranks of a card -- and every card in the row -- end at different heights. */
+.rank-stats dd small { display: block; line-height: 1.3; }
 
-.rank-link {
-  margin-top: auto;
-  padding-top: .35rem;
-  font-size: .72rem;
-  color: var(--muted);
+/* --- load bars -----------------------------------------------------------
+   `<progress>` is Pico's, and used directly; this only keeps a bar inline
+   with the text beside it. */
+progress.bar { margin: .35rem 0 .1rem; }
+
+/* --- event log ----------------------------------------------------------- */
+.event-log { list-style: none; margin: 0; padding: 0; }
+.event-log li {
+  display: flex;
+  gap: .6rem;
+  padding: .3rem 0;
+  border-bottom: 1px solid var(--pico-muted-border-color);
+  font-size: .85em;
 }
-.rank-link:hover { color: var(--accent); }
-.card-foot { margin-top: .1rem; }
+.event-log time { color: var(--pico-muted-color); font-variant-numeric: tabular-nums; }
+.event-log li:last-child { border-bottom: none; }
 
-.crumbs { color: var(--muted); font-size: .82rem; margin: 0 0 .75rem; }
-.item-head { display: flex; gap: .9rem; align-items: center; margin-bottom: 1rem; }
-.item-head h1 { margin: 0 0 .2rem; }
-.stat .when { font-size: .68rem; }
-.trend-row { display: flex; gap: 1.5rem; flex-wrap: wrap; }
-.trend { display: flex; flex-direction: column; gap: .15rem; }
-.trend .label { color: var(--muted); font-size: .7rem; text-transform: uppercase; letter-spacing: .04em; }
-.trend .value { font-size: 1.15rem; font-weight: 600; }
-
-/* --- charts ------------------------------------------------------------- */
-/* Categorical slots from the validated two-hue palette, stepped per mode. */
-
-.viz-root {
-  --series-1: #2a78d6;
-  --series-2: #eb6834;
-  --grid-line: #d8dce6;
-  --axis-ink: #5f6982;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .viz-root {
-    --series-1: #3987e5;
-    --series-2: #d95926;
-    --grid-line: #2b3242;
-    --axis-ink: #8b93a7;
-  }
-}
-
-/* `height: auto` with uniform scaling: a fixed height plus a stretched
-   viewBox distorted every glyph horizontally. */
-.chart { width: 100%; height: auto; display: block; }
-.chart .grid { stroke: var(--grid-line); stroke-width: 1; }
-.chart .axis {
-  fill: var(--axis-ink);
-  font-size: 10px;
-  font-family: inherit;
-  /* Ticks align vertically, so equal-width digits help here. */
-  font-variant-numeric: tabular-nums;
-}
-.chart .bar { fill: var(--series-1); }
-.chart .bar.best { fill: var(--series-2); }
-.chart path.bar { stroke: none; }
-.chart .hit { fill: transparent; }
-.chart .hit:hover { fill: var(--grid-line); fill-opacity: .35; }
-.chart-empty { padding: 2rem 0; text-align: center; font-size: .85rem; }
-
-.legend { display: flex; gap: 1rem; font-size: .78rem; color: var(--muted); margin: 0 0 .4rem; }
+/* --- the price chart -----------------------------------------------------
+   Inline SVG, so it inherits the theme through currentColor rather than
+   carrying a palette of its own. */
+.viz-root { width: 100%; height: auto; }
+.chart-empty { color: var(--pico-muted-color); }
+.legend { display: flex; flex-wrap: wrap; gap: .75rem; font-size: .8em; color: var(--pico-muted-color); }
 .legend .key { display: inline-flex; align-items: center; gap: .35rem; }
-.legend .swatch { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
-.legend .swatch.s1 { background: var(--series-1); }
-.legend .swatch.s2 { background: var(--series-2); }
+/* The colour itself is set inline, from the chart's palette. */
+.legend .swatch { width: .7rem; height: .7rem; border-radius: 2px; flex: none; }
+
+/* --- item tooltips -------------------------------------------------------
+   A hover card fetched on demand. It is `position: absolute` so that the
+   placeholder inside it -- which exists only until the fetch lands -- never
+   takes part in the card's layout. Without that, every item in a grid renders
+   the word "Loading…" beside its icon at rest. */
+.tip { position: relative; display: inline-flex; }
+.tip-panel {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  top: calc(100% + .35rem);
+  display: none;
+  min-width: 16rem;
+  padding: var(--pico-block-spacing-vertical) var(--pico-block-spacing-horizontal);
+  background: var(--pico-card-background-color);
+  border: 1px solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+  box-shadow: var(--pico-card-box-shadow);
+}
+.tip:hover .tip-panel,
+.tip:focus-within .tip-panel { display: block; }
+
+/* --- item tooltips -------------------------------------------------------
+   Drawn in the order the game draws one. */
+.tip-card { max-width: 22rem; }
+.tip-name { font-weight: 600; }
+.tip-line, .tip-stat, .tip-rank, .tip-note { font-size: .85em; }
+.tip-effect { color: var(--q-uncommon); font-size: .85em; }
+.tip-flavor { font-style: italic; color: var(--pico-muted-color); font-size: .85em; }
+.tip-note, .tip-loading { color: var(--pico-muted-color); font-size: .8em; }
+
+/* --- htmx ----------------------------------------------------------------
+   The one piece of state HTMX exposes to CSS: an in-flight request. */
+.htmx-indicator { opacity: 0; transition: opacity .2s; }
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator { opacity: 1; }
+
+/* Fade a fragment out and in as it is swapped, so a live update reads as a
+   change rather than a flicker. */
+.htmx-swapping { opacity: .5; transition: opacity .1s; }

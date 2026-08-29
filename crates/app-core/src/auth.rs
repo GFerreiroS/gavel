@@ -1,9 +1,7 @@
 //! Registration, login, sessions.
 //!
-//! Password hashing sits behind [`PasswordHasher`] for a concrete reason:
-//! Argon2 is the right answer on a PC and the wrong answer on a node with
-//! 320 KB of RAM. When authentication eventually runs on hardware, the
-//! algorithm is swapped here and nowhere else.
+//! Password hashing sits behind [`PasswordHasher`] so the domain service does
+//! not depend on Argon2 directly and remains straightforward to test.
 
 use cluster_core::Millis;
 
@@ -11,7 +9,7 @@ use crate::error::{AppError, AppResult};
 use crate::model::{Session, User};
 use crate::repo::{SessionRepository, UserRepository};
 
-pub const SESSION_COOKIE: &str = "esp_session";
+pub const SESSION_COOKIE: &str = "wow_tracker_session";
 pub const SESSION_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 
 const MIN_USERNAME: usize = 3;
@@ -140,8 +138,7 @@ mod argon2_impl {
 
     use super::{AppError, AppResult, PasswordHasher, TokenSource};
 
-    /// Argon2id with the reference parameters. Fine on a PC; explicitly a
-    /// host-only implementation -- see the module docs.
+    /// Argon2id with the reference parameters.
     pub struct Argon2Hasher {
         argon2: Argon2<'static>,
     }

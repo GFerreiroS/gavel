@@ -76,6 +76,16 @@ pub enum Stat {
 }
 
 impl Stat {
+    pub const ALL: [Stat; 7] = [
+        Stat::Haste,
+        Stat::Crit,
+        Stat::Mastery,
+        Stat::Versatility,
+        Stat::Primary,
+        Stat::Stamina,
+        Stat::None,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Stat::Haste => "haste",
@@ -101,10 +111,46 @@ pub enum Category {
     WeaponOil,
     WeaponStone,
     AugmentRune,
+    /// Bind-on-equip gear from the current raid.
+    Boe,
+    /// A profession recipe.
+    Recipe,
+    /// Bought once per raid tier, for one boss. Its own category because it
+    /// is neither a flask nor a utility item: it is a raid-night purchase
+    /// with a completely different cadence.
+    VantusRune,
     Utility,
+    /// Crafting reagents, which are grouped by profession rather than by the
+    /// consumable categories above.
+    Reagent,
+    /// Enchantments sold as scrolls, kits and spellthreads, grouped by the
+    /// equipment slot they apply to.
+    Enchant,
+    /// Cut gems, grouped by nothing: there are sixteen of them and a heading
+    /// per stat would be longer than the list under it.
+    Gem,
 }
 
 impl Category {
+    pub const ALL: [Category; 16] = [
+        Category::Flask,
+        Category::CombatPotion,
+        Category::HealingPotion,
+        Category::ManaPotion,
+        Category::Food,
+        Category::Feast,
+        Category::WeaponOil,
+        Category::WeaponStone,
+        Category::AugmentRune,
+        Category::VantusRune,
+        Category::Utility,
+        Category::Reagent,
+        Category::Enchant,
+        Category::Gem,
+        Category::Boe,
+        Category::Recipe,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
             Category::Flask => "flask",
@@ -116,7 +162,13 @@ impl Category {
             Category::WeaponOil => "weapon_oil",
             Category::WeaponStone => "weapon_stone",
             Category::AugmentRune => "augment_rune",
+            Category::VantusRune => "vantus_rune",
             Category::Utility => "utility",
+            Category::Reagent => "reagent",
+            Category::Enchant => "enchant",
+            Category::Gem => "gem",
+            Category::Boe => "boe",
+            Category::Recipe => "recipe",
         }
     }
 
@@ -131,7 +183,242 @@ impl Category {
             Category::WeaponOil => "Weapon oils",
             Category::WeaponStone => "Weapon stones",
             Category::AugmentRune => "Augment runes",
+            Category::VantusRune => "Vantus runes",
             Category::Utility => "Utility",
+            Category::Reagent => "Reagents",
+            Category::Enchant => "Enchants",
+            Category::Gem => "Gems",
+            Category::Boe => "Bind-on-equip gear",
+            Category::Recipe => "Recipes",
+        }
+    }
+}
+
+/// Which profession a reagent belongs to.
+///
+/// Not the same thing as Blizzard's item subclass, which is a *material* type:
+/// "Optional Reagents" is 72 of the current expansion's tradeskill items and
+/// says nothing about who makes them. The mapping comes from the profession
+/// recipe lists, with gathered materials falling back to the profession that
+/// gathers them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Profession {
+    Alchemy,
+    Blacksmithing,
+    Cooking,
+    Enchanting,
+    Engineering,
+    Fishing,
+    Herbalism,
+    Inscription,
+    Jewelcrafting,
+    Leatherworking,
+    Mining,
+    Skinning,
+    Tailoring,
+    /// World drops, motes and finishing reagents that no single profession
+    /// owns. An honest bucket beats attributing them to a profession at
+    /// random.
+    Shared,
+}
+
+pub const ALL_PROFESSIONS: [Profession; 14] = [
+    Profession::Alchemy,
+    Profession::Blacksmithing,
+    Profession::Cooking,
+    Profession::Enchanting,
+    Profession::Engineering,
+    Profession::Fishing,
+    Profession::Herbalism,
+    Profession::Inscription,
+    Profession::Jewelcrafting,
+    Profession::Leatherworking,
+    Profession::Mining,
+    Profession::Skinning,
+    Profession::Tailoring,
+    Profession::Shared,
+];
+
+impl Profession {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Profession::Alchemy => "alchemy",
+            Profession::Blacksmithing => "blacksmithing",
+            Profession::Cooking => "cooking",
+            Profession::Enchanting => "enchanting",
+            Profession::Engineering => "engineering",
+            Profession::Fishing => "fishing",
+            Profession::Herbalism => "herbalism",
+            Profession::Inscription => "inscription",
+            Profession::Jewelcrafting => "jewelcrafting",
+            Profession::Leatherworking => "leatherworking",
+            Profession::Mining => "mining",
+            Profession::Skinning => "skinning",
+            Profession::Tailoring => "tailoring",
+            Profession::Shared => "shared",
+        }
+    }
+
+    /// Display name, translated through the interface catalogue.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Profession::Alchemy => "Alchemy",
+            Profession::Blacksmithing => "Blacksmithing",
+            Profession::Cooking => "Cooking",
+            Profession::Enchanting => "Enchanting",
+            Profession::Engineering => "Engineering",
+            Profession::Fishing => "Fishing",
+            Profession::Herbalism => "Herbalism",
+            Profession::Inscription => "Inscription",
+            Profession::Jewelcrafting => "Jewelcrafting",
+            Profession::Leatherworking => "Leatherworking",
+            Profession::Mining => "Mining",
+            Profession::Skinning => "Skinning",
+            Profession::Tailoring => "Tailoring",
+            Profession::Shared => "Shared reagents",
+        }
+    }
+}
+
+/// What kind of market an entry is, and therefore which page shows it and how
+/// it is grouped: consumables by who drinks them, reagents by profession.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemKind {
+    /// Defaulted so every catalogue written before reagents existed still
+    /// parses unchanged.
+    #[default]
+    Consumable,
+    Reagent,
+    Enchant,
+    Gem,
+    /// Bind-on-equip gear. Unlike every kind above it, this is **not** a
+    /// commodity: it is auctioned per connected realm, one item at a time,
+    /// with a different price on every realm.
+    Boe,
+    /// Profession recipes: patterns, designs, plans. Per realm, like gear,
+    /// but with no upgrade levels -- a recipe is a recipe.
+    Recipe,
+}
+
+impl ItemKind {
+    pub const ALL: [ItemKind; 6] = [
+        ItemKind::Consumable,
+        ItemKind::Reagent,
+        ItemKind::Enchant,
+        ItemKind::Gem,
+        ItemKind::Boe,
+        ItemKind::Recipe,
+    ];
+
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            ItemKind::Consumable => "consumable",
+            ItemKind::Reagent => "reagent",
+            ItemKind::Enchant => "enchant",
+            ItemKind::Gem => "gem",
+            ItemKind::Boe => "boe",
+            ItemKind::Recipe => "recipe",
+        }
+    }
+
+    /// Whether this kind trades on the region-wide commodity market.
+    ///
+    /// The two markets share nothing: a different endpoint, a different
+    /// payload, a different table, and a price that means something different.
+    /// Everything that branches on the distinction asks here rather than
+    /// listing the kinds again and forgetting one.
+    pub const fn is_commodity(self) -> bool {
+        !matches!(self, ItemKind::Boe | ItemKind::Recipe)
+    }
+
+    /// Whether `scripts/catalog-sync.py` may rewrite this kind's entries.
+    ///
+    /// Enchants and gems are grouped by data Blizzard publishes, so a rewrite
+    /// loses nothing. Consumables and reagents carry judgements the API cannot
+    /// make -- which audience a potion is for, which profession makes a
+    /// material -- and are edited by hand.
+    pub const fn is_generated(self) -> bool {
+        matches!(self, ItemKind::Enchant | ItemKind::Gem)
+    }
+}
+
+/// An equipment slot: which slot an enchantment applies to, or which slot a
+/// piece of gear occupies.
+///
+/// Shared by both because it is the same idea and the same word. For enchants
+/// it is Blizzard's item subclass ("Enchant Ring" is subclass `Finger`); for
+/// gear it is the inventory type. Ordered as a character sheet is, not
+/// alphabetically.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Slot {
+    Head,
+    Neck,
+    Shoulder,
+    Cloak,
+    Chest,
+    Wrist,
+    Hands,
+    Waist,
+    Legs,
+    Feet,
+    Finger,
+    Weapon,
+    TwoHandedWeapon,
+}
+
+pub const ALL_SLOTS: [Slot; 13] = [
+    Slot::Head,
+    Slot::Neck,
+    Slot::Shoulder,
+    Slot::Cloak,
+    Slot::Chest,
+    Slot::Wrist,
+    Slot::Hands,
+    Slot::Waist,
+    Slot::Legs,
+    Slot::Feet,
+    Slot::Finger,
+    Slot::Weapon,
+    Slot::TwoHandedWeapon,
+];
+
+impl Slot {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Slot::Head => "head",
+            Slot::Neck => "neck",
+            Slot::Shoulder => "shoulder",
+            Slot::Cloak => "cloak",
+            Slot::Chest => "chest",
+            Slot::Wrist => "wrist",
+            Slot::Hands => "hands",
+            Slot::Waist => "waist",
+            Slot::Legs => "legs",
+            Slot::Feet => "feet",
+            Slot::Finger => "finger",
+            Slot::Weapon => "weapon",
+            Slot::TwoHandedWeapon => "two_handed_weapon",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Slot::Head => "Head",
+            Slot::Neck => "Neck",
+            Slot::Shoulder => "Shoulder",
+            Slot::Cloak => "Cloak",
+            Slot::Chest => "Chest",
+            Slot::Wrist => "Wrist",
+            Slot::Hands => "Hands",
+            Slot::Waist => "Waist",
+            Slot::Legs => "Legs",
+            Slot::Feet => "Feet",
+            Slot::Finger => "Finger",
+            Slot::Weapon => "Weapon",
+            Slot::TwoHandedWeapon => "Two-handed weapon",
         }
     }
 }
@@ -152,6 +439,15 @@ pub struct ItemRank {
 pub struct CatalogItem {
     pub name: String,
     pub category: Category,
+    /// Defaulted, so a catalogue written before reagents existed still parses.
+    #[serde(default)]
+    pub kind: ItemKind,
+    /// Set on reagents; `None` on everything else.
+    #[serde(default)]
+    pub profession: Option<Profession>,
+    /// Set on enchants; `None` on everything else.
+    #[serde(default)]
+    pub slot: Option<Slot>,
     pub audience: Audience,
     #[serde(default = "default_stat")]
     pub stat: Stat,
@@ -198,6 +494,19 @@ impl CatalogItem {
             _ => self.name.clone(),
         }
     }
+}
+
+/// What one upgrade bonus id means.
+///
+/// Gear auctions carry bonus ids and nothing else -- no item level. These are
+/// resolved once by `scripts/catalog-sync.py` (SimulationCraft says which ids
+/// are upgrade levels, Wowhead says what they render as) and committed, so
+/// the running app reads a reviewed file rather than a third-party service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemLevel {
+    pub item_level: u16,
+    /// "Champion 2/6" -- the track and the rank within it.
+    pub upgrade: String,
 }
 
 /// Whether a catalog is still being collected.
@@ -271,6 +580,16 @@ pub struct Catalog {
     #[serde(default)]
     pub patches: Vec<Patch>,
     pub items: Vec<CatalogItem>,
+    /// Upgrade bonus id -> what it means. One entry per item level that
+    /// actually trades: an item level nobody is selling gets no page, which
+    /// is why Mythic gear -- unbuyable, because upgrading binds it -- has no
+    /// empty page waiting for it.
+    #[serde(default)]
+    pub item_levels: BTreeMap<String, ItemLevel>,
+    /// Optional bonus id -> its name: "Prismatic Socket", "Leech". These do
+    /// not divide a market, they are counted within one.
+    #[serde(default)]
+    pub modifiers: BTreeMap<String, String>,
 }
 
 impl Catalog {
@@ -309,9 +628,27 @@ impl Catalog {
             .unwrap_or(Millis::ZERO)
     }
 
-    /// Every item id we care about, for filtering a snapshot.
+    /// Every commodity id we care about, for filtering a commodity snapshot.
+    ///
+    /// Per-realm items are deliberately absent: they never appear in that
+    /// payload, so including them would be asking the wrong market for a
+    /// price that cannot be there.
     pub fn tracked_ids(&self) -> Vec<ItemId> {
-        let mut ids: Vec<ItemId> = self.items.iter().flat_map(|i| i.item_ids()).collect();
+        self.ids_where(|kind| kind.is_commodity())
+    }
+
+    /// Every id auctioned per connected realm, for filtering a realm snapshot.
+    pub fn realm_tracked_ids(&self) -> Vec<ItemId> {
+        self.ids_where(|kind| !kind.is_commodity())
+    }
+
+    fn ids_where(&self, keep: fn(ItemKind) -> bool) -> Vec<ItemId> {
+        let mut ids: Vec<ItemId> = self
+            .items
+            .iter()
+            .filter(|i| keep(i.kind))
+            .flat_map(|i| i.item_ids())
+            .collect();
         ids.sort();
         ids.dedup();
         ids
@@ -332,8 +669,44 @@ impl Catalog {
         self.items.iter().find(|i| i.rank_of(item).is_some())
     }
 
+    /// Consumables only: reagents share the `common` audience and would
+    /// otherwise appear on the consumables page.
     pub fn by_audience(&self, audience: Audience) -> impl Iterator<Item = &CatalogItem> {
-        self.items.iter().filter(move |i| i.audience == audience)
+        self.items
+            .iter()
+            .filter(move |i| i.kind == ItemKind::Consumable && i.audience == audience)
+    }
+
+    pub fn of_kind(&self, kind: ItemKind) -> impl Iterator<Item = &CatalogItem> {
+        self.items.iter().filter(move |i| i.kind == kind)
+    }
+
+    /// Reagents of one profession, in name order.
+    pub fn by_profession(&self, profession: Profession) -> impl Iterator<Item = &CatalogItem> {
+        self.of_kind(ItemKind::Reagent)
+            .filter(move |i| i.profession == Some(profession))
+    }
+
+    /// Enchants for one equipment slot.
+    pub fn by_slot(&self, slot: Slot) -> impl Iterator<Item = &CatalogItem> {
+        self.of_kind(ItemKind::Enchant)
+            .filter(move |i| i.slot == Some(slot))
+    }
+
+    /// What an upgrade bonus id means, if this catalog knows.
+    pub fn item_level(&self, bonus: u32) -> Option<&ItemLevel> {
+        self.item_levels.get(&bonus.to_string())
+    }
+
+    /// The name of an optional bonus -- "Prismatic Socket", "Leech".
+    pub fn modifier(&self, bonus: u32) -> Option<&str> {
+        self.modifiers.get(&bonus.to_string()).map(String::as_str)
+    }
+
+    /// Recipes taught for one profession.
+    pub fn recipes_for(&self, profession: Profession) -> impl Iterator<Item = &CatalogItem> {
+        self.of_kind(ItemKind::Recipe)
+            .filter(move |i| i.profession == Some(profession))
     }
 }
 

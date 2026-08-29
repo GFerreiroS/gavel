@@ -1,0 +1,262 @@
+//! The per-realm auction house: gear, not commodities.
+//!
+//! Everything in [`super`] assumes a commodity — stackable, region-wide, one
+//! price. Bind-on-equip gear is none of those. It is auctioned one item at a
+//! time on each connected realm, and the same item id trades at several item
+//! levels under different *bonus ids*, at prices an order of magnitude apart:
+//! on one realm a Temple Delver's Mystic Helm was listed at 9,000g and at
+//! 330,000g on the same afternoon, and both were honest prices for what they
+//! were.
+//!
+//! **What Blizzard does not give us is the item level.** A listing carries
+//! `bonus_lists` and nothing else, and there is no published table mapping a
+//! bonus id to an item level. So this module deliberately does not try: it
+//! records the bonus list verbatim as the market's identity, and leaves the
+//! grouping of those variants into named tiers to the layer that displays
+//! them. A patch that renumbers bonus ids then breaks a display rule, which
+//! is cheap to fix, instead of the collection, which would cost history that
+//! cannot be re-fetched.
+
+use std::collections::BTreeMap;
+
+use cluster_core::Millis;
+use serde::{Deserialize, Serialize};
+
+use super::{Copper, ItemId, Region};
+
+/// A connected realm: several realms sharing one auction house.
+///
+/// Unique only within a region -- EU 1403 and US 1403 are different places --
+/// so nothing here is ever keyed by realm alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct RealmId(pub u32);
+
+impl RealmId {
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for RealmId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// One realm's auction house, named.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Realm {
+    pub id: RealmId,
+    pub region: Region,
+    /// "Dentarg, Tarren Mill" -- a connected realm can be several.
+    pub name: String,
+}
+
+/// A single gear auction.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GearListing {
+    pub item: ItemId,
+    /// What it costs to take it now. An auction with only a bid is carried at
+    /// the bid: it is still a price someone can pay, and dropping it would
+    /// silently thin out the cheap end of the market.
+    pub price: Copper,
+    /// Sorted and deduplicated, so it can be compared and used as a key.
+    pub bonus_ids: Vec<u32>,
+}
+
+impl GearListing {
+    /// The market this listing belongs to: everything that distinguishes one
+    /// version of an item from another, as a stable string.
+    ///
+    /// The bonus list *is* the identity. Item level, sockets and tertiaries
+    /// are all functions of it, so grouping on it can never merge two things
+    /// that are genuinely different -- only split things that turn out to be
+    /// the same, which the display layer can undo.
+    pub fn variant(&self) -> String {
+        let mut out = String::new();
+        for (i, id) in self.bonus_ids.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(itoa(*id).as_str());
+        }
+        out
+    }
+}
+
+fn itoa(value: u32) -> String {
+    value.to_string()
+}
+
+/// One variant of one item on one realm at one moment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RealmSample {
+    pub item: ItemId,
+    pub region: Region,
+    pub realm: RealmId,
+    /// The bonus list, comma separated. Opaque here on purpose.
+    pub variant: String,
+    pub observed_at: Millis,
+    /// The cheapest way to own one right now. This -- not an average -- is
+    /// the number a buyer acts on, and with a handful of listings per variant
+    /// a percentile would be noise dressed as precision.
+    pub min_price: Copper,
+    pub median_price: Copper,
+    /// The dearest listing. On a single realm this is the only spread there
+    /// is: with no other realm to compare to, "cheapest and highest here" is
+    /// what a buyer can act on.
+    pub max_price: Copper,
+    pub listings: u32,
+}
+
+/// Reduce a realm's listings to one sample per (item, variant).
+///
+/// Listings arrive already filtered to the tracked items: the payload is 20 MB
+/// and 100,000 auctions, of which a few hundred are ours.
+pub fn summarise_realm(
+    listings: Vec<GearListing>,
+    region: Region,
+    realm: RealmId,
+    observed_at: Millis,
+) -> Vec<RealmSample> {
+    let mut grouped: BTreeMap<(ItemId, String), Vec<Copper>> = BTreeMap::new();
+    for listing in listings {
+        grouped
+            .entry((listing.item, listing.variant()))
+            .or_default()
+            .push(listing.price);
+    }
+
+    grouped
+        .into_iter()
+        .filter_map(|((item, variant), mut prices)| {
+            prices.sort_unstable();
+            let listings = prices.len() as u32;
+            Some(RealmSample {
+                item,
+                region,
+                realm,
+                variant,
+                observed_at,
+                min_price: *prices.first()?,
+                median_price: prices[prices.len() / 2],
+                max_price: *prices.last()?,
+                listings,
+            })
+        })
+        .collect()
+}
+
+/// What a realm snapshot fetch produced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RealmSnapshot {
+    /// Unchanged since the timestamp we sent. Realms regenerate on their own
+    /// schedules, so this is checked per realm rather than per region.
+    NotModified,
+    Fresh {
+        /// `Last-Modified`: when Blizzard generated *this realm's* snapshot.
+        generated_at: Millis,
+        listings: Vec<GearListing>,
+    },
+}
+
+/// Reads one connected realm's auction house.
+///
+/// Separate from [`super::CommodityProvider`] because it is a different
+/// endpoint returning a different shape, and because a caller has to name a
+/// realm: there is no such thing as "the" price of a piece of gear.
+pub trait RealmAuctionProvider: Send + Sync + 'static {
+    fn provider_name(&self) -> &'static str;
+
+    fn is_configured(&self) -> bool {
+        true
+    }
+
+    /// Fetch one realm's auctions, keeping only `wanted` items.
+    ///
+    /// The payload is roughly 20 MB and 100,000 auctions of which a few
+    /// hundred are ours, so filtering happens while parsing rather than
+    /// after: the discarded 99% never becomes a `GearListing`.
+    fn auctions(
+        &self,
+        region: Region,
+        realm: RealmId,
+        wanted: &[ItemId],
+        if_modified_since: Option<Millis>,
+    ) -> impl std::future::Future<Output = crate::AppResult<RealmSnapshot>> + Send;
+
+    /// Name the given connected realms.
+    ///
+    /// Only the configured ones: a region has ninety-odd connected realms and
+    /// naming them all costs a request each, at every startup, to answer a
+    /// question about six of them.
+    fn realms(
+        &self,
+        region: Region,
+        wanted: &[RealmId],
+    ) -> impl std::future::Future<Output = crate::AppResult<Vec<Realm>>> + Send;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn listing(item: u32, price: u64, bonus: &[u32]) -> GearListing {
+        let mut bonus_ids = bonus.to_vec();
+        bonus_ids.sort_unstable();
+        bonus_ids.dedup();
+        GearListing {
+            item: ItemId(item),
+            price: Copper(price),
+            bonus_ids,
+        }
+    }
+
+    /// The same item at two upgrade levels is two markets. Averaging them
+    /// would report a price nobody can buy at: the real listings were 9,000g
+    /// and 330,000g.
+    #[test]
+    fn variants_of_one_item_are_separate_markets() {
+        let samples = summarise_realm(
+            vec![
+                listing(271438, 90_000_000, &[6652, 10844, 12825, 13332]),
+                listing(271438, 99_110_000, &[6652, 10844, 12825, 13332]),
+                listing(271438, 3_300_000_000, &[6652, 10844, 12843, 13334]),
+            ],
+            Region::Eu,
+            RealmId(1403),
+            Millis(1_000),
+        );
+
+        assert_eq!(samples.len(), 2, "two upgrade levels, two markets");
+        let cheap = &samples[0];
+        assert_eq!(cheap.variant, "6652,10844,12825,13332");
+        assert_eq!(cheap.listings, 2);
+        assert_eq!(cheap.min_price, Copper(90_000_000));
+        assert_eq!(cheap.max_price, Copper(99_110_000));
+    }
+
+    /// The bonus list is written in a stable order whatever order it arrived
+    /// in, or the same market would split in two between snapshots.
+    #[test]
+    fn a_variant_key_does_not_depend_on_arrival_order() {
+        let a = listing(271438, 1, &[13332, 6652, 10844]);
+        let b = listing(271438, 1, &[10844, 13332, 6652]);
+        assert_eq!(a.variant(), b.variant());
+        assert_eq!(a.variant(), "6652,10844,13332");
+    }
+
+    /// Gear with no bonus ids at all is the base version, and still a market.
+    #[test]
+    fn a_plain_item_is_its_own_variant() {
+        let samples = summarise_realm(
+            vec![listing(271434, 50_000, &[])],
+            Region::Us,
+            RealmId(60),
+            Millis(1),
+        );
+        assert_eq!(samples.len(), 1);
+        assert_eq!(samples[0].variant, "");
+        assert_eq!(samples[0].median_price, Copper(50_000));
+    }
+}
