@@ -617,7 +617,9 @@ progress.bar { margin: .35rem 0 .1rem; }
   z-index: 20;
   top: calc(100% + .25rem);
   left: 0;
-  width: max(100%, 16rem);
+  /* Match the closed picker exactly. A larger minimum here made the open
+     panel jut out to the right even though both states are one control. */
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: .4rem;
