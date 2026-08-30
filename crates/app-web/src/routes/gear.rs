@@ -799,12 +799,6 @@ fn by_track<'a>(
     grouped.into_iter().collect()
 }
 
-/// The upgrade bonus in a variant: the one id the catalog knows an item level
-/// for. Anything else it carries is optional and counted, not grouped on.
-fn upgrade_of(variant: &str, catalog: &Catalog) -> Option<u32> {
-    bonuses(variant).find(|id| catalog.item_level(*id).is_some())
-}
-
 /// The resolved rank a variant carries, for other route modules.
 pub(crate) fn rank_of_public<'a>(variant: &str, catalog: &'a Catalog) -> Option<&'a ItemLevel> {
     rank_of(variant, catalog)
@@ -826,7 +820,7 @@ pub(crate) fn level_range_of(samples: &[&RealmSample], catalog: &Catalog) -> Str
 
 /// The resolved rank a variant carries, if the catalog knows it.
 fn rank_of<'a>(variant: &str, catalog: &'a Catalog) -> Option<&'a ItemLevel> {
-    upgrade_of(variant, catalog).and_then(|b| catalog.item_level(b))
+    catalog.rank_in(variant)
 }
 
 /// The upgrade track a variant belongs to.
@@ -836,9 +830,7 @@ fn rank_of<'a>(variant: &str, catalog: &'a Catalog) -> Option<&'a ItemLevel> {
 /// Veteran because 13332 is beside it in the same variant. The rank's own
 /// wording is the fallback, for a catalog synced before tracks were recorded.
 fn track_of(variant: &str, catalog: &Catalog) -> Option<Track> {
-    bonuses(variant)
-        .find_map(|id| catalog.track(id))
-        .or_else(|| rank_of(variant, catalog).and_then(|l| Track::parse(&l.upgrade)))
+    catalog.track_in(variant)
 }
 
 /// The item levels a track holds, as one label: "285" or "279–285".
@@ -861,11 +853,7 @@ pub(super) fn modifier_names<'a>(
     variant: &'a str,
     catalog: &'a Catalog,
 ) -> impl Iterator<Item = &'a str> + 'a {
-    bonuses(variant).filter_map(|id| catalog.modifier(id))
-}
-
-fn bonuses(variant: &str) -> impl Iterator<Item = u32> + '_ {
-    variant.split(',').filter_map(|id| id.parse::<u32>().ok())
+    Catalog::bonuses(variant).filter_map(|id| catalog.modifier(id))
 }
 
 /// The optional bonuses in a market, counted by name.
@@ -877,7 +865,7 @@ fn bonuses(variant: &str) -> impl Iterator<Item = u32> + '_ {
 fn extras(samples: &[&RealmSample], catalog: &Catalog) -> Vec<GearExtra> {
     let mut counted: BTreeMap<&str, u32> = BTreeMap::new();
     for sample in samples {
-        for id in bonuses(&sample.variant) {
+        for id in Catalog::bonuses(&sample.variant) {
             if let Some(name) = catalog.modifier(id) {
                 *counted.entry(name).or_default() += sample.listings;
             }
@@ -936,13 +924,13 @@ mod tests {
     fn the_upgrade_bonus_identifies_the_item_level() {
         let catalog = catalog();
         let variant = "6652,10844,12834,13333,13662,13696";
-        assert_eq!(upgrade_of(variant, &catalog), Some(12834));
+        assert_eq!(catalog.upgrade_in(variant), Some(12834));
         let level = catalog
             .item_level(12834)
             .expect("resolved by the sync script");
         assert_eq!(level.item_level, 295);
         assert_eq!(level.upgrade, "Champion 2/6");
-        assert_eq!(upgrade_of("40,10844,13662", &catalog), None);
+        assert_eq!(catalog.upgrade_in("40,10844,13662"), None);
     }
 
     /// A track is one market, and the ranks inside it are a range.

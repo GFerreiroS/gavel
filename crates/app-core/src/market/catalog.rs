@@ -18,7 +18,9 @@ use std::collections::BTreeMap;
 use cluster_core::Millis;
 use serde::{Deserialize, Serialize};
 
-use super::ItemId;
+use super::key::MarketKey;
+use super::realm::RealmSample;
+use super::{ItemId, PriceSample};
 
 /// Who the consumable is for.
 ///
@@ -555,6 +557,16 @@ impl Track {
         }
     }
 
+    /// The exact inverse of [`Track::slug`], and nothing else.
+    ///
+    /// Separate from [`Track::parse`] on purpose: `parse` is deliberately
+    /// forgiving because it reads catalogue prose like "Champion 2/6", and a
+    /// forgiving decoder is the wrong thing under a market key, where two
+    /// spellings accepted for one track means two strings naming one market.
+    pub fn from_slug(slug: &str) -> Option<Track> {
+        Track::ALL.into_iter().find(|t| t.slug() == slug)
+    }
+
     /// Parse a name or a slug. Case-insensitive, and tolerant of the rank
     /// being stuck on the end -- `item_levels` stores "Champion 2/6".
     pub fn parse(raw: &str) -> Option<Track> {
@@ -783,6 +795,79 @@ impl Catalog {
     /// The name of an optional bonus -- "Prismatic Socket", "Leech".
     pub fn modifier(&self, bonus: u32) -> Option<&str> {
         self.modifiers.get(&bonus.to_string()).map(String::as_str)
+    }
+
+    /// The bonus ids a stored variant carries.
+    ///
+    /// The variant is the listing's whole bonus list, comma separated and
+    /// opaque to storage: keeping it whole is what makes every grouping rule
+    /// below a display decision, so a patch that renumbers a bonus costs a
+    /// catalogue entry and never any history (CLAUDE.md §8).
+    pub fn bonuses(variant: &str) -> impl Iterator<Item = u32> + '_ {
+        variant.split(',').filter_map(|id| id.parse::<u32>().ok())
+    }
+
+    /// The upgrade bonus in a variant: the one id this catalogue knows an item
+    /// level for. Anything else it carries is optional, and is counted within
+    /// a market rather than dividing one.
+    pub fn upgrade_in(&self, variant: &str) -> Option<u32> {
+        Catalog::bonuses(variant).find(|id| self.item_level(*id).is_some())
+    }
+
+    /// The rank a variant carries, if this catalogue has resolved it.
+    pub fn rank_in(&self, variant: &str) -> Option<&ItemLevel> {
+        self.upgrade_in(variant).and_then(|b| self.item_level(b))
+    }
+
+    /// The upgrade track a variant belongs to.
+    ///
+    /// The track bonus first, because it is the reliable one: the market
+    /// carries rank 12827 that no sync has resolved, and its listings still
+    /// land in Veteran because 13332 is beside it in the same variant. The
+    /// rank's own wording is the fallback, for a catalogue synced before
+    /// tracks were recorded.
+    ///
+    /// This lives here rather than in the page that draws the cards because it
+    /// decides *which market a price belongs to*, and two copies of that rule
+    /// are two answers to the same question.
+    pub fn track_in(&self, variant: &str) -> Option<Track> {
+        Catalog::bonuses(variant)
+            .find_map(|id| self.track(id))
+            .or_else(|| self.rank_in(variant).and_then(|l| Track::parse(&l.upgrade)))
+    }
+
+    /// The market a commodity observation belongs to.
+    ///
+    /// The rank comes from the catalogue rather than from the row, because the
+    /// row has only an item id and a reader names the market by its rank.
+    /// An item this catalogue does not track still gets a key -- rank 1 -- so
+    /// that history collected under an older catalogue stays addressable.
+    pub fn market_of(&self, sample: &PriceSample) -> MarketKey {
+        let rank = self
+            .find(sample.item)
+            .and_then(|entry| entry.rank_of(sample.item))
+            .unwrap_or(1);
+        MarketKey::commodity(sample.region, sample.item, rank)
+    }
+
+    /// The market a per-realm observation belongs to.
+    ///
+    /// A recipe has one version of itself and no track; a BoE is one market
+    /// per track. Anything this catalogue does not know the kind of is treated
+    /// as gear, because that is the shape the per-realm table holds and an
+    /// unresolved track is `None` rather than a market of its own.
+    pub fn market_of_realm(&self, sample: &RealmSample) -> MarketKey {
+        let kind = self.find(sample.item).map(|entry| entry.kind);
+        if kind == Some(ItemKind::Recipe) {
+            MarketKey::recipe(sample.region, sample.realm, sample.item)
+        } else {
+            MarketKey::boe(
+                sample.region,
+                sample.realm,
+                sample.item,
+                self.track_in(&sample.variant),
+            )
+        }
     }
 
     /// Recipes taught for one profession.
