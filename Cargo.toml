@@ -57,3 +57,13 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
+
+# The benchmark's second profile, and the reason CLAUDE.md §15 now records two
+# columns. `release` above is optimised for size (`opt-level = "z"`), which is
+# what actually ships and therefore what a capacity claim has to be made
+# against. It is not what isolates the read path: some of the time it measures
+# is the compiler declining to inline. Measuring both says how much of a number
+# is the profile and how much is the code.
+[profile.release-fast]
+inherits = "release"
+opt-level = 3

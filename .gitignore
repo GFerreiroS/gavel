@@ -2,4 +2,8 @@
 /data/*.db
 /data/*.db-shm
 /data/*.db-wal
+# Benchmark fixtures. `scripts/bench-fixture.py` builds them; they are an
+# archive rather than source, and the sanitised one is derived from a live
+# database that is not ours to commit.
+/data/bench/
 .env
