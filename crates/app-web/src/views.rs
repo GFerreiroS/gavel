@@ -312,6 +312,18 @@ pub struct GearCell {
     pub listings: u32,
     /// How many realms had one at all, for the cross-realm view.
     pub realms: usize,
+    /// The valuation band and its percentile, from the same engine and the
+    /// same estimator a commodity card uses. §7's "one name for one thing",
+    /// applied to the word that matters most: `Cheap` on a gear card is the
+    /// same claim about the same kind of evidence as `Cheap` on a flask.
+    ///
+    /// No sparkline beside it, and that is the deliberate half. A gear card
+    /// is four fixed track rows of cells (§7's "level the grid"), and four
+    /// lines inside one card fight that geometry rather than serving it; the
+    /// track's own analysis page draws the line.
+    pub band: Option<&'static str>,
+    pub band_slug: &'static str,
+    pub rank_percent: Option<u8>,
     /// Sockets and tertiary stats, as counts rather than as separate markets:
     /// they change what a piece is worth without changing what it is.
     pub extras: Vec<GearExtra>,
@@ -952,21 +964,55 @@ impl CharacterView {
 
 /// One quality rank within a card. Each rank is its own market, so each gets
 /// its own column of figures.
+///
+/// **Phase 5 replaced what these figures were.** The column used to print an
+/// all-time Avg, Low with its date and High with its date -- three prices and
+/// two dates that answered "what has this ever cost", which is a question
+/// about the archive rather than about buying one now. It answers the market
+/// question instead: where today's price sits in this market's own history
+/// (`band`, `rank_percent`), what the middle of that history is (`median`),
+/// how much of it there is to buy (`quantity`, `listings`), how recently that
+/// was true (`freshness`), and the shape it got here by (`spark`).
+///
+/// The all-time extremes did not move to another line of the card; they moved
+/// to the analysis page, which is where a question about the whole archive
+/// belongs and where the link at the bottom of every column goes.
 #[derive(Debug, Clone)]
 pub struct RankColumn {
     pub item_id: u32,
     pub label: String,
     pub has_data: bool,
     pub current: String,
-    pub mean: String,
-    pub low: String,
-    pub low_when: String,
-    pub high: String,
-    pub high_when: String,
-    pub quantity: u64,
+    /// The comparison window's median -- the engine's, so this is the same
+    /// number the analysis page and the alert rule call the median.
+    pub median: String,
+    /// Signed percentage from that median; negative is cheaper.
     pub delta_percent: i32,
     pub cheap: bool,
     pub dear: bool,
+    /// The valuation band's source string and its CSS slug, or `None` where
+    /// the evidence gate refused one. Never shown without `rank_percent`
+    /// beside it: §5.2 is explicit that the label is not shown alone.
+    pub band: Option<&'static str>,
+    pub band_slug: &'static str,
+    pub rank_percent: Option<u8>,
+    /// Why there is no band, as a source string and its two numbers, so the
+    /// card can say "34 hours of 72" rather than going quiet. §5.3's
+    /// `Not enough history` and its reason.
+    pub insufficient: Option<&'static str>,
+    pub insufficient_have: u32,
+    pub insufficient_need: u32,
+    pub quantity: u64,
+    pub listings: u32,
+    /// How long ago this market was last observed, already worded in the
+    /// reader's language.
+    pub freshness: String,
+    /// Older than the page's own snapshot: this market did not refresh when
+    /// the rest of the page did, so its figures are about a different moment.
+    pub stale: bool,
+    /// The sparkline, rendered. Empty where there is no shape to draw, and the
+    /// template then draws nothing rather than an empty box.
+    pub spark: String,
 }
 
 /// One consumable as a card, with a column per rank.

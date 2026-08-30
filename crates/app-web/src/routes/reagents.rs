@@ -198,7 +198,13 @@ async fn build<E: Ports>(
     } else {
         crate::read_model::commodity_page(env, region, prefs.baseline_days).await?
     };
-    let (latest, recent, all_time) = (page.current, page.recent, page.all_time);
+    let (latest, recent) = (page.current, page.recent);
+    // The page's own snapshot: what a card's freshness is news against.
+    let ctx = crate::cards::CardContext {
+        locale: prefs.locale,
+        now,
+        newest: latest.values().filter_map(|s| s.observed_at).max(),
+    };
 
     // Localised names come from the tooltip cache, so a search matches what
     // the visitor can actually see on the page.
@@ -219,7 +225,7 @@ async fn build<E: Ports>(
         }
         let mut cards: Vec<ItemCard> = catalog
             .by_profession(profession)
-            .map(|entry| crate::cards::card(entry, &latest, &recent, &all_time, &tooltips))
+            .map(|entry| crate::cards::card(entry, &latest, &recent, &tooltips, ctx))
             .filter(|card| matches(card, &needle))
             .collect();
         if cards.is_empty() {

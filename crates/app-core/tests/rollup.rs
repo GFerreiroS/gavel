@@ -10,7 +10,9 @@
 use app_core::market::catalog::Track;
 use app_core::market::materialise::{self, Scope};
 use app_core::market::window::Window;
-use app_core::market::{Catalog, CatalogSet, Copper, ItemId, RealmId, RealmSample, Region};
+use app_core::market::{
+    Catalog, CatalogSet, Copper, ItemId, RealmId, RealmSample, Region, Valuation,
+};
 use cluster_core::Millis;
 
 const AT: Millis = Millis(1_767_225_600_000);
@@ -296,4 +298,60 @@ fn a_variant_a_realm_has_stopped_listing_is_not_on_sale() {
         "but the window still remembers what it cost"
     );
     assert_eq!(hero.listings_seen, 7);
+}
+
+/// The band ranks the price the card prints, not the cheapest realm's.
+///
+/// The distribution behind a per-realm roll-up is built from `series`, whose
+/// price is the *median* of what the realms in scope charge. Ranking
+/// `cheapest_now` inside it compares the cheapest realm against a history of
+/// median realms -- two different questions, and one whose answer is fixed in
+/// advance, because the minimum of a set is below its median by construction.
+///
+/// Run against the real archive, that made **every one of the 27 gear cells
+/// on the page read "Very cheap, P0"**: a verdict on every card, carrying no
+/// information, and wrong. This test is that page, in miniature.
+#[test]
+fn a_roll_up_ranks_the_price_it_shows() {
+    // Three realms, steady for a fortnight, with the same spread every hour:
+    // 100 / 200 / 300, so the median realm is 200 throughout and today is an
+    // utterly ordinary day.
+    let mut history = Vec::new();
+    for hour in 0..14 * 24u64 {
+        let at = Millis(AT.get() - (14 * 24 - 1 - hour) * 60 * 60 * 1000);
+        history.push(sample(1403, "12833,13333", 100, 3, at));
+        history.push(sample(1084, "12834,13333", 300, 2, at));
+        history.push(sample(1080, "12835,13333", 200, 5, at));
+    }
+    let rollups = roll(&history);
+    let region = rollups
+        .iter()
+        .find(|r| r.scope == Scope::Region)
+        .expect("a region roll-up");
+
+    let position = region.position.expect("a fortnight earns a position");
+    assert_eq!(
+        region.median_realm_now,
+        Some(Copper(200)),
+        "the figure the cell prints"
+    );
+
+    // A market that has not moved is Typical, whatever the spread across
+    // realms happens to be. Ranking the cheapest realm instead would put this
+    // at the bottom of its own history on a day nothing happened.
+    assert_eq!(
+        position.valuation,
+        Some(Valuation::Typical),
+        "an unchanged market is typical, not very cheap"
+    );
+    assert!(
+        position.rank.is_some_and(|rank| rank > 5),
+        "the rank must not be pinned to the floor: {:?}",
+        position.rank
+    );
+    assert_eq!(
+        position.from_median_percent,
+        Some(0),
+        "today's price is the median of its own history"
+    );
 }

@@ -51,7 +51,7 @@ msgstr ""
 msgid "Account"
 msgstr "Cuenta"
 
-#: crates/app-web/templates/partials/consumables.html:53
+#: crates/app-web/templates/consumables.html:49
 #: crates/app-web/templates/partials/patches.html:5
 msgid "Across {}"
 msgstr "Durante {}"
@@ -60,9 +60,9 @@ msgstr "Durante {}"
 msgid "Activate"
 msgstr "Activar"
 
-#: crates/app-web/templates/macros.html:97
-msgid "Against the average of the last {} days"
-msgstr "Frente a la media de los últimos {} días"
+#: crates/app-web/templates/macros.html:99
+msgid "Against the median of the last {} days"
+msgstr "Frente a la mediana de los últimos {} días"
 
 #: crates/app-web/src/i18n.rs
 msgid "Alchemy"
@@ -146,17 +146,13 @@ msgstr ""
 "última columna abarca toda la expansión, que es lo que significa «cuánto "
 "costaba esto durante {}» una vez terminada."
 
-#: crates/app-web/templates/partials/consumables.html:34
+#: crates/app-web/templates/partials/consumables.html:30
 msgid ""
 "Average, lowest and highest are all-time. Each rank is its own market, so "
 "each gets its own column."
 msgstr ""
 "La media, el mínimo y el máximo son históricos. Cada rango es un mercado "
 "propio, así que cada uno tiene su columna."
-
-#: crates/app-web/templates/macros.html:105
-msgid "Avg"
-msgstr "Media"
 
 #: crates/app-web/src/i18n.rs
 msgid "Avoidance"
@@ -228,9 +224,13 @@ msgstr "Variación"
 msgid "Character"
 msgstr "Personaje"
 
+#: crates/app-web/src/i18n.rs
+msgid "Cheap"
+msgstr "Barato"
+
 #: crates/app-web/templates/gear_stats.html:114
 #: crates/app-web/templates/gear_stats.html:38
-#: crates/app-web/templates/partials/gear.html:70
+#: crates/app-web/templates/macros.html:249
 msgid "Cheapest"
 msgstr "Más barato"
 
@@ -443,7 +443,11 @@ msgstr "Todos"
 msgid "Expansion"
 msgstr "Expansión"
 
-#: crates/app-web/templates/partials/gear.html:84
+#: crates/app-web/src/i18n.rs
+msgid "Expensive"
+msgstr "Caro"
+
+#: crates/app-web/templates/macros.html:263
 msgid "Extras"
 msgstr "Extras"
 
@@ -537,13 +541,12 @@ msgid "Hero"
 msgstr "Héroe"
 
 #: crates/app-web/templates/item.html:148
-#: crates/app-web/templates/macros.html:107
 msgid "High"
 msgstr "Máx."
 
 #: crates/app-web/templates/gear_stats.html:115
 #: crates/app-web/templates/gear_stats.html:38
-#: crates/app-web/templates/partials/gear.html:74
+#: crates/app-web/templates/macros.html:253
 msgid "Highest"
 msgstr "Más caro"
 
@@ -679,7 +682,7 @@ msgid "Linked accounts"
 msgstr "Cuentas vinculadas"
 
 #: crates/app-web/templates/gear_stats.html:118
-#: crates/app-web/templates/partials/gear.html:78
+#: crates/app-web/templates/macros.html:257
 msgid "Listings"
 msgstr "Subastas"
 
@@ -689,12 +692,13 @@ msgstr "En directo"
 
 #: crates/app-web/templates/consumables.html:27
 #: crates/app-web/templates/enhancements.html:43
-#: crates/app-web/templates/gear.html:105
+#: crates/app-web/templates/macros.html:166
+#: crates/app-web/templates/macros.html:302
 #: crates/app-web/templates/reagents.html:54
 msgid "Loading prices…"
 msgstr "Cargando precios…"
 
-#: crates/app-web/templates/partials/consumables.html:54
+#: crates/app-web/templates/consumables.html:50
 msgid "Loading the patch history…"
 msgstr "Cargando el histórico por parche…"
 
@@ -705,7 +709,6 @@ msgid "Loading…"
 msgstr "Cargando…"
 
 #: crates/app-web/templates/item.html:148
-#: crates/app-web/templates/macros.html:106
 msgid "Low"
 msgstr "Mín."
 
@@ -722,6 +725,7 @@ msgid "Mean latency"
 msgstr "Latencia media"
 
 #: crates/app-web/templates/item.html:60
+#: crates/app-web/templates/macros.html:127
 msgid "Median"
 msgstr "Mediana"
 
@@ -787,11 +791,11 @@ msgid "No linked accounts."
 msgstr "No hay cuentas vinculadas."
 
 #: crates/app-web/templates/gear_stats.html:111
-#: crates/app-web/templates/partials/gear.html:35
+#: crates/app-web/templates/macros.html:198
 msgid "No listings in this snapshot."
 msgstr "No hay subastas en esta instantánea."
 
-#: crates/app-web/templates/partials/gear.html:66
+#: crates/app-web/templates/macros.html:229
 msgid "No listings."
 msgstr "Sin subastas."
 
@@ -803,7 +807,7 @@ msgstr ""
 "Todavía no hay observaciones de este mercado. Las estadísticas aparecen "
 "cuando el recolector se haya ejecutado."
 
-#: crates/app-web/templates/macros.html:120
+#: crates/app-web/templates/macros.html:142
 msgid "No observations yet."
 msgstr "Todavía no hay observaciones."
 
@@ -837,7 +841,11 @@ msgstr "Ninguno visto en esta vía."
 msgid "Not collected. Click to start."
 msgstr "No se recoge. Pulsa para empezar."
 
-#: crates/app-web/templates/macros.html:112
+#: crates/app-web/src/i18n.rs
+msgid "Not enough history"
+msgstr "Histórico insuficiente"
+
+#: crates/app-web/templates/macros.html:136
 msgid "Not listed."
 msgstr "No está a la venta."
 
@@ -847,7 +855,7 @@ msgstr "No está a la venta."
 msgid "Nothing matches that search."
 msgstr "No hay nada que coincida con esa búsqueda."
 
-#: crates/app-web/templates/partials/consumables.html:37
+#: crates/app-web/templates/macros.html:164
 msgid "Nothing tracked in this group."
 msgstr "No se sigue nada en este grupo."
 
@@ -913,13 +921,17 @@ msgstr "Máximo en curso"
 msgid "Per connected realm"
 msgstr "Por reino conectado"
 
-#: crates/app-web/templates/partials/alerts.html:22
+#: crates/app-web/src/i18n.rs crates/app-web/templates/partials/alerts.html:22
 msgid "Price"
 msgstr "Precio"
 
 #: crates/app-web/templates/item.html:58
 msgid "Price now"
 msgstr "Precio actual"
+
+#: crates/app-web/src/i18n.rs
+msgid "Price over the comparison window"
+msgstr "Precio durante el periodo de comparación"
 
 #: crates/app-web/templates/item.html:99
 msgid "Price over time"
@@ -970,6 +982,11 @@ msgstr "Ranura prismática"
 #: crates/app-web/templates/partials/jobs.html:9
 msgid "Progress"
 msgstr "Progreso"
+
+#: crates/app-web/templates/macros.html:115
+#: crates/app-web/templates/macros.html:244
+msgid "P{}"
+msgstr "P{}"
 
 #: crates/app-web/templates/partials/nodes.html:15
 msgid "RAM"
@@ -1091,13 +1108,14 @@ msgstr "Materiales compartidos"
 msgid "Shoulder"
 msgstr "Hombros"
 
-#: crates/app-web/templates/partials/consumables.html:57
+#: crates/app-web/templates/consumables.html:53
 msgid "Show the patch history"
 msgstr "Ver el histórico por parche"
 
 #: crates/app-web/templates/consumables.html:32
 #: crates/app-web/templates/enhancements.html:48
-#: crates/app-web/templates/gear.html:110
+#: crates/app-web/templates/macros.html:169
+#: crates/app-web/templates/macros.html:305
 #: crates/app-web/templates/reagents.html:59
 msgid "Show the prices"
 msgstr "Ver los precios"
@@ -1112,7 +1130,7 @@ msgstr "Mostrando solo {}. Los precios son la subasta más barata de ese reino."
 
 #: crates/app-web/templates/account.html:29
 #: crates/app-web/templates/account.html:35
-#: crates/app-web/templates/alerts.html:9 crates/app-web/templates/base.html:57
+#: crates/app-web/templates/alerts.html:9 crates/app-web/templates/base.html:62
 msgid "Sign in"
 msgstr "Iniciar sesión"
 
@@ -1162,8 +1180,8 @@ msgstr "Velocidad"
 msgid "State"
 msgstr "Estado"
 
-#: crates/app-web/templates/macros.html:110
-#: crates/app-web/templates/partials/gear.html:100
+#: crates/app-web/templates/macros.html:134
+#: crates/app-web/templates/macros.html:279
 msgid "Stats & graphs"
 msgstr "Estadísticas y gráficas"
 
@@ -1171,7 +1189,7 @@ msgstr "Estadísticas y gráficas"
 msgid "Status"
 msgstr "Estado"
 
-#: crates/app-web/templates/macros.html:108
+#: crates/app-web/templates/macros.html:128
 #: crates/app-web/templates/partials/alerts.html:23
 msgid "Stock"
 msgstr "Existencias"
@@ -1300,6 +1318,10 @@ msgstr "Tier"
 msgid "Today's alerts"
 msgstr "Alertas de hoy"
 
+#: crates/app-web/src/i18n.rs
+msgid "Too many gaps"
+msgstr "Demasiados huecos"
+
 #: crates/app-web/templates/auctions.html:100
 #: crates/app-web/templates/auctions.html:83
 msgid "Tracked items"
@@ -1313,6 +1335,10 @@ msgstr "Arma a dos manos"
 msgid "Type"
 msgstr "Tipo"
 
+#: crates/app-web/src/i18n.rs
+msgid "Typical"
+msgstr "Habitual"
+
 #: crates/app-web/templates/alerts.html:45
 msgid "Unfollow"
 msgstr "Dejar de seguir"
@@ -1320,6 +1346,10 @@ msgstr "Dejar de seguir"
 #: crates/app-web/templates/item.html:115
 msgid "Units listed over time"
 msgstr "Unidades a la venta a lo largo del tiempo"
+
+#: crates/app-web/templates/macros.html:132
+msgid "Updated"
+msgstr "Actualizado"
 
 #: crates/app-web/templates/gear_stats.html:37
 msgid "Upgrade"
@@ -1341,6 +1371,14 @@ msgstr "Utilidad"
 #: crates/app-web/src/i18n.rs
 msgid "Vantus runes"
 msgstr "Runas de Vantus"
+
+#: crates/app-web/src/i18n.rs
+msgid "Very cheap"
+msgstr "Muy barato"
+
+#: crates/app-web/src/i18n.rs
+msgid "Very expensive"
+msgstr "Muy caro"
 
 #: crates/app-web/src/i18n.rs
 msgid "Veteran"
@@ -1486,7 +1524,7 @@ msgstr "coordinador"
 msgid "crit"
 msgstr "crítico"
 
-#: crates/app-web/templates/base.html:68
+#: crates/app-web/templates/base.html:73
 msgid "debug controls enabled"
 msgstr "controles de depuración activados"
 
@@ -1546,7 +1584,7 @@ msgstr "inyectado"
 msgid "invalid username or password"
 msgstr "usuario o contraseña incorrectos"
 
-#: crates/app-web/templates/base.html:46
+#: crates/app-web/templates/base.html:51
 msgid "item text only"
 msgstr "solo el texto de los objetos"
 
@@ -1646,7 +1684,7 @@ msgstr "no permitido"
 msgid "offline"
 msgstr "desconectado"
 
-#: crates/app-web/templates/partials/gear.html:80
+#: crates/app-web/templates/macros.html:259
 msgid "on {} realms"
 msgstr "en {} reinos"
 
@@ -1904,6 +1942,10 @@ msgstr "{} se ha incorporado"
 msgid "{} left"
 msgstr "{} se ha ido"
 
+#: crates/app-web/templates/macros.html:128
+msgid "{} listings"
+msgstr "{} subastas"
+
 #: crates/app-web/src/i18n.rs
 msgid "{} lost coordinator role"
 msgstr "{} ha perdido el rol de coordinador"
@@ -1919,6 +1961,10 @@ msgstr "{} de {} encantamientos coinciden."
 #: crates/app-web/src/i18n.rs
 msgid "{} of {} gems match."
 msgstr "{} de {} gemas coinciden."
+
+#: crates/app-web/templates/macros.html:119
+msgid "{} of {} hours"
+msgstr "{} de {} horas"
 
 #: crates/app-web/templates/admin.html:96
 msgid "{} of {} markets"
@@ -1956,9 +2002,12 @@ msgstr "{} tarea(s)"
 msgid "{} — from {}"
 msgstr "{} — desde {}"
 
-#: crates/app-web/templates/base.html:45
+#: crates/app-web/templates/base.html:50
 msgid "{}% translated"
 msgstr "{} % traducido"
+
+#~ msgid "Avg"
+#~ msgstr "Media"
 
 #~ msgid "Recent alerts"
 #~ msgstr "Avisos recientes"

@@ -7,9 +7,11 @@
 use app_core::market::analysis::{Cycle, Point, Trend};
 use app_core::market::catalog::CatalogStatus;
 use app_core::market::event::{EventKind, EventScope, Provenance, Validation, Visibility};
-use app_core::market::materialise::{MarketState, MarketWindow, Materialised};
+use app_core::market::materialise::{
+    LevelStat, MarketRollup, MarketState, MarketWindow, Materialised, ModifierStat, Scope,
+};
 use app_core::market::window::Window;
-use app_core::market::{MarketEvent, MarketKey};
+use app_core::market::{ItemKind, MarketEvent, MarketKey, Track};
 use app_core::model::Session;
 use app_core::repo::{
     CacheStore, EventRepository, JobRepository, KeyValueStore, MarketEventRepository,
@@ -1317,7 +1319,31 @@ fn materialised(item: u32, price: u64, samples: u32) -> Materialised {
             high: Copper(price),
             high_at: Millis(1_000),
             mean: Copper(price),
-            median: Copper(price),
+            distribution: app_core::market::engine::Distribution {
+                p05: Copper(price),
+                p25: Copper(price),
+                median: Copper(price),
+                p75: Copper(price),
+                p95: Copper(price),
+                iqr: Copper(0),
+                mad: Copper(0),
+                buckets: samples,
+            },
+            position: app_core::market::engine::Position {
+                rank: Some(50),
+                valuation: Some(app_core::market::engine::Valuation::Typical),
+                insufficient: None,
+                from_median_percent: Some(0),
+                anomaly: app_core::market::engine::Anomaly::Ordinary,
+            },
+            swing: app_core::market::engine::Swing(0),
+            // With a gap in the middle, deliberately: the sparkline is stored
+            // as a string rather than JSON, and a `None` between two values is
+            // the case that encoding has to survive a round trip through
+            // SQLite. `assert_eq!(windows, original.windows)` below covers it.
+            spark: app_core::market::engine::Spark {
+                slots: vec![Some(Copper(price)), None, Some(Copper(price))],
+            },
             samples,
             first_at: Millis(0),
             last_at: Millis(1_000),
@@ -1492,4 +1518,151 @@ async fn only_a_live_candidate_can_be_published() {
         model.publish(version, (None, None), Millis(30)).await,
         Err(app_core::error::RepoError::Conflict(_))
     ));
+}
+
+/// A per-realm roll-up, with every column Phase 5 added filled in.
+///
+/// Deliberately not `MarketRollup::empty` plus a price: the bug this test was
+/// written after was a column list and a placeholder list that had drifted
+/// apart, and only a row that binds *every* column can catch that.
+fn rollup(item: u32, price: u64) -> MarketRollup {
+    MarketRollup {
+        region: Region::Eu,
+        item: ItemId(item),
+        kind: ItemKind::Boe,
+        track: Some(Track::Hero),
+        scope: Scope::Realm(RealmId(1403)),
+        window: Window::Days(7),
+        observed_at: Some(Millis(1_000)),
+        snapshots: 12,
+        realms_listing: 3,
+        cheapest_now: Some(Copper(price)),
+        cheapest_realm: Some(RealmId(1403)),
+        dearest_realm_now: Some(Copper(price * 2)),
+        dearest_realm: Some(RealmId(1404)),
+        median_realm_now: Some(Copper(price + price / 2)),
+        highest_now: Some(Copper(price * 3)),
+        cheapest_ever: Some(Copper(price / 2)),
+        highest_ever: Some(Copper(price * 4)),
+        listings_now: 7,
+        listings_seen: 91,
+        level_range: "279-285".to_string(),
+        levels: vec![LevelStat {
+            item_level: 285,
+            upgrade: "Hero 4/6".to_string(),
+            cheapest: Copper(price),
+            highest: Copper(price * 2),
+            listings: 4,
+            realms: 1,
+        }],
+        modifiers: vec![ModifierStat {
+            name: "Leech".to_string(),
+            now: 2,
+            seen: 9,
+        }],
+        series: vec![Point {
+            at: Millis(1_000),
+            price: Copper(price),
+            quantity: 7,
+        }],
+        distribution: Some(app_core::market::engine::Distribution {
+            p05: Copper(price / 2),
+            p25: Copper(price - 10),
+            median: Copper(price),
+            p75: Copper(price + 10),
+            p95: Copper(price * 2),
+            iqr: Copper(20),
+            mad: Copper(8),
+            buckets: 96,
+        }),
+        position: Some(app_core::market::engine::Position {
+            rank: Some(4),
+            valuation: Some(app_core::market::engine::Valuation::VeryCheap),
+            insufficient: None,
+            from_median_percent: Some(-31),
+            anomaly: app_core::market::engine::Anomaly::Mild,
+        }),
+        swing: app_core::market::engine::Swing(140),
+    }
+}
+
+/// A roll-up comes back the way it went in, band and all.
+///
+/// This path had no test at all until Phase 5 added sixteen columns to it and
+/// the insert went out by two placeholders -- which every existing test passed
+/// straight through, because none of them staged a roll-up. The failure only
+/// appeared when the server was run against the real archive: `39 values for
+/// 41 columns`, once, in a log line, on a code path a page reads from.
+#[tokio::test]
+async fn a_rolled_up_market_round_trips() {
+    let store = store().await;
+    let model = store.read_model();
+    let version = model.begin(2, Millis(10)).await.unwrap();
+    let original = rollup(212_265, 5_000);
+
+    model
+        .stage_rollups(version, std::slice::from_ref(&original))
+        .await
+        .unwrap();
+    model
+        .publish(version, (Some(Millis(0)), Some(Millis(1_000))), Millis(20))
+        .await
+        .unwrap();
+
+    let back = model
+        .rollup(
+            original.region,
+            original.item,
+            original.track,
+            original.scope,
+        )
+        .await
+        .unwrap()
+        .expect("the roll-up is published");
+    assert_eq!(back, original);
+}
+
+/// The refusal survives the round trip too, with its two numbers.
+///
+/// A band and a reason are stored in different columns, and a reason is the
+/// thing a card prints *instead* of a band -- so a reason that came back as
+/// `None` would be a card going quiet, which is the failure §5.3 names.
+#[tokio::test]
+async fn a_rollup_without_enough_history_keeps_its_reason() {
+    let store = store().await;
+    let model = store.read_model();
+    let version = model.begin(2, Millis(10)).await.unwrap();
+
+    let mut original = rollup(212_266, 900);
+    original.position = Some(app_core::market::engine::Position {
+        rank: Some(50),
+        valuation: None,
+        insufficient: Some(app_core::market::engine::Insufficient::TooManyGaps {
+            coverage: 12,
+            need: 25,
+        }),
+        from_median_percent: Some(0),
+        anomaly: app_core::market::engine::Anomaly::Ordinary,
+    });
+
+    model
+        .stage_rollups(version, std::slice::from_ref(&original))
+        .await
+        .unwrap();
+    model
+        .publish(version, (None, None), Millis(20))
+        .await
+        .unwrap();
+
+    let back = model
+        .rollup(
+            original.region,
+            original.item,
+            original.track,
+            original.scope,
+        )
+        .await
+        .unwrap()
+        .expect("the roll-up is published");
+    assert_eq!(back.position, original.position);
 }

@@ -5,6 +5,11 @@
 //! 900g and now costs 400g is interesting, and no absolute threshold could
 //! know that without being re-tuned every patch.
 //!
+//! The percentile is the engine's, which is the whole point of there being an
+//! engine: an alert that called a price cheap while the card it links to called
+//! it typical would be two answers to one question. See
+//! [`super::engine`] for the estimator and why it is that one.
+//!
 //! Two consequences worth knowing:
 //!
 //! * **Alerting is dead until there is history.** With fewer than
@@ -18,6 +23,7 @@
 use cluster_core::Millis;
 use serde::{Deserialize, Serialize};
 
+use super::engine::Buckets;
 use super::{Copper, ItemId, PriceSample, Region};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -45,8 +51,12 @@ pub struct AlertRule {
     /// Alert when the current price is at or below this percentile of the
     /// baseline. 10 means "cheaper than 90% of the last fortnight".
     pub percentile: u8,
-    /// Below this many observations, the percentile is not trustworthy and
+    /// Below this many *hourly buckets*, the percentile is not trustworthy and
     /// only the hard floor applies.
+    ///
+    /// Buckets rather than rows since the engine landed: two observations in
+    /// one hour are one hour of evidence, and counting them as two was a way
+    /// of reaching the threshold without reaching the evidence.
     pub min_samples: usize,
     /// Markets thinner than this are ignored entirely.
     pub min_quantity: u64,
@@ -115,26 +125,29 @@ pub fn evaluate(
         return Some(build(rule, current, floor, floor, AlertSeverity::VeryLow));
     }
 
-    let window: Vec<u64> = history
-        .iter()
-        .filter(|s| current.observed_at.since(s.observed_at) <= rule.lookback_ms)
-        .map(|s| s.p05_unit_price.get())
-        .collect();
+    // The same buckets and the same estimator the card and the analysis page
+    // use. Before this it was a nearest-rank percentile over raw rows, which
+    // is a different estimator over a different sample -- so an alert could
+    // call a price cheap that the card it linked to called typical.
+    let window = Buckets::from_observations(
+        history
+            .iter()
+            .filter(|s| current.observed_at.since(s.observed_at) <= rule.lookback_ms)
+            .map(|s| (s.observed_at, s.p05_unit_price)),
+    );
 
     if window.len() < rule.min_samples {
         return None;
     }
 
-    let threshold = Copper(percentile(&window, rule.percentile));
+    let fraction = |percent: u8| f64::from(percent) / 100.0;
+    let threshold = window.quantile(fraction(rule.percentile))?;
     if current.p05_unit_price > threshold {
         return None;
     }
 
-    let baseline = Copper(percentile(&window, 50));
-    let severe = Copper(percentile(
-        &window,
-        rule.percentile.saturating_div(2).max(1),
-    ));
+    let baseline = window.quantile(0.5)?;
+    let severe = window.quantile(fraction(rule.percentile.saturating_div(2).max(1)))?;
     let severity = if current.p05_unit_price <= severe {
         AlertSeverity::VeryLow
     } else {
@@ -168,15 +181,4 @@ fn build(
         discount_percent: discount,
         quantity: current.quantity,
     }
-}
-
-/// Nearest-rank percentile over an unsorted slice.
-fn percentile(values: &[u64], percent: u8) -> u64 {
-    if values.is_empty() {
-        return 0;
-    }
-    let mut sorted = values.to_vec();
-    sorted.sort_unstable();
-    let rank = ((sorted.len() as u64 * percent as u64).div_ceil(100)).max(1) as usize;
-    sorted[rank.min(sorted.len()) - 1]
 }

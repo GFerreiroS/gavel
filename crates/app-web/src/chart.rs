@@ -11,6 +11,7 @@
 
 use std::fmt::Write;
 
+use app_core::market::engine::Spark;
 use app_core::market::{Copper, Cycle, Point};
 use cluster_core::Millis;
 
@@ -404,6 +405,125 @@ fn placeholder(note: &str) -> String {
     format!(r#"<p class="chart-empty muted">{}</p>"#, escape(note))
 }
 
+// --- sparkline -----------------------------------------------------------
+
+/// The sparkline's own box. Small, and wide rather than tall: it sits inside a
+/// card between the price and the figures, where a reader wants the shape of
+/// the last fortnight and not a chart to read values off. There are no axes
+/// for that reason -- the numbers it would label are printed underneath it.
+const SPARK_W: f64 = 100.0;
+const SPARK_H: f64 = 24.0;
+
+/// One market's shape over the reader's comparison window.
+///
+/// Takes [`Spark`]'s equal-duration slots, so the horizontal really is time
+/// and a gap really is a gap: the line breaks at a slot nothing was observed
+/// in rather than being drawn straight through it, which would invent the very
+/// data §15 says is never invented.
+///
+/// Returns an empty string for a market with no shape to draw. The caller
+/// renders nothing at all rather than an empty box, because a card grid needs
+/// every card the same height and an empty box is not a smaller thing than a
+/// line -- it is the same height saying less.
+pub fn sparkline(spark: &Spark, label: &str) -> String {
+    if spark.is_empty() {
+        return String::new();
+    }
+    let values: Vec<u64> = spark.slots.iter().flatten().map(|p| p.get()).collect();
+    let (lo, hi) = (
+        *values.iter().min().expect("not empty"),
+        *values.iter().max().expect("not empty"),
+    );
+    // A flat market draws down the middle rather than dividing by zero. It is
+    // also the honest picture: nothing moved.
+    let span = (hi - lo) as f64;
+    let slots = spark.slots.len().max(2);
+    // Rounded to whole viewBox units, which costs nothing and is most of the
+    // markup. The box is 100 by 24 and the line renders about 24 pixels tall,
+    // so a unit is a pixel: `73.3,17.6` and `73,18` draw the same line, and
+    // the first is nearly twice the bytes across several hundred cards.
+    let x = |index: usize| (index as f64 / (slots - 1) as f64 * SPARK_W).round() as i32;
+    let y = |price: u64| {
+        if span == 0.0 {
+            (SPARK_H / 2.0).round() as i32
+        } else {
+            // A 1px inset top and bottom so a peak's stroke is not clipped by
+            // the viewBox.
+            (SPARK_H - 1.0 - (price - lo) as f64 / span * (SPARK_H - 2.0)).round() as i32
+        }
+    };
+
+    let mut svg = String::with_capacity(320);
+    // No inline `<style>` and no per-element colour: the stroke is painted by
+    // `.spark-line` in the stylesheet. `SERIES_COLOURS` is still the one
+    // source of truth -- the comment on it records what happened when the
+    // palette lived in two places at once -- and `the_stylesheet_paints_the
+    // _sparkline_the_series_colour` is what now keeps the two in step. A test
+    // catches that drift once; a custom property on every SVG would pay for it
+    // on every card of every page, for ever.
+    let _ = write!(
+        svg,
+        r#"<svg class="spark" viewBox="0 0 {SPARK_W:.0} {SPARK_H:.0}" role="img" aria-label="{}" preserveAspectRatio="none">"#,
+        escape(label)
+    );
+
+    // One polyline per run of observed slots. A break in the data is a break
+    // in the line, which is the whole reason the slots are optional.
+    let mut run: Vec<String> = Vec::new();
+    let flush = |svg: &mut String, run: &mut Vec<String>| {
+        match run.len() {
+            0 => {}
+            // A single observed slot between two gaps is a dot: a polyline of
+            // one point draws nothing at all, and "nothing" is the wrong
+            // picture for an observation that happened.
+            1 => {
+                let point = run[0].clone();
+                let (px, py) = point.split_once(',').expect("written as x,y");
+                let _ = write!(
+                    svg,
+                    r#"<circle class="spark-dot" cx="{px}" cy="{py}" r="1"/>"#
+                );
+            }
+            _ => {
+                let _ = write!(
+                    svg,
+                    r#"<polyline class="spark-line" points="{}"/>"#,
+                    run.join(" ")
+                );
+            }
+        }
+        run.clear();
+    };
+    for (index, slot) in spark.slots.iter().enumerate() {
+        match slot {
+            Some(price) => run.push(format!("{},{}", x(index), y(price.get()))),
+            None => flush(&mut svg, &mut run),
+        }
+    }
+    flush(&mut svg, &mut run);
+
+    // The latest observed slot, marked. A sparkline's rightmost point is the
+    // one a reader is actually standing on, and on a line this short it is
+    // otherwise indistinguishable from the rest of the stroke.
+    if let Some((index, price)) = spark
+        .slots
+        .iter()
+        .enumerate()
+        .filter_map(|(i, s)| s.map(|p| (i, p)))
+        .next_back()
+    {
+        let _ = write!(
+            svg,
+            r#"<circle class="spark-now" cx="{}" cy="{}" r="1.8"/>"#,
+            x(index),
+            y(price.get())
+        );
+    }
+
+    svg.push_str("</svg>");
+    svg
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -545,6 +665,45 @@ mod tests {
                 "slot {slot} is {colour} in the legend but not in the chart"
             );
         }
+    }
+
+    /// The card sparkline is painted by the stylesheet, so the stylesheet has
+    /// to agree with the palette.
+    ///
+    /// The sparkline carries no `<style>` of its own and no per-element
+    /// colour: a category page draws several hundred of them, and paying
+    /// twenty-four bytes a card to restate a constant is the kind of thing
+    /// Phase 3 spent its time removing. That leaves the value written down in
+    /// two places, which is exactly the arrangement `SERIES_COLOURS` exists to
+    /// prevent -- so this is the test that makes it safe: drift fails here
+    /// rather than showing up as a line nobody can see.
+    #[test]
+    fn the_stylesheet_paints_the_sparkline_the_series_colour() {
+        let stylesheet = include_str!("../static/style.css");
+        let expected = series_colour(0);
+        let painted: Vec<&str> = stylesheet
+            .lines()
+            .filter(|line| line.contains("stroke:") || line.contains("fill:"))
+            .filter(|line| line.contains('#'))
+            .collect();
+        assert!(
+            !painted.is_empty(),
+            "no literal colour in the stylesheet: has .spark-line moved?"
+        );
+        for rule in [
+            "stroke: #3b82f6;",
+            ".spark-dot, .spark-now { fill: #3b82f6;",
+        ] {
+            assert!(
+                stylesheet.contains(rule),
+                "the stylesheet no longer contains `{rule}`; \
+                 keep it equal to SERIES_COLOURS[0] ({expected})"
+            );
+        }
+        assert_eq!(
+            expected, "#3b82f6",
+            "the palette moved: update .spark-line and .spark-dot in style.css to match"
+        );
     }
 
     /// Every series colour has to resolve, or the line is drawn in nothing.

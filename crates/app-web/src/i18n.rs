@@ -128,6 +128,30 @@ pub const EXTERNAL_STRINGS: &[&str] = &[
     "Champion",
     "Hero",
     "Myth",
+    // A single-rank card's column label (cards::card). The multi-rank labels
+    // are rank numbers prefixed with an R, which are not words and are left
+    // alone; this one is a word, and it rendered in English on an otherwise
+    // Spanish page until it was listed here. (Keep quoted tokens out of the
+    // comments in this block: the extractor reads them as entries.)
+    "Price",
+    // The valuation bands (market::engine::Valuation). One word decides how a
+    // reader reads every figure beside it, and it reaches the template as
+    // `{{ band|t }}` from a stored row, so a template scan cannot see it. A
+    // test asserts every variant of the enum is here.
+    "Very cheap",
+    "Cheap",
+    "Typical",
+    "Expensive",
+    "Very expensive",
+    // Why there is no band (market::engine::Insufficient). §5.3 wants the
+    // refusal said out loud rather than a card going quiet, and a refusal
+    // nobody translated is a card going quiet in Spanish.
+    "Not enough history",
+    "Too many gaps",
+    // The card sparkline's accessible name (chart::sparkline). Built in Rust
+    // because the SVG is, so it is listed here like any other label that does
+    // not pass through a template literal.
+    "Price over the comparison window",
     // Equipment slots (market::Slot), the enchant grouping.
     "Head",
     "Neck",
@@ -544,6 +568,51 @@ mod tests {
                 EXTERNAL_STRINGS.contains(&track.as_str()),
                 "track not listed for translation: {}",
                 track.as_str()
+            );
+        }
+    }
+
+    /// Every valuation band must be translatable.
+    ///
+    /// It is one word and it decides how a reader reads every figure beside
+    /// it. It also reaches the template as `{{ band|t }}` from a stored row,
+    /// so nothing that scans templates can find it -- which is exactly the
+    /// shape of bug this test exists for.
+    #[test]
+    fn every_valuation_band_is_listed() {
+        for band in app_core::market::Valuation::ALL {
+            assert!(
+                EXTERNAL_STRINGS.contains(&band.as_str()),
+                "band not listed for translation: {}",
+                band.as_str()
+            );
+        }
+    }
+
+    /// So must every reason a band was refused.
+    ///
+    /// §5.3 wants the refusal said out loud rather than a card going quiet,
+    /// and a refusal nobody translated is a card going quiet in Spanish.
+    /// Listed by hand because the reasons carry values and the enum has no
+    /// `ALL`; the match is what fails when a variant is added.
+    #[test]
+    fn every_reason_for_no_band_is_listed() {
+        use app_core::market::Insufficient;
+        let reasons = [
+            Insufficient::NotEnoughHistory { have: 0, need: 0 },
+            Insufficient::TooManyGaps {
+                coverage: 0,
+                need: 0,
+            },
+        ];
+        for reason in reasons {
+            let label = match reason {
+                Insufficient::NotEnoughHistory { .. } => "Not enough history",
+                Insufficient::TooManyGaps { .. } => "Too many gaps",
+            };
+            assert!(
+                EXTERNAL_STRINGS.contains(&label),
+                "reason not listed for translation: {label}"
             );
         }
     }

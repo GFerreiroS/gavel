@@ -19,6 +19,7 @@ use cluster_core::Millis;
 
 use super::analysis::{self, Cycle, Point, Trend};
 use super::catalog::{Catalog, ItemKind};
+use super::engine::{Buckets, Distribution, Gates, Position, Spark, Swing};
 use super::key::MarketKey;
 use super::window::Window;
 use super::{Copper, ItemId, PriceSample};
@@ -28,7 +29,14 @@ use super::{Copper, ItemId, PriceSample};
 ///
 /// Not the same as a catalogue version: that says what the market *was*, this
 /// says how it was measured.
-pub const ALGORITHM_VERSION: u32 = 1;
+///
+/// * **1** -- Phase 2. The reductions the request path used to perform, moved
+///   here unchanged.
+/// * **2** -- Phase 5. One engine: Hyndman-Fan R8 percentiles over
+///   equal-duration buckets, valuation bands, IQR/MAD, evidence gates and the
+///   card sparkline. A row written by 1 has none of those columns filled, so
+///   the startup backfill treats it as absent rather than as analysis.
+pub const ALGORITHM_VERSION: u32 = 2;
 
 /// Points kept in a stored chart series.
 ///
@@ -159,12 +167,24 @@ impl MarketSummary {
 pub struct MarketWindow {
     pub key: MarketKey,
     pub window: Window,
+    /// The cheapest and dearest observation, with when. Distinct from the
+    /// distribution's P5 and P95 below: an extreme is one hour that happened,
+    /// a tail percentile is where the distribution thins out, and a card that
+    /// showed one under the other's name would be wrong twice.
     pub low: Copper,
     pub low_at: Millis,
     pub high: Copper,
     pub high_at: Millis,
     pub mean: Copper,
-    pub median: Copper,
+    /// The five-number summary and the robust spreads, over equal-duration
+    /// buckets. The engine's, so the median here is the median everywhere.
+    pub distribution: Distribution,
+    /// Where the market's current price sits in this window.
+    pub position: Position,
+    /// `(max - min) / mean`, named for what it is (§5.4).
+    pub swing: Swing,
+    /// The card's shape of this window: equal-duration slots, gaps kept.
+    pub spark: Spark,
     pub samples: u32,
     pub first_at: Millis,
     pub last_at: Millis,
@@ -252,7 +272,7 @@ pub fn commodity(
 
     let windows = windows
         .iter()
-        .filter_map(|window| summarise(key, window, history, catalog, now))
+        .filter_map(|window| summarise(key, window, history, Some(state.price), catalog, now))
         .collect();
 
     Materialised { state, windows }
@@ -267,6 +287,7 @@ fn summarise(
     key: MarketKey,
     window: &Window,
     history: &[PriceSample],
+    current: Option<Copper>,
     catalog: &Catalog,
     now: Millis,
 ) -> Option<MarketWindow> {
@@ -307,9 +328,12 @@ fn summarise(
     let total: u128 = prices.iter().map(|p| *p as u128).sum();
     let mean = Copper((total / prices.len() as u128) as u64);
 
-    let mut sorted = prices.clone();
-    sorted.sort_unstable();
-    let median = Copper(sorted[sorted.len() / 2]);
+    // One value per hour, which is what a historical percentile weights
+    // equally (§5.1). The count below is therefore buckets rather than rows:
+    // a market collected twice in an hour has one hour of evidence.
+    let buckets =
+        Buckets::from_observations(inside.iter().map(|s| (s.observed_at, s.p05_unit_price)));
+    let distribution = Distribution::of(&buckets)?;
 
     let hours: BTreeSet<u64> = inside
         .iter()
@@ -327,6 +351,48 @@ fn summarise(
         .max()
         .unwrap_or(0);
 
+    let expected = window.expected_buckets(catalog, now);
+
+    // Coverage for the *gate* is measured against the hours this market has
+    // existed inside the window, not against the window's nominal length.
+    //
+    // The distinction is the one `largest_gap_ms` already makes below, and
+    // leaving it out here was a bug with teeth: on a three-day-old archive,
+    // every market's 14-day coverage is 57 hours out of 336, which is 17% --
+    // under any sane threshold -- so every card on every page refused its
+    // valuation band. Not because the data has holes in it, but because the
+    // window is longer than the archive. A market that started trading
+    // yesterday has not missed a fortnight; it has a fortnight of not
+    // existing, and §2 does not let those be the same number.
+    //
+    // `expected_buckets` below is still the window's nominal length: that is
+    // what the data-quality panel reports, and "57 of 336 hours" is a true
+    // and useful sentence. It is just not the question the gate asks.
+    let lived_from = from.max(inside[0].observed_at);
+    let lived_until = until.unwrap_or(now);
+    let lived_hours = lived_until
+        .get()
+        .saturating_sub(lived_from.get())
+        .div_ceil(60 * 60 * 1000);
+    let coverage =
+        (lived_hours > 0).then(|| ((hours.len() as u64 * 100) / lived_hours).min(100) as u32);
+
+    // Across the window the reader chose, not across what happened to be
+    // observed: a card's line and a card's percentile describe the same
+    // interval, or the shape is answering a different question from the
+    // number beside it. `Window::All` starts at the epoch and has no drawable
+    // span, so it starts where the market did.
+    let spark_from = if from == Millis::ZERO {
+        inside[0].observed_at
+    } else {
+        from
+    };
+    let spark = Spark::over(
+        inside.iter().map(|s| (s.observed_at, s.p05_unit_price)),
+        spark_from,
+        until.unwrap_or(now),
+    );
+
     Some(MarketWindow {
         key,
         window: window.clone(),
@@ -335,11 +401,23 @@ fn summarise(
         high: high.p05_unit_price,
         high_at: high.observed_at,
         mean,
-        median,
+        position: Position::of(
+            // Where *today's* price sits in this window. A window with no
+            // current price -- a market that has stopped trading -- still has
+            // a distribution, and says it has no position rather than placing
+            // a price it does not have.
+            current.unwrap_or(distribution.median),
+            &buckets,
+            coverage,
+            Gates::default(),
+        ),
+        distribution,
+        swing: Swing::of(&buckets),
+        spark,
         samples: inside.len() as u32,
         first_at: inside[0].observed_at,
         last_at: inside[inside.len() - 1].observed_at,
-        expected_buckets: window.expected_buckets(catalog, now),
+        expected_buckets: expected,
         observed_buckets: hours.len() as u32,
         largest_gap_ms,
     })
@@ -481,6 +559,16 @@ pub struct MarketRollup {
     /// scope charge for the cheapest copy, the quantity is their listings
     /// summed. Both charts on the page are drawn from this one series.
     pub series: Vec<Point>,
+    /// The same five-number summary and robust spreads a commodity window
+    /// carries, over the same equal-duration buckets. A per-realm market had
+    /// its own reduction and no percentile at all before Phase 5; now a gear
+    /// card and a consumable card mean the same thing by "cheap".
+    ///
+    /// `None` where the window holds nothing to summarise.
+    pub distribution: Option<Distribution>,
+    /// Where the cheapest copy now sits in that history.
+    pub position: Option<Position>,
+    pub swing: Swing,
 }
 
 impl MarketRollup {
@@ -519,6 +607,9 @@ impl MarketRollup {
             levels: Vec::new(),
             modifiers: Vec::new(),
             series: Vec::new(),
+            distribution: None,
+            position: None,
+            swing: Swing(0),
         }
     }
 }
@@ -672,6 +763,19 @@ fn roll(
         .filter(|p| p.get() > 0)
         .or(cheapest_ever);
 
+    // The median of what the realms in scope charge for their cheapest copy:
+    // a card's headline figure, and the one the distribution below is built
+    // from. Hoisted out of the struct because the position has to rank the
+    // same number the cell prints.
+    let median_realm_now = across.get(across.len() / 2).copied();
+
+    // One point per snapshot, before thinning: a percentile is over every
+    // bucket, and thinning first would be measuring the chart rather than the
+    // market.
+    let points = series(samples);
+    let buckets = Buckets::from_observations(points.iter().map(|p| (p.at, p.price)));
+    let distribution = Distribution::of(&buckets);
+
     MarketRollup {
         region,
         item,
@@ -694,7 +798,7 @@ fn roll(
         cheapest_realm,
         dearest_realm_now: across.last().copied(),
         dearest_realm,
-        median_realm_now: across.get(across.len() / 2).copied(),
+        median_realm_now,
         highest_now,
         cheapest_ever,
         highest_ever,
@@ -703,7 +807,35 @@ fn roll(
         level_range: catalog.level_range(current.iter().map(|s| s.variant.as_str())),
         levels: levels(&current, catalog),
         modifiers: modifiers(samples, &current, catalog),
-        series: series(samples),
+        series: analysis::downsample(&points, CHART_POINTS),
+        distribution,
+        position: distribution.map(|distribution| {
+            Position::of(
+                // **The figure the card headlines, not the cheapest one.**
+                //
+                // `buckets` is built from `series`, whose price is the median
+                // of what the realms in scope charge for their cheapest copy.
+                // Ranking `cheapest_now` inside that distribution compares the
+                // cheapest realm against a history of median realms, which is
+                // two different questions -- and it answers the same way every
+                // time, because the cheapest of a set is below its median by
+                // construction. On the real archive it made all 27 gear cells
+                // read "Very cheap, P0", which is a card with a verdict that
+                // carries no information.
+                //
+                // `median_realm_now` is the price the cell prints across
+                // realms, and on a single realm it *is* that realm's cheapest,
+                // so one rule serves both scopes -- which is what stops the
+                // page having two implementations of everything it shows.
+                median_realm_now
+                    .or(cheapest_now)
+                    .unwrap_or(distribution.median),
+                &buckets,
+                None,
+                Gates::default(),
+            )
+        }),
+        swing: Swing::of(&buckets),
     }
 }
 
@@ -786,8 +918,9 @@ fn modifiers(
 /// the cheapest copy, and their listings summed.
 ///
 /// The median rather than the minimum, because a line of "the single cheapest
-/// realm" is a line about whichever realm was having a bad day. Thinned to
-/// [`CHART_POINTS`] the same way every stored series is.
+/// realm" is a line about whichever realm was having a bad day. Returned
+/// un-thinned: the caller thins it for the chart and takes percentiles over
+/// all of it, which are different needs.
 fn series(samples: &[&RealmSample]) -> Vec<Point> {
     let mut by_instant: BTreeMap<Millis, Vec<&RealmSample>> = BTreeMap::new();
     for sample in samples {
@@ -811,5 +944,5 @@ fn series(samples: &[&RealmSample]) -> Vec<Point> {
             }
         })
         .collect();
-    analysis::downsample(&points, CHART_POINTS)
+    points
 }

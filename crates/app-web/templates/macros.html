@@ -89,23 +89,47 @@
     <div class="rank-col">
       {# "vs usual" rides on the label line rather than between the price and
          the figures below it: it is present on some ranks and not others, and
-         a line that comes and goes knocks every column out of alignment. #}
+         a line that comes and goes knocks every column out of alignment.
+         Measured from the window's median since Phase 5 -- the mean it used to
+         compare against is the measure one spike moves. #}
       <span class="rank-head">
-        <span class="rank-label">{{ col.label }}</span>
+        <span class="rank-label">{{ col.label|t }}</span>
         {% if col.has_data && (col.cheap || col.dear) %}
         <span class="delta {% if col.cheap %}down{% else %}up{% endif %}"
-              title='{{ "Against the average of the last {} days"|t|fill(baseline_days) }}'>
+              title='{{ "Against the median of the last {} days"|t|fill(baseline_days) }}'>
           {%- if col.dear %}+{% endif %}{{ col.delta_percent }}%
         </span>
         {% endif %}
       </span>
       {% if col.has_data %}
       <span class="now">{{ col.current }}</span>
+      {# The band, and never on its own: §5.2 requires the percentile beside
+         the word, because "Cheap" without "5th percentile of the last 14 days"
+         is a judgement with nothing behind it. Where the evidence gate refused
+         a band, the refusal takes the same line and says what it was short of
+         -- a card that goes quiet reads as a card with nothing to say. #}
+      <span class="verdict">
+        {%- if let Some(band) = col.band -%}
+        <span class="band band-{{ col.band_slug }}">{{ band|t }}</span>
+        {%- if let Some(rank) = col.rank_percent -%}
+        <small class="muted">{{ "P{}"|t|fill(rank) }}</small>
+        {%- endif -%}
+        {%- else if let Some(reason) = col.insufficient -%}
+        <small class="muted band-none"
+               title="{{ "{} of {} hours"|t|fill(col.insufficient_have)|fill(col.insufficient_need) }}">{{ reason|t }}</small>
+        {%- endif -%}
+      </span>
+      {# The shape, over the same window every figure below describes. Drawn
+         only where there is one: an empty box is the same height as a line
+         and says less. #}
+      {% if !col.spark.is_empty() %}{{ col.spark|safe }}{% endif %}
       <dl class="rank-stats">
-        <dt>{{ "Avg"|t }}</dt><dd>{{ col.mean }}</dd>
-        <dt>{{ "Low"|t }}</dt><dd>{{ col.low }} <small class="muted">{{ col.low_when }}</small></dd>
-        <dt>{{ "High"|t }}</dt><dd>{{ col.high }} <small class="muted">{{ col.high_when }}</small></dd>
-        <dt>{{ "Stock"|t }}</dt><dd>{{ col.quantity }}</dd>
+        <dt>{{ "Median"|t }}</dt><dd>{{ col.median }}</dd>
+        <dt>{{ "Stock"|t }}</dt><dd>{{ col.quantity }} <small class="muted">{{ "{} listings"|t|fill(col.listings) }}</small></dd>
+        {# Every card on the page was priced by the same collection cycle, so
+           this is only news when it is older -- which is exactly when the
+           figures above describe a different moment from the card beside it. #}
+        <dt>{{ "Updated"|t }}</dt><dd{% if col.stale %} class="stale"{% endif %}>{{ col.freshness }}</dd>
       </dl>
       <a class="rank-link outline secondary" role="button" href="/wow/item/{{ col.item_id }}">{{ "Stats & graphs"|t }} →</a>
       {% else %}
@@ -114,8 +138,6 @@
     </div>
     {% endfor %}
   </div>
-  {# The snapshot age is the page's, not the card's: every card here was
-     priced from the same collection cycle, so it is stated once above. #}
   {% else %}
   <p class="muted">{{ "No observations yet."|t }}</p>
   {% endif %}
@@ -207,6 +229,22 @@
             <p class="muted rank-empty">{{ "No listings."|t }}</p>
             {% else %}
             <span class="now">{{ cell.price }}</span>
+            {# The same band, from the same engine, shown the same way it is on
+               a commodity card -- word and percentile together, never the word
+               alone (§5.2). §7's "one name for one thing": `Cheap` here is the
+               claim it is on the consumables page.
+               Always the same element, empty where a market has not earned a
+               band: the cells of a gear card sit in a grid, and a line that is
+               there on one track and not the next is §7's squashed picker in
+               another costume. Its height is held by `.verdict` in the CSS. #}
+            <span class="verdict">
+              {%- if let Some(band) = cell.band -%}
+              <span class="band band-{{ cell.band_slug }}">{{ band|t }}</span>
+              {%- if let Some(rank) = cell.rank_percent -%}
+              <small class="muted">{{ "P{}"|t|fill(rank) }}</small>
+              {%- endif -%}
+              {%- endif -%}
+            </span>
             <dl class="rank-stats">
               <dt>{{ "Cheapest"|t }}</dt>
               <dd>{{ cell.cheapest.price }}

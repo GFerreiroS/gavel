@@ -10,6 +10,7 @@ pub mod alerts;
 pub mod analysis;
 pub mod catalog;
 pub mod collector;
+pub mod engine;
 pub mod event;
 pub mod key;
 pub mod materialise;
@@ -31,6 +32,7 @@ pub use catalog::{
     Profession, Slot, Stat, Track,
 };
 pub use collector::{AlertSink, Collector, NullSink, Outcome, Report};
+pub use engine::{Anomaly, Buckets, Distribution, Gates, Insufficient, Position, Swing, Valuation};
 pub use event::{EventKind, EventScope, MarketEvent, Provenance, Validation, Visibility};
 pub use key::{BadMarketKey, MarketKey};
 pub use materialise::{

@@ -5,7 +5,7 @@
 # renders as English rather than as a missing key.
 msgid ""
 msgstr ""
-"Project-Id-Version: wow-auction-tracker 7590db5-dirty\n"
+"Project-Id-Version: wow-auction-tracker 3ee7da5-dirty\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -52,8 +52,8 @@ msgstr ""
 msgid "Activate"
 msgstr ""
 
-#: crates/app-web/templates/macros.html:97
-msgid "Against the average of the last {} days"
+#: crates/app-web/templates/macros.html:99
+msgid "Against the median of the last {} days"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
@@ -134,10 +134,6 @@ msgstr ""
 msgid "Average, lowest and highest are all-time. Each rank is its own market, so each gets its own column."
 msgstr ""
 
-#: crates/app-web/templates/macros.html:105
-msgid "Avg"
-msgstr ""
-
 #: crates/app-web/src/i18n.rs
 msgid "Avoidance"
 msgstr ""
@@ -194,9 +190,13 @@ msgstr ""
 msgid "Character"
 msgstr ""
 
+#: crates/app-web/src/i18n.rs
+msgid "Cheap"
+msgstr ""
+
 #: crates/app-web/templates/gear_stats.html:114
 #: crates/app-web/templates/gear_stats.html:38
-#: crates/app-web/templates/macros.html:211
+#: crates/app-web/templates/macros.html:249
 msgid "Cheapest"
 msgstr ""
 
@@ -366,7 +366,11 @@ msgstr ""
 msgid "Expansion"
 msgstr ""
 
-#: crates/app-web/templates/macros.html:225
+#: crates/app-web/src/i18n.rs
+msgid "Expensive"
+msgstr ""
+
+#: crates/app-web/templates/macros.html:263
 msgid "Extras"
 msgstr ""
 
@@ -460,13 +464,12 @@ msgid "Hero"
 msgstr ""
 
 #: crates/app-web/templates/item.html:148
-#: crates/app-web/templates/macros.html:107
 msgid "High"
 msgstr ""
 
 #: crates/app-web/templates/gear_stats.html:115
 #: crates/app-web/templates/gear_stats.html:38
-#: crates/app-web/templates/macros.html:215
+#: crates/app-web/templates/macros.html:253
 msgid "Highest"
 msgstr ""
 
@@ -603,7 +606,7 @@ msgid "Linked accounts"
 msgstr ""
 
 #: crates/app-web/templates/gear_stats.html:118
-#: crates/app-web/templates/macros.html:219
+#: crates/app-web/templates/macros.html:257
 msgid "Listings"
 msgstr ""
 
@@ -613,8 +616,8 @@ msgstr ""
 
 #: crates/app-web/templates/consumables.html:27
 #: crates/app-web/templates/enhancements.html:43
-#: crates/app-web/templates/macros.html:144
-#: crates/app-web/templates/macros.html:264
+#: crates/app-web/templates/macros.html:166
+#: crates/app-web/templates/macros.html:302
 #: crates/app-web/templates/reagents.html:54
 msgid "Loading prices…"
 msgstr ""
@@ -630,7 +633,6 @@ msgid "Loading…"
 msgstr ""
 
 #: crates/app-web/templates/item.html:148
-#: crates/app-web/templates/macros.html:106
 msgid "Low"
 msgstr ""
 
@@ -647,6 +649,7 @@ msgid "Mean latency"
 msgstr ""
 
 #: crates/app-web/templates/item.html:60
+#: crates/app-web/templates/macros.html:127
 msgid "Median"
 msgstr ""
 
@@ -707,11 +710,11 @@ msgid "No linked accounts."
 msgstr ""
 
 #: crates/app-web/templates/gear_stats.html:111
-#: crates/app-web/templates/macros.html:176
+#: crates/app-web/templates/macros.html:198
 msgid "No listings in this snapshot."
 msgstr ""
 
-#: crates/app-web/templates/macros.html:207
+#: crates/app-web/templates/macros.html:229
 msgid "No listings."
 msgstr ""
 
@@ -719,7 +722,7 @@ msgstr ""
 msgid "No observations recorded for this market yet. Statistics appear once the collector has run."
 msgstr ""
 
-#: crates/app-web/templates/macros.html:120
+#: crates/app-web/templates/macros.html:142
 msgid "No observations yet."
 msgstr ""
 
@@ -754,7 +757,11 @@ msgstr ""
 msgid "Not collected. Click to start."
 msgstr ""
 
-#: crates/app-web/templates/macros.html:112
+#: crates/app-web/src/i18n.rs
+msgid "Not enough history"
+msgstr ""
+
+#: crates/app-web/templates/macros.html:136
 msgid "Not listed."
 msgstr ""
 
@@ -764,7 +771,7 @@ msgstr ""
 msgid "Nothing matches that search."
 msgstr ""
 
-#: crates/app-web/templates/macros.html:142
+#: crates/app-web/templates/macros.html:164
 msgid "Nothing tracked in this group."
 msgstr ""
 
@@ -819,12 +826,17 @@ msgstr ""
 msgid "Per connected realm"
 msgstr ""
 
+#: crates/app-web/src/i18n.rs
 #: crates/app-web/templates/partials/alerts.html:22
 msgid "Price"
 msgstr ""
 
 #: crates/app-web/templates/item.html:58
 msgid "Price now"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "Price over the comparison window"
 msgstr ""
 
 #: crates/app-web/templates/item.html:99
@@ -860,6 +872,11 @@ msgstr ""
 #: crates/app-web/templates/partials/job_detail.html:4
 #: crates/app-web/templates/partials/jobs.html:9
 msgid "Progress"
+msgstr ""
+
+#: crates/app-web/templates/macros.html:115
+#: crates/app-web/templates/macros.html:244
+msgid "P{}"
 msgstr ""
 
 #: crates/app-web/templates/partials/nodes.html:15
@@ -984,8 +1001,8 @@ msgstr ""
 
 #: crates/app-web/templates/consumables.html:32
 #: crates/app-web/templates/enhancements.html:48
-#: crates/app-web/templates/macros.html:147
-#: crates/app-web/templates/macros.html:267
+#: crates/app-web/templates/macros.html:169
+#: crates/app-web/templates/macros.html:305
 #: crates/app-web/templates/reagents.html:59
 msgid "Show the prices"
 msgstr ""
@@ -1051,8 +1068,8 @@ msgstr ""
 msgid "State"
 msgstr ""
 
-#: crates/app-web/templates/macros.html:110
-#: crates/app-web/templates/macros.html:241
+#: crates/app-web/templates/macros.html:134
+#: crates/app-web/templates/macros.html:279
 msgid "Stats & graphs"
 msgstr ""
 
@@ -1060,7 +1077,7 @@ msgstr ""
 msgid "Status"
 msgstr ""
 
-#: crates/app-web/templates/macros.html:108
+#: crates/app-web/templates/macros.html:128
 #: crates/app-web/templates/partials/alerts.html:23
 msgid "Stock"
 msgstr ""
@@ -1155,6 +1172,10 @@ msgstr ""
 msgid "Today's alerts"
 msgstr ""
 
+#: crates/app-web/src/i18n.rs
+msgid "Too many gaps"
+msgstr ""
+
 #: crates/app-web/templates/auctions.html:100
 #: crates/app-web/templates/auctions.html:83
 msgid "Tracked items"
@@ -1168,12 +1189,20 @@ msgstr ""
 msgid "Type"
 msgstr ""
 
+#: crates/app-web/src/i18n.rs
+msgid "Typical"
+msgstr ""
+
 #: crates/app-web/templates/alerts.html:45
 msgid "Unfollow"
 msgstr ""
 
 #: crates/app-web/templates/item.html:115
 msgid "Units listed over time"
+msgstr ""
+
+#: crates/app-web/templates/macros.html:132
+msgid "Updated"
 msgstr ""
 
 #: crates/app-web/templates/gear_stats.html:37
@@ -1195,6 +1224,14 @@ msgstr ""
 
 #: crates/app-web/src/i18n.rs
 msgid "Vantus runes"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "Very cheap"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "Very expensive"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
@@ -1490,7 +1527,7 @@ msgstr ""
 msgid "offline"
 msgstr ""
 
-#: crates/app-web/templates/macros.html:221
+#: crates/app-web/templates/macros.html:259
 msgid "on {} realms"
 msgstr ""
 
@@ -1739,6 +1776,10 @@ msgstr ""
 msgid "{} left"
 msgstr ""
 
+#: crates/app-web/templates/macros.html:128
+msgid "{} listings"
+msgstr ""
+
 #: crates/app-web/src/i18n.rs
 msgid "{} lost coordinator role"
 msgstr ""
@@ -1753,6 +1794,10 @@ msgstr ""
 
 #: crates/app-web/src/i18n.rs
 msgid "{} of {} gems match."
+msgstr ""
+
+#: crates/app-web/templates/macros.html:119
+msgid "{} of {} hours"
 msgstr ""
 
 #: crates/app-web/templates/admin.html:96

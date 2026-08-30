@@ -317,6 +317,70 @@ td > .rank-link { margin: 0; }
 }
 .rank-empty { color: var(--pico-muted-color); }
 
+/* --- valuation band and sparkline ----------------------------------------
+   Where a price sits in its own market's history, and the shape it got there
+   by. Both replaced the Avg/Low/High rows a card used to print, so both live
+   inside the same column and inherit its left alignment. */
+/* The band's line is always in the flow, even when there is no band to put on
+   it. Cards sit in a grid and the columns of one card sit in a grid inside
+   that: a line present on one market and absent on the next is the same bug
+   §7 records against the realm picker, one level down. */
+.verdict {
+  display: flex;
+  align-items: baseline;
+  gap: .35rem;
+  min-height: 1.15rem;
+  font-size: .75rem;
+}
+.band {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  white-space: nowrap;
+}
+/* The same two colours the "vs usual" figure already uses, and deliberately:
+   a card that called a price cheap in green on one line and dear in orange on
+   the next would be teaching two colour vocabularies for one idea. The middle
+   band is muted rather than coloured -- "Typical" is the absence of news. */
+.band-very-cheap, .band-cheap { color: var(--pico-ins-color); }
+.band-typical { color: var(--pico-muted-color); }
+.band-expensive, .band-very-expensive { color: var(--q-legendary); }
+/* The tails are the ones worth a second look, so they carry the weight the
+   inner bands do not. */
+.band-very-cheap, .band-very-expensive { text-decoration: underline .1em; text-underline-offset: .2em; }
+.band-none { font-style: italic; }
+
+/* A market that did not refresh when the rest of the page did. Its figures are
+   about a different moment from the ones on the card beside it, which is the
+   only reason a per-card age is worth printing at all. */
+.rank-stats .stale { color: var(--q-legendary); }
+
+/* The card's sparkline. `preserveAspectRatio="none"` here and nowhere else:
+   the line has no axis and no glyphs in it, so stretching it to the column's
+   width distorts nothing a reader is reading -- which is exactly the argument
+   that does not hold for the analysis page's chart, where it was tried and
+   reverted. */
+.spark {
+  display: block;
+  width: 100%;
+  height: 1.5rem;
+  margin: .15rem 0 .35rem;
+  overflow: visible;
+}
+.spark-line {
+  fill: none;
+  /* The first slot of `chart::SERIES_COLOURS`, kept in step by
+     `the_stylesheet_paints_the_sparkline_the_series_colour`. */
+  stroke: #3b82f6;
+  stroke-width: 1.2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  /* The line is stretched horizontally by the viewBox; without this the
+     stroke is stretched with it and comes out thicker than it is tall. */
+  vector-effect: non-scaling-stroke;
+}
+.spark-dot, .spark-now { fill: #3b82f6; stroke: none; }
+
 /* --- gear cards ----------------------------------------------------------
    A BoE card is denser than a commodity one: a block per region, and an
    upgrade ladder inside each. Wider than the other cards because two regions

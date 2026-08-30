@@ -206,8 +206,18 @@ fn a_snapshot_is_summarised_by_supply_not_by_listings() {
     assert_eq!(summary.listings, 4);
 }
 
-/// What the alert engine decides today, including the percentile definition it
-/// uses to decide it.
+/// What the alert engine decides, including the percentile definition it uses.
+///
+/// **Two of these numbers moved in Phase 5, on purpose.** The rule used a
+/// nearest-rank percentile over raw observations; it now uses the shared
+/// engine's Hyndman-Fan R8 over hourly buckets, which is the estimator the card
+/// and the analysis page use. The threshold went from 507,530 to 507,383 -- a
+/// different estimator over a differently weighted sample -- and the baseline
+/// and the severity did not move at all, because the median is the quantile
+/// the two definitions agree most closely on.
+///
+/// That is what pinning them was for: the change reads as a diff with a reason
+/// beside it rather than as something nobody noticed.
 #[test]
 fn alerting_is_unchanged() {
     let rule = AlertRule::default();
@@ -229,7 +239,7 @@ fn alerting_is_unchanged() {
     assert_eq!(alert.severity, AlertSeverity::VeryLow);
     assert_eq!(alert.current, Copper(479_063));
     assert_eq!(alert.baseline, Copper(546_708));
-    assert_eq!(alert.threshold, Copper(507_530));
+    assert_eq!(alert.threshold, Copper(507_383));
     assert_eq!(alert.discount_percent, 12);
     assert_eq!(alert.quantity, cheapest.quantity);
 }

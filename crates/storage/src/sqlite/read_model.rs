@@ -15,6 +15,9 @@
 use app_core::error::{RepoError, RepoResult};
 use app_core::market::analysis::{Cycle, Point, Trend};
 use app_core::market::catalog::{ItemKind, Track};
+use app_core::market::engine::{
+    Anomaly, Distribution, Insufficient, Position, Spark, Swing, Valuation,
+};
 use app_core::market::materialise::{
     LevelStat, MarketRollup, MarketState, MarketSummary, MarketWindow, Materialised, ModifierStat,
     Scope,
@@ -236,6 +239,31 @@ fn rollup_from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<MarketRollup> {
         levels: levels_from(&row.get::<String, _>("levels")),
         modifiers: modifiers_from(&row.get::<String, _>("modifiers")),
         series: points_from(&row.get::<String, _>("series")),
+        // Present together or not at all: a distribution with no median is a
+        // row half-written, and reading one back as a partial statistic is how
+        // a zero becomes a price.
+        distribution: row
+            .get::<Option<i64>, _>("median")
+            .map(|median| Distribution {
+                p05: Copper(row.get::<Option<i64>, _>("p05").unwrap_or(0) as u64),
+                p25: Copper(row.get::<Option<i64>, _>("p25").unwrap_or(0) as u64),
+                median: Copper(median as u64),
+                p75: Copper(row.get::<Option<i64>, _>("p75").unwrap_or(0) as u64),
+                p95: Copper(row.get::<Option<i64>, _>("p95").unwrap_or(0) as u64),
+                iqr: Copper(row.get::<Option<i64>, _>("iqr").unwrap_or(0) as u64),
+                mad: Copper(row.get::<Option<i64>, _>("mad").unwrap_or(0) as u64),
+                buckets: row.get::<Option<i64>, _>("buckets").unwrap_or(0) as u32,
+            }),
+        position: row.get::<Option<i64>, _>("median").map(|_| Position {
+            rank: row.get::<Option<i64>, _>("rank").map(|v| v as u8),
+            valuation: valuation_from(row.get("valuation")),
+            insufficient: insufficient_from(row),
+            from_median_percent: row
+                .get::<Option<i64>, _>("from_median_percent")
+                .map(|v| v as i32),
+            anomaly: anomaly_from(&row.get::<String, _>("anomaly")),
+        }),
+        swing: Swing(row.get::<i64, _>("swing") as u32),
     })
 }
 
@@ -319,6 +347,49 @@ fn summary_from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<MarketSummary> 
     })
 }
 
+fn valuation_from(raw: Option<String>) -> Option<Valuation> {
+    let raw = raw?;
+    Valuation::ALL.into_iter().find(|v| v.as_str() == raw)
+}
+
+fn anomaly_from(raw: &str) -> Anomaly {
+    [Anomaly::Ordinary, Anomaly::Mild, Anomaly::Extreme]
+        .into_iter()
+        .find(|a| a.as_str() == raw)
+        // A word this binary does not know is a downgrade, and "ordinary" is
+        // the reading that claims least.
+        .unwrap_or(Anomaly::Ordinary)
+}
+
+fn insufficient_from(row: &sqlx::sqlite::SqliteRow) -> Option<Insufficient> {
+    let kind: Option<String> = row.get("insufficient");
+    let have = row.get::<Option<i64>, _>("insufficient_have").unwrap_or(0) as u32;
+    let need = row.get::<Option<i64>, _>("insufficient_need").unwrap_or(0) as u32;
+    match kind.as_deref() {
+        Some("history") => Some(Insufficient::NotEnoughHistory { have, need }),
+        Some("gaps") => Some(Insufficient::TooManyGaps {
+            coverage: have,
+            need,
+        }),
+        _ => None,
+    }
+}
+
+/// The stored form of a refusal: its kind and its two numbers.
+fn insufficient_parts(
+    reason: Option<Insufficient>,
+) -> (Option<&'static str>, Option<i64>, Option<i64>) {
+    match reason {
+        None => (None, None, None),
+        Some(Insufficient::NotEnoughHistory { have, need }) => {
+            (Some("history"), Some(have as i64), Some(need as i64))
+        }
+        Some(Insufficient::TooManyGaps { coverage, need }) => {
+            (Some("gaps"), Some(coverage as i64), Some(need as i64))
+        }
+    }
+}
+
 fn window_from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<MarketWindow> {
     let raw: String = row.get("market_key");
     let key: MarketKey = raw.parse().map_err(|_| corrupt("market key", raw))?;
@@ -331,7 +402,27 @@ fn window_from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<MarketWindow> {
         high: Copper(row.get::<i64, _>("high") as u64),
         high_at: Millis(row.get::<i64, _>("high_at") as u64),
         mean: Copper(row.get::<i64, _>("mean") as u64),
-        median: Copper(row.get::<i64, _>("median") as u64),
+        distribution: Distribution {
+            p05: Copper(row.get::<i64, _>("p05") as u64),
+            p25: Copper(row.get::<i64, _>("p25") as u64),
+            median: Copper(row.get::<i64, _>("median") as u64),
+            p75: Copper(row.get::<i64, _>("p75") as u64),
+            p95: Copper(row.get::<i64, _>("p95") as u64),
+            iqr: Copper(row.get::<i64, _>("iqr") as u64),
+            mad: Copper(row.get::<i64, _>("mad") as u64),
+            buckets: row.get::<i64, _>("buckets") as u32,
+        },
+        position: Position {
+            rank: row.get::<Option<i64>, _>("rank").map(|v| v as u8),
+            valuation: valuation_from(row.get("valuation")),
+            insufficient: insufficient_from(row),
+            from_median_percent: row
+                .get::<Option<i64>, _>("from_median_percent")
+                .map(|v| v as i32),
+            anomaly: anomaly_from(&row.get::<String, _>("anomaly")),
+        },
+        swing: Swing(row.get::<i64, _>("swing") as u32),
+        spark: Spark::decode(&row.get::<String, _>("spark")),
         samples: row.get::<i64, _>("samples") as u32,
         first_at: Millis(row.get::<i64, _>("first_at") as u64),
         last_at: Millis(row.get::<i64, _>("last_at") as u64),
@@ -499,8 +590,12 @@ impl ReadModelRepository for SqliteReadModel {
                     "INSERT INTO market_windows
                        (market_key, window, state, version, kind, region, item_id, realm_id,
                         low, low_at, high, high_at, mean, median, samples, first_at, last_at,
-                        expected_buckets, observed_buckets, largest_gap_ms)
-                     VALUES (?, ?, 'staging', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        expected_buckets, observed_buckets, largest_gap_ms,
+                        p05, p25, p75, p95, iqr, mad, buckets, swing, spark,
+                        rank, valuation, from_median_percent, anomaly,
+                        insufficient, insufficient_have, insufficient_need)
+                     VALUES (?, ?, 'staging', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                      ON CONFLICT(market_key, window, state) DO UPDATE SET
                         version = excluded.version, low = excluded.low, low_at = excluded.low_at,
                         high = excluded.high, high_at = excluded.high_at, mean = excluded.mean,
@@ -508,7 +603,16 @@ impl ReadModelRepository for SqliteReadModel {
                         first_at = excluded.first_at, last_at = excluded.last_at,
                         expected_buckets = excluded.expected_buckets,
                         observed_buckets = excluded.observed_buckets,
-                        largest_gap_ms = excluded.largest_gap_ms",
+                        largest_gap_ms = excluded.largest_gap_ms,
+                        p05 = excluded.p05, p25 = excluded.p25, p75 = excluded.p75,
+                        p95 = excluded.p95, iqr = excluded.iqr, mad = excluded.mad,
+                        buckets = excluded.buckets, swing = excluded.swing,
+                        spark = excluded.spark,
+                        rank = excluded.rank, valuation = excluded.valuation,
+                        from_median_percent = excluded.from_median_percent,
+                        anomaly = excluded.anomaly, insufficient = excluded.insufficient,
+                        insufficient_have = excluded.insufficient_have,
+                        insufficient_need = excluded.insufficient_need",
                 )
                 .bind(w.key.to_string())
                 .bind(w.window.key())
@@ -522,13 +626,29 @@ impl ReadModelRepository for SqliteReadModel {
                 .bind(w.high.get() as i64)
                 .bind(w.high_at.get() as i64)
                 .bind(w.mean.get() as i64)
-                .bind(w.median.get() as i64)
+                .bind(w.distribution.median.get() as i64)
                 .bind(w.samples as i64)
                 .bind(w.first_at.get() as i64)
                 .bind(w.last_at.get() as i64)
                 .bind(w.expected_buckets.map(i64::from))
                 .bind(w.observed_buckets as i64)
                 .bind(w.largest_gap_ms as i64)
+                .bind(w.distribution.p05.get() as i64)
+                .bind(w.distribution.p25.get() as i64)
+                .bind(w.distribution.p75.get() as i64)
+                .bind(w.distribution.p95.get() as i64)
+                .bind(w.distribution.iqr.get() as i64)
+                .bind(w.distribution.mad.get() as i64)
+                .bind(w.distribution.buckets as i64)
+                .bind(w.swing.0 as i64)
+                .bind(w.spark.encode())
+                .bind(w.position.rank.map(i64::from))
+                .bind(w.position.valuation.map(|v| v.as_str()))
+                .bind(w.position.from_median_percent.map(i64::from))
+                .bind(w.position.anomaly.as_str())
+                .bind(insufficient_parts(w.position.insufficient).0)
+                .bind(insufficient_parts(w.position.insufficient).1)
+                .bind(insufficient_parts(w.position.insufficient).2)
                 .execute(&mut *tx)
                 .await
                 .map_err(map_err)?;
@@ -560,9 +680,12 @@ impl ReadModelRepository for SqliteReadModel {
                     observed_at, snapshots, realms, cheapest_now, cheapest_realm,
                     dearest_realm_now, dearest_realm, median_realm_now, highest_now,
                     cheapest_ever, highest_ever, listings_now, listings_seen,
-                    level_range, levels, modifiers, series)
+                    level_range, levels, modifiers, series,
+                    p05, p25, median, p75, p95, iqr, mad, buckets, swing,
+                    rank, valuation, from_median_percent, anomaly,
+                    insufficient, insufficient_have, insufficient_need)
                  VALUES (?, ?, ?, ?, 'staging', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                         ?, ?, ?, ?)
+                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(region, item_id, track, realm_id, state) DO UPDATE SET
                     version = excluded.version, kind = excluded.kind,
                     window = excluded.window, observed_at = excluded.observed_at,
@@ -576,7 +699,15 @@ impl ReadModelRepository for SqliteReadModel {
                     cheapest_ever = excluded.cheapest_ever, highest_ever = excluded.highest_ever,
                     listings_now = excluded.listings_now, listings_seen = excluded.listings_seen,
                     level_range = excluded.level_range, levels = excluded.levels,
-                    modifiers = excluded.modifiers, series = excluded.series",
+                    modifiers = excluded.modifiers, series = excluded.series,
+                    p05 = excluded.p05, p25 = excluded.p25, median = excluded.median,
+                    p75 = excluded.p75, p95 = excluded.p95, iqr = excluded.iqr,
+                    mad = excluded.mad, buckets = excluded.buckets, swing = excluded.swing,
+                    rank = excluded.rank, valuation = excluded.valuation,
+                    from_median_percent = excluded.from_median_percent,
+                    anomaly = excluded.anomaly, insufficient = excluded.insufficient,
+                    insufficient_have = excluded.insufficient_have,
+                    insufficient_need = excluded.insufficient_need",
             )
             .bind(rollup.region.as_str())
             .bind(rollup.item.get() as i64)
@@ -602,6 +733,38 @@ impl ReadModelRepository for SqliteReadModel {
             .bind(levels_json(&rollup.levels))
             .bind(modifiers_json(&rollup.modifiers))
             .bind(points_json(&rollup.series))
+            .bind(rollup.distribution.map(|d| d.p05.get() as i64))
+            .bind(rollup.distribution.map(|d| d.p25.get() as i64))
+            .bind(rollup.distribution.map(|d| d.median.get() as i64))
+            .bind(rollup.distribution.map(|d| d.p75.get() as i64))
+            .bind(rollup.distribution.map(|d| d.p95.get() as i64))
+            .bind(rollup.distribution.map(|d| d.iqr.get() as i64))
+            .bind(rollup.distribution.map(|d| d.mad.get() as i64))
+            .bind(rollup.distribution.map(|d| d.buckets as i64))
+            .bind(rollup.swing.0 as i64)
+            .bind(rollup.position.and_then(|p| p.rank).map(i64::from))
+            .bind(
+                rollup
+                    .position
+                    .and_then(|p| p.valuation)
+                    .map(|v| v.as_str()),
+            )
+            .bind(
+                rollup
+                    .position
+                    .and_then(|p| p.from_median_percent)
+                    .map(i64::from),
+            )
+            .bind(
+                rollup
+                    .position
+                    .map(|p| p.anomaly)
+                    .unwrap_or(Anomaly::Ordinary)
+                    .as_str(),
+            )
+            .bind(insufficient_parts(rollup.position.and_then(|p| p.insufficient)).0)
+            .bind(insufficient_parts(rollup.position.and_then(|p| p.insufficient)).1)
+            .bind(insufficient_parts(rollup.position.and_then(|p| p.insufficient)).2)
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;

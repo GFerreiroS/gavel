@@ -1,0 +1,19 @@
+-- The card's sparkline, stored rather than derived at render time.
+--
+-- CLAUDE.md §15's read path: the shape a card draws is a reduction, and a
+-- category page draws several hundred of them. Reducing a history per card
+-- per request is the thing Phase 2 removed; reducing the *stored* series per
+-- card would have put a smaller version of it back.
+--
+-- Sixteen equal-duration slots, comma separated, empty for a slot nothing was
+-- observed in -- a gap the line breaks at rather than draws through. A string
+-- rather than JSON because this is a column on every window of every market,
+-- and `[1200,null,1250]` is twice the bytes of `1200,,1250` for the same fact.
+-- Empty means "no shape to draw", which is what a market with one observation
+-- has.
+-- `market_windows` only. A per-realm card is four fixed track rows of cells
+-- (§7's "level the grid"), and four lines inside one card fight that geometry
+-- rather than serving it; the gear card takes the band and the median, which
+-- are the parts that had to mean the same thing on both pages. A column
+-- nothing reads is worse than no column.
+ALTER TABLE market_windows ADD COLUMN spark TEXT NOT NULL DEFAULT '';

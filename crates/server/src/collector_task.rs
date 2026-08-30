@@ -13,7 +13,7 @@ use app_core::Ports;
 use app_core::item::ItemDetailProvider;
 use app_core::locale::{ALL_LOCALES, DEFAULT_LOCALE};
 use app_core::market::{
-    Collector, ItemId, ItemKind as ItemKindT, Outcome as CollectOutcome, Realm,
+    ALGORITHM_VERSION, Collector, ItemId, ItemKind as ItemKindT, Outcome as CollectOutcome, Realm,
     RealmAuctionProvider, RealmSnapshot, summarise_realm,
 };
 use app_core::repo::{
@@ -81,30 +81,54 @@ async fn run<E: Ports>(env: E) {
 ///
 /// Without this, the first start after deploying Phase 2 serves empty windows
 /// on every page: the archive is the product, and it would look like it had
-/// been thrown away. It runs only when there is no published version, so it is
-/// a one-off rather than a cost on every boot.
+/// been thrown away. It runs only when there is nothing worth serving, so it
+/// is a one-off rather than a cost on every boot.
+///
+/// **"Nothing worth serving" includes a version built by an older algorithm**,
+/// and that is what [`ALGORITHM_VERSION`] is for. Phase 5 added columns to
+/// every window -- the percentiles, the band, the evidence, the sparkline --
+/// and a row written by Phase 2 has none of them. It is a legal row and it is
+/// published, so the old check would have gone on serving it: cards with no
+/// verdict and no line on them until the next collection cycle happened to
+/// recalculate that market, which for a region that fetches unchanged is
+/// never. An upgrade that quietly serves less than it did is worse than one
+/// that pauses to rebuild, so it rebuilds.
 async fn backfill<E: Ports>(env: &E) {
-    match env.store().read_model().published().await {
-        Ok(Some(version)) => {
+    let why = match env.store().read_model().published().await {
+        Ok(Some(version)) if version.algorithm >= ALGORITHM_VERSION => {
             tracing::info!(
                 version = version.version,
                 markets = version.markets,
+                algorithm = version.algorithm,
                 "serving the published market analysis"
             );
             return;
         }
-        Ok(None) => {}
+        Ok(Some(version)) => {
+            tracing::info!(
+                version = version.version,
+                was = version.algorithm,
+                now = ALGORITHM_VERSION,
+                "the published analysis predates this binary's definitions: rebuilding"
+            );
+            "the definitions moved"
+        }
+        Ok(None) => "no published analysis yet",
         Err(error) => {
             tracing::warn!(%error, "could not read the published analysis version");
             return;
         }
-    }
+    };
 
     let regions = env.market().regions.clone();
     tracing::info!(
         regions = ?regions.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
-        "no published analysis yet: materialising the existing archive"
+        why,
+        "materialising the existing archive"
     );
+    // The previous version stays published throughout, which is the point of
+    // staging: a rebuild that takes four seconds is four seconds of the old
+    // analysis, not four seconds of an empty site.
     crate::materialise_task::publish(env, &regions, &regions).await;
 }
 

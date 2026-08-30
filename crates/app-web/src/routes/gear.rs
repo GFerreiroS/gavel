@@ -778,6 +778,20 @@ fn cell(
         },
         listings: rollup.listings_now,
         realms: rollup.realms_listing as usize,
+        // The stored position, not one worked out here. It was materialised by
+        // the same engine that placed the flask on the consumables page, over
+        // the same equal-duration buckets -- which is the whole reason a gear
+        // card may print the word at all.
+        band: rollup
+            .position
+            .and_then(|p| p.valuation)
+            .map(|v| v.as_str()),
+        band_slug: rollup
+            .position
+            .and_then(|p| p.valuation)
+            .map(|v| v.slug())
+            .unwrap_or("none"),
+        rank_percent: rollup.position.and_then(|p| p.rank),
         extras: rollup
             .modifiers
             .iter()
@@ -836,6 +850,9 @@ mod tests {
                 },
             ],
             series: Vec::new(),
+            distribution: None,
+            position: None,
+            swing: app_core::market::engine::Swing(0),
         }
     }
 
