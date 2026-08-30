@@ -14,7 +14,7 @@
 use app_core::Ports;
 use app_core::market::materialise::{self, ALGORITHM_VERSION, Materialised};
 use app_core::market::window::Window;
-use app_core::market::{Catalog, PriceSample, Region};
+use app_core::market::{Catalog, ItemId, PriceSample, Region};
 use app_core::repo::{PriceRepository, ReadModelRepository, RealmPriceRepository, Store};
 use cluster_core::Millis;
 
@@ -145,6 +145,20 @@ async fn commodity_region<E: Ports>(
     let oldest = history.first().map(|s| s.observed_at);
     let newest = history.iter().map(|s| s.observed_at).max();
 
+    // The newest ladder of every market, in one query rather than one per
+    // item -- the same reason `history_in_region` exists. Empty for a market
+    // nothing has collected a ladder for yet, which is every market on an
+    // archive gathered before Phase 7.
+    let ladders: std::collections::BTreeMap<ItemId, app_core::market::Ladder> = env
+        .store()
+        .prices()
+        .latest_ladders(region)
+        .await?
+        .into_iter()
+        .map(|(item, _, ladder)| (item, ladder))
+        .collect();
+    let no_ladder = app_core::market::Ladder::default();
+
     let windows = Window::all_for(catalog);
     let read_model = env.store().read_model();
 
@@ -152,7 +166,10 @@ async fn commodity_region<E: Ports>(
     let mut batch: Vec<Materialised> = Vec::with_capacity(BATCH);
     for group in grouped(&history) {
         let key = catalog.market_of(&group[0]);
-        batch.push(materialise::commodity(key, group, catalog, &windows, now));
+        let ladder = ladders.get(&key.item()).unwrap_or(&no_ladder);
+        batch.push(materialise::commodity(
+            key, group, ladder, catalog, &windows, now,
+        ));
         if batch.len() >= BATCH {
             markets += read_model.stage(version, &batch).await?;
             batch.clear();

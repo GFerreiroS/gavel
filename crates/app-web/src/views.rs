@@ -1111,6 +1111,46 @@ pub struct ItemDetail {
     pub archived: bool,
 }
 
+/// What buying the target quantity actually costs.
+///
+/// Every figure here is about *one snapshot*: what is on the shelf now, not
+/// what has sold. §15's "listed stock is not sales volume" applies to all of
+/// it, and the panel says so in words rather than leaving it to be inferred.
+#[derive(Debug, Clone)]
+pub struct DepthView {
+    /// Rungs and units, which decide whether the rest is worth reading.
+    pub levels: u32,
+    pub total: u64,
+    pub cheapest: String,
+    /// True when the ladder is too thin to be a distribution -- a BoE with
+    /// four auctions. The percentiles and the liquidity proxies are absent
+    /// rather than guessed, which is what `sparse` is announcing.
+    pub sparse: bool,
+    pub p25: Option<String>,
+    pub p50: Option<String>,
+    pub within_5: Option<u64>,
+    pub within_20: Option<u64>,
+    /// The catalogue's target quantity, and what a sweep for it costs.
+    pub target: u64,
+    pub filled: u64,
+    pub complete: bool,
+    pub total_cost: String,
+    pub average_unit: String,
+    pub clearing_price: String,
+    /// How much dearer the sweep is than the sticker price.
+    pub impact_percent: u32,
+    pub walls: Vec<WallView>,
+    /// The ladder, drawn.
+    pub chart: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct WallView {
+    pub price: String,
+    pub quantity: u64,
+    pub share_percent: u32,
+}
+
 /// One panel's header: the question it answers, and the terms it answers in.
 ///
 /// Phase 6's exit gate is that "every panel names its question, window, units,
@@ -1175,6 +1215,13 @@ pub struct ItemAnalysis {
     pub stock_panel: PanelHead,
     pub quantity: u64,
     pub listings: u32,
+
+    // --- what it costs to buy what you need --------------------------------
+    /// `None` until ladder collection has run for this market. An archive
+    /// gathered before Phase 7 has no ladders and cannot be given any, so the
+    /// panel says that rather than drawing an empty market.
+    pub depth: Option<DepthView>,
+    pub depth_panel: PanelHead,
 
     // --- how good is the evidence -----------------------------------------
     pub quality_panel: PanelHead,

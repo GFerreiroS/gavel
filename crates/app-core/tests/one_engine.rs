@@ -29,7 +29,7 @@ use app_core::market::engine::{Buckets, Gates, Position, Valuation};
 use app_core::market::materialise;
 use app_core::market::window::Window;
 use app_core::market::{
-    AlertRule, Catalog, Copper, ItemId, MarketKey, PriceSample, Region, alerts,
+    AlertRule, Catalog, Copper, ItemId, Ladder, MarketKey, PriceSample, Region, alerts,
 };
 use cluster_core::Millis;
 
@@ -142,6 +142,10 @@ fn the_card_and_the_alert_answer_the_same_question_the_same_way() {
     let rebuilt = materialise::commodity(
         key,
         &baseline,
+        // No ladder: this fixture is a price history, and Phase 7's depth is
+        // measured by its own tests. An absent ladder must not change a single
+        // figure the engine produces, which is what passing one here asserts.
+        &Ladder::default(),
         &catalog(),
         &[Window::Days(14)],
         current.observed_at,
@@ -221,13 +225,20 @@ fn a_rebuild_is_the_same_rebuild() {
     let key = MarketKey::commodity(Region::Eu, ITEM, 1);
     let windows = Window::universal();
 
-    let once = materialise::commodity(key, &history, &catalog(), &windows, NOW);
+    let once = materialise::commodity(key, &history, &Ladder::default(), &catalog(), &windows, NOW);
     // Shuffled, because `commodity` documents that history arrives in any
     // order. An ordering-dependent statistic would be a rebuild that depends
     // on how the rows came back out of SQLite.
     let mut reversed = history.clone();
     reversed.reverse();
-    let twice = materialise::commodity(key, &reversed, &catalog(), &windows, NOW);
+    let twice = materialise::commodity(
+        key,
+        &reversed,
+        &Ladder::default(),
+        &catalog(),
+        &windows,
+        NOW,
+    );
 
     assert_eq!(once, twice, "the same observations, the same answer");
 }

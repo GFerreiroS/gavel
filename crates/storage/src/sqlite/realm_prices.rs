@@ -6,7 +6,7 @@
 //! buyout.
 
 use app_core::error::RepoResult;
-use app_core::market::{Copper, ItemId, Realm, RealmId, RealmSample, Region};
+use app_core::market::{Copper, ItemId, Ladder, Realm, RealmId, RealmSample, Region};
 use app_core::repo::RealmPriceRepository;
 use cluster_core::Millis;
 use sqlx::sqlite::SqliteRow;
@@ -100,6 +100,82 @@ impl RealmPriceRepository for SqliteRealmPrices {
         }
         tx.commit().await.map_err(map_err)?;
         Ok(written)
+    }
+
+    async fn record_ladders(
+        &self,
+        region: Region,
+        realm: RealmId,
+        observed_at: Millis,
+        ladders: &[(ItemId, String, Ladder)],
+    ) -> RepoResult<u64> {
+        if ladders.is_empty() {
+            return Ok(0);
+        }
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        let mut written = 0u64;
+        for (item, variant, ladder) in ladders {
+            if ladder.is_empty() {
+                continue;
+            }
+            let result = sqlx::query(
+                "INSERT OR IGNORE INTO realm_price_ladders
+                   (item_id, region, realm_id, variant, observed_at, levels, total, steps)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(item.get() as i64)
+            .bind(region.as_str())
+            .bind(realm.get() as i64)
+            .bind(variant)
+            .bind(observed_at.get() as i64)
+            .bind(ladder.levels() as i64)
+            .bind(ladder.total() as i64)
+            .bind(ladder.encode())
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+            written += result.rows_affected();
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok(written)
+    }
+
+    async fn latest_ladders_for(
+        &self,
+        region: Region,
+        item: ItemId,
+    ) -> RepoResult<Vec<(RealmId, String, Millis, Ladder)>> {
+        let rows = sqlx::query(
+            "SELECT realm_id, variant, max(observed_at) AS observed_at, steps
+               FROM realm_price_ladders
+              WHERE region = ? AND item_id = ?
+              GROUP BY realm_id, variant",
+        )
+        .bind(region.as_str())
+        .bind(item.get() as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                (
+                    RealmId(row.get::<i64, _>("realm_id") as u32),
+                    row.get::<String, _>("variant"),
+                    Millis(row.get::<i64, _>("observed_at") as u64),
+                    Ladder::decode(&row.get::<String, _>("steps")),
+                )
+            })
+            .collect())
+    }
+
+    async fn prune_ladders_before(&self, before: Millis) -> RepoResult<u64> {
+        let result = sqlx::query("DELETE FROM realm_price_ladders WHERE observed_at < ?")
+            .bind(before.get() as i64)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(result.rows_affected())
     }
 
     async fn latest(&self, region: Region, realm: RealmId) -> RepoResult<Vec<RealmSample>> {

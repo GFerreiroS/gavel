@@ -364,9 +364,64 @@ impl CommodityProvider for FakeProvider {
 struct FakePrices {
     samples: Mutex<BTreeMap<(u32, u64), PriceSample>>,
     alerts: Mutex<Vec<Alert>>,
+    /// Ladders, keyed the same way the table keys them, so that recording the
+    /// same instant twice is a no-op here as it is in SQLite.
+    ladders: Mutex<BTreeMap<(u32, u64), app_core::market::Ladder>>,
 }
 
 impl PriceRepository for FakePrices {
+    async fn record_ladders(
+        &self,
+        region: Region,
+        observed_at: Millis,
+        ladders: &[(ItemId, app_core::market::Ladder)],
+    ) -> RepoResult<u64> {
+        let mut held = self.ladders.lock().unwrap();
+        let mut written = 0;
+        for (item, ladder) in ladders {
+            let _ = region;
+            if held
+                .insert((item.get(), observed_at.get()), ladder.clone())
+                .is_none()
+            {
+                written += 1;
+            }
+        }
+        Ok(written)
+    }
+
+    async fn latest_ladders(
+        &self,
+        _region: Region,
+    ) -> RepoResult<Vec<(ItemId, Millis, app_core::market::Ladder)>> {
+        let held = self.ladders.lock().unwrap();
+        let mut newest: BTreeMap<u32, (u64, app_core::market::Ladder)> = BTreeMap::new();
+        for ((item, at), ladder) in held.iter() {
+            let slot = newest.entry(*item).or_insert((*at, ladder.clone()));
+            if *at >= slot.0 {
+                *slot = (*at, ladder.clone());
+            }
+        }
+        Ok(newest
+            .into_iter()
+            .map(|(item, (at, ladder))| (ItemId(item), Millis(at), ladder))
+            .collect())
+    }
+
+    async fn prune_ladders_before(&self, before: Millis) -> RepoResult<u64> {
+        let mut held = self.ladders.lock().unwrap();
+        let before = before.get();
+        let doomed: Vec<(u32, u64)> = held
+            .keys()
+            .filter(|(_, at)| *at < before)
+            .copied()
+            .collect();
+        for key in &doomed {
+            held.remove(key);
+        }
+        Ok(doomed.len() as u64)
+    }
+
     /// The materialiser's read. The fake holds one region's rows, so this is
     /// the same answer `history` gives without an item filter.
     async fn history_in_region(&self, region: Region) -> RepoResult<Vec<PriceSample>> {
@@ -543,6 +598,7 @@ async fn a_collection_pass_stores_samples_and_raises_a_floor_alert() {
     let Outcome::Collected {
         samples,
         written,
+        ladders,
         alerts,
     } = report.outcome
     else {
@@ -550,6 +606,10 @@ async fn a_collection_pass_stores_samples_and_raises_a_floor_alert() {
     };
     assert_eq!(samples, 1);
     assert_eq!(written, 1);
+    assert_eq!(
+        ladders, 1,
+        "a sample and its ladder come from the same pass over the same listings"
+    );
     assert_eq!(alerts.len(), 1, "500c is under the 600c floor");
     assert_eq!(alerts[0].item, ITEM);
 

@@ -410,6 +410,48 @@ async fn build<E: Ports>(
         quantity: state.quantity,
         listings: state.listings,
 
+        depth: state.depth.as_ref().map(|depth| crate::views::DepthView {
+            levels: depth.levels,
+            total: depth.total,
+            cheapest: money(depth.cheapest),
+            sparse: depth.sparse,
+            p25: depth.p25.map(money),
+            p50: depth.p50.map(money),
+            within_5: depth.within_5,
+            within_20: depth.within_20,
+            target: depth.target,
+            filled: depth.fill.filled,
+            complete: depth.fill.complete,
+            total_cost: money(depth.fill.total_cost),
+            average_unit: money(depth.fill.average_unit),
+            clearing_price: money(depth.fill.clearing_price),
+            impact_percent: depth.fill.impact_percent,
+            walls: depth
+                .walls
+                .iter()
+                .map(|wall| crate::views::WallView {
+                    price: money(wall.price),
+                    quantity: wall.quantity,
+                    share_percent: wall.share_percent,
+                })
+                .collect(),
+            chart: chart::depth_chart(
+                &state.ladder,
+                depth.target,
+                crate::i18n::translate(locale, "Not enough of the ladder to draw a curve."),
+            ),
+        }),
+        depth_panel: PanelHead {
+            question: "What does it cost to buy what I need?",
+            // A snapshot, not a window: the ladder is what is listed right
+            // now. Saying "the last 7 days" here would be the panel borrowing
+            // a period it does not describe.
+            window: crate::i18n::translate(locale, "listed right now").to_string(),
+            units: "gold",
+            coverage: None,
+            freshness: freshness.clone(),
+        },
+
         quality_panel: panel(
             "How much of this window did we actually see?",
             "hours",

@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 use cluster_core::Millis;
 use serde::{Deserialize, Serialize};
 
-use super::{Copper, ItemId, Region};
+use super::{Copper, ItemId, Ladder, Listing, Region};
 
 /// A connected realm: several realms sharing one auction house.
 ///
@@ -130,7 +130,7 @@ pub fn summarise_realm(
     region: Region,
     realm: RealmId,
     observed_at: Millis,
-) -> Vec<RealmSample> {
+) -> (Vec<RealmSample>, Vec<(ItemId, String, Ladder)>) {
     let mut grouped: BTreeMap<(ItemId, String), Vec<Copper>> = BTreeMap::new();
     for listing in listings {
         grouped
@@ -139,24 +139,49 @@ pub fn summarise_realm(
             .push(listing.price);
     }
 
-    grouped
-        .into_iter()
-        .filter_map(|((item, variant), mut prices)| {
-            prices.sort_unstable();
-            let listings = prices.len() as u32;
-            Some(RealmSample {
-                item,
-                region,
-                realm,
-                variant,
-                observed_at,
-                min_price: *prices.first()?,
-                median_price: prices[prices.len() / 2],
-                max_price: *prices.last()?,
-                listings,
-            })
-        })
-        .collect()
+    let mut samples = Vec::with_capacity(grouped.len());
+    let mut ladders = Vec::with_capacity(grouped.len());
+    for ((item, variant), mut prices) in grouped {
+        prices.sort_unstable();
+        let (Some(min), Some(max)) = (prices.first().copied(), prices.last().copied()) else {
+            continue;
+        };
+
+        // **The sparse ladder.** A gear auction is one item, so every rung
+        // here is a quantity of one unless two sellers happen to have listed
+        // at exactly the same copper -- which is why `Ladder::is_sparse` exists
+        // and why the depth metrics that assume a distribution decline on
+        // these. It is still worth storing: "four for sale, at 25k, 31k, 31k
+        // and 300k" is the whole of what a buyer wants to know about a BoE,
+        // and no summary of min/median/max says it.
+        ladders.push((
+            item,
+            variant.clone(),
+            Ladder::of(
+                &prices
+                    .iter()
+                    .map(|price| Listing {
+                        item,
+                        unit_price: *price,
+                        quantity: 1,
+                    })
+                    .collect::<Vec<_>>(),
+            ),
+        ));
+
+        samples.push(RealmSample {
+            item,
+            region,
+            realm,
+            variant,
+            observed_at,
+            min_price: min,
+            median_price: prices[prices.len() / 2],
+            max_price: max,
+            listings: prices.len() as u32,
+        });
+    }
+    (samples, ladders)
 }
 
 /// What a realm snapshot fetch produced.
@@ -229,7 +254,7 @@ mod tests {
     /// and 330,000g.
     #[test]
     fn variants_of_one_item_are_separate_markets() {
-        let samples = summarise_realm(
+        let (samples, ladders) = summarise_realm(
             vec![
                 listing(271438, 90_000_000, &[6652, 10844, 12825, 13332]),
                 listing(271438, 99_110_000, &[6652, 10844, 12825, 13332]),
@@ -246,6 +271,20 @@ mod tests {
         assert_eq!(cheap.listings, 2);
         assert_eq!(cheap.min_price, Copper(90_000_000));
         assert_eq!(cheap.max_price, Copper(99_110_000));
+
+        // A ladder per market, and the sparse shape: one unit a rung, because
+        // a gear auction is one item.
+        assert_eq!(ladders.len(), 2, "a ladder per market, not per item");
+        let (_, variant, ladder) = &ladders[0];
+        assert_eq!(variant, "6652,10844,12825,13332");
+        assert_eq!(ladder.levels(), 2);
+        assert_eq!(ladder.total(), 2);
+        assert_eq!(ladder.cheapest(), Some(Copper(90_000_000)));
+        assert!(
+            ladder.is_sparse(),
+            "two auctions is not a distribution, and the depth metrics say so"
+        );
+        assert_eq!(ladder.supply_percentile(50), None);
     }
 
     /// The bonus list is written in a stable order whatever order it arrived
@@ -261,7 +300,7 @@ mod tests {
     /// Gear with no bonus ids at all is the base version, and still a market.
     #[test]
     fn a_plain_item_is_its_own_variant() {
-        let samples = summarise_realm(
+        let (samples, _) = summarise_realm(
             vec![listing(271434, 50_000, &[])],
             Region::Us,
             RealmId(60),

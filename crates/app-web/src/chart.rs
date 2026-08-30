@@ -11,6 +11,7 @@
 
 use std::fmt::Write;
 
+use app_core::market::depth::Ladder;
 use app_core::market::engine::Spark;
 use app_core::market::series::{ChartPoint, ChartSeries, Histogram};
 use app_core::market::{Copper, Cycle, Point};
@@ -705,6 +706,132 @@ pub fn histogram_chart(histogram: &Histogram, current: Option<Copper>, empty_not
             svg,
             r#"<text class="axis" x="{:.1}" y="{:.1}" text-anchor="{anchor}">{}</text>"#,
             PAD_L + plot_w * fraction,
+            H - 9.0,
+            escape(&Unit::Gold.tick(price))
+        );
+    }
+    svg.push_str("</svg>");
+    svg
+}
+
+// --- the depth curve -----------------------------------------------------
+
+/// The supply curve: price along the bottom, cumulative units up the side.
+///
+/// A step chart rather than a line, because supply *is* a step function --
+/// there are twenty units at 100 and none at 101, and drawing a slope between
+/// them would invent an offer nobody made. It is the same rule the price
+/// chart's gaps follow, applied to the other axis.
+///
+/// Reading it: how far right you have to go to get the height you need is what
+/// buying that many costs. A curve that climbs steeply near the left is a deep
+/// market; one that is flat until it jumps is a thin market with a wall on it.
+pub fn depth_chart(ladder: &Ladder, target: u64, empty_note: &str) -> String {
+    if ladder.levels() < 2 {
+        return placeholder(empty_note);
+    }
+    let total = ladder.total();
+    let (lo, hi) = match (ladder.cheapest(), ladder.dearest()) {
+        (Some(lo), Some(hi)) if hi > lo => (lo.get(), hi.get()),
+        _ => return placeholder(empty_note),
+    };
+
+    let span = (hi - lo).max(1);
+    let x =
+        |price: u64| PAD_L + (price.saturating_sub(lo)) as f64 / span as f64 * (W - PAD_L - PAD_R);
+    let y = |units: u64| H - PAD_B - units as f64 / total.max(1) as f64 * (H - PAD_T - PAD_B);
+
+    let mut svg = String::with_capacity(8 * 1024);
+    open_svg(&mut svg);
+
+    // Horizontal gridlines in units, so the height can be read off.
+    let (glo, ghi, step) = nice_axis(0, total, 4);
+    let mut value = glo;
+    while value <= ghi + step / 2.0 {
+        let gy = y(value as u64);
+        let _ = write!(
+            svg,
+            r#"<line class="grid" x1="{PAD_L}" y1="{gy:.1}" x2="{:.1}" y2="{gy:.1}"/>"#,
+            W - PAD_R
+        );
+        let _ = write!(
+            svg,
+            r#"<text class="axis" x="{:.1}" y="{:.1}" text-anchor="end">{}</text>"#,
+            PAD_L - 8.0,
+            gy + 3.5,
+            escape(&Unit::Count.tick(value.max(0.0) as u64))
+        );
+        value += step;
+    }
+
+    // The staircase, and the area under it.
+    let mut path = format!("M{:.1} {:.1}", x(lo), y(0));
+    let mut last = 0u64;
+    for step_ in &ladder.steps {
+        // Across at the height we were, then up to the new one: a step, not a
+        // slope. The horizontal segment is the range of prices at which that
+        // much supply is available, which is a real fact about the market.
+        let _ = write!(path, " L{:.1} {:.1}", x(step_.price.get()), y(last));
+        let _ = write!(
+            path,
+            " L{:.1} {:.1}",
+            x(step_.price.get()),
+            y(step_.cumulative)
+        );
+        last = step_.cumulative;
+    }
+    let _ = write!(
+        svg,
+        r#"<path class="band-fill" d="{path} L{:.1} {:.1} L{:.1} {:.1} Z"/>"#,
+        x(hi),
+        y(0),
+        x(lo),
+        y(0)
+    );
+    let _ = write!(svg, r#"<path class="band-median" d="{path}"/>"#);
+
+    // The target quantity as a rule across it: where that line meets the
+    // staircase is what the order costs.
+    if target > 0 && target <= total {
+        let ty = y(target);
+        let _ = write!(
+            svg,
+            r#"<line class="band-now" x1="{PAD_L}" y1="{ty:.1}" x2="{:.1}" y2="{ty:.1}"><title>{}</title></line>"#,
+            W - PAD_R,
+            escape(&format!("{target} units"))
+        );
+    }
+
+    // Hover strips per rung.
+    for (index, rung) in ladder.steps.iter().enumerate() {
+        let left = if index == 0 {
+            x(lo)
+        } else {
+            x(ladder.steps[index - 1].price.get())
+        };
+        let right = x(rung.price.get());
+        let _ = write!(
+            svg,
+            r#"<rect class="hit" x="{:.1}" y="{PAD_T}" width="{:.1}" height="{:.1}"><title>{}</title></rect>"#,
+            left,
+            (right - left).max(2.0),
+            H - PAD_T - PAD_B,
+            escape(&format!(
+                "{}\n{} units at this price\n{} units at or below it",
+                Unit::Gold.value(rung.price.get()),
+                rung.quantity,
+                rung.cumulative
+            ))
+        );
+    }
+
+    // The axis is prices.
+    for (fraction, anchor) in [(0.0, "start"), (1.0, "end")] {
+        let price = lo + (span as f64 * fraction) as u64;
+        let _ = write!(
+            svg,
+            r#"<text class="axis" x="{:.1}" y="{:.1}" text-anchor="{anchor}">{}</text>"#,
+            PAD_L + (W - PAD_L - PAD_R) * fraction,
             H - 9.0,
             escape(&Unit::Gold.tick(price))
         );

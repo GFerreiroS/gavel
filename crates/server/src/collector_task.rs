@@ -74,6 +74,7 @@ async fn run<E: Ports>(env: E) {
         warm_tooltips(&env).await;
         downsample(&env).await;
         prune(&env).await;
+        prune_ladders(&env).await;
     }
 }
 
@@ -174,6 +175,7 @@ async fn collect_once<E: Ports>(env: &E) -> Vec<app_core::market::Region> {
                 CollectOutcome::Collected {
                     samples,
                     written,
+                    ladders,
                     alerts,
                 } => {
                     changed.push(*region);
@@ -181,6 +183,7 @@ async fn collect_once<E: Ports>(env: &E) -> Vec<app_core::market::Region> {
                         region = %region,
                         samples,
                         written,
+                        ladders,
                         alerts = alerts.len(),
                         "collected commodity prices"
                     );
@@ -341,10 +344,25 @@ async fn collect_one_realm<E: Ports>(env: &E, realm: &Realm, wanted: &[ItemId]) 
             generated_at,
             listings,
         }) => {
-            let samples = summarise_realm(listings, realm.region, realm.id, generated_at);
+            let (samples, ladders) =
+                summarise_realm(listings, realm.region, realm.id, generated_at);
             match prices.record_samples(&samples).await {
                 Ok(written) => {
-                    tracing::debug!(realm = %realm.name, written, "collected gear prices");
+                    // The ladders after the samples and outside the match on
+                    // them: a realm whose samples all collided has been seen
+                    // before, but a deployment that gained ladder collection
+                    // since then has samples without ladders, and this is what
+                    // fills them in.
+                    let rungs = prices
+                        .record_ladders(realm.region, realm.id, generated_at, &ladders)
+                        .await
+                        .unwrap_or_else(|e| {
+                            tracing::warn!(realm = %realm.name, error = %e,
+                                "storing gear ladders failed");
+                            0
+                        });
+                    tracing::debug!(realm = %realm.name, written, rungs,
+                        "collected gear prices");
                     Outcome::Collected
                 }
                 Err(e) => {
@@ -509,5 +527,43 @@ async fn prune<E: Ports>(env: &E) {
         Ok(0) => {}
         Ok(rows) => tracing::info!(rows, "pruned expired price history"),
         Err(e) => tracing::warn!(error = %e, "could not prune price history"),
+    }
+}
+
+/// Drop ladders that have left the hot window.
+///
+/// Separate from `prune` because the policies are different by design, and the
+/// difference is the point: price history defaults to *keep forever* because
+/// the archive is the product, while ladders default to a fortnight because
+/// they are every rung of every market and the archive would become them.
+///
+/// This runs whatever `retain_ms` says. A deployment keeping its price history
+/// forever -- which is the default -- still has to bound its ladders, or the
+/// one policy silently disables the other.
+async fn prune_ladders<E: Ports>(env: &E) {
+    let hot = env.market().ladder_hot_ms;
+    // Zero means keep every ladder for ever. Honest, and it will need a disk.
+    if hot == 0 {
+        return;
+    }
+    let cutoff = Millis(env.now().get().saturating_sub(hot));
+    let commodity = env.store().prices().prune_ladders_before(cutoff).await;
+    let realm = env
+        .store()
+        .realm_prices()
+        .prune_ladders_before(cutoff)
+        .await;
+    match (commodity, realm) {
+        (Ok(0), Ok(0)) => {}
+        (Ok(a), Ok(b)) => {
+            tracing::info!(
+                commodity = a,
+                realm = b,
+                "pruned ladders past the hot window"
+            )
+        }
+        (Err(e), _) | (_, Err(e)) => {
+            tracing::warn!(error = %e, "could not prune ladders")
+        }
     }
 }

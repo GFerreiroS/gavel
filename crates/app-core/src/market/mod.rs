@@ -10,6 +10,7 @@ pub mod alerts;
 pub mod analysis;
 pub mod catalog;
 pub mod collector;
+pub mod depth;
 pub mod engine;
 pub mod event;
 pub mod key;
@@ -33,6 +34,7 @@ pub use catalog::{
     Profession, Slot, Stat, Track,
 };
 pub use collector::{AlertSink, Collector, NullSink, Outcome, Report};
+pub use depth::{Depth, Fill, Ladder, Step, Target, Wall};
 pub use engine::{Anomaly, Buckets, Distribution, Gates, Insufficient, Position, Swing, Valuation};
 pub use event::{EventKind, EventScope, MarketEvent, Provenance, Validation, Visibility};
 pub use key::{BadMarketKey, MarketKey};
@@ -272,6 +274,22 @@ pub struct MarketConfig {
     /// resolution. A day-old price is worth knowing; the fact that it was
     /// collected at 14:00 rather than 15:00 is not.
     pub downsample_after_ms: u64,
+    /// How long price ladders are kept: the **hot window**.
+    ///
+    /// Their own policy, and a much shorter one, because they are a different
+    /// kind of data. A price sample is five numbers; a ladder is every rung of
+    /// the supply, and on the real archive's shape that is roughly fifteen
+    /// megabytes a day across the two tables. Keeping them for ever the way
+    /// the price history is kept would trade the archive for the depth.
+    ///
+    /// **The compact historical encoding is deliberately not built yet.** §16
+    /// is explicit that the archive curve and the hot-window length are to be
+    /// set "only after proving which depth, event, and seasonality analyses
+    /// remain reproducible" -- and that proof needs real ladders, which no
+    /// archive has yet because nothing was storing them. So this is a plain
+    /// window with an honest name: exact ladders inside it, nothing outside
+    /// it, and a decision to make once there is something to measure.
+    pub ladder_hot_ms: u64,
 }
 
 impl Default for MarketConfig {
@@ -283,6 +301,12 @@ impl Default for MarketConfig {
             collect_interval_ms: 30 * 60 * 1000,
             retain_ms: 0,
             downsample_after_ms: 14 * 24 * 60 * 60 * 1000,
+            // Fourteen days, matching the longest comparison window a card
+            // offers, so that "how deep is this market" can be asked about
+            // every window the rest of the app talks in. A starting point
+            // chosen to be *explicable*, not one measured -- there is nothing
+            // to measure yet.
+            ladder_hot_ms: 14 * 24 * 60 * 60 * 1000,
         }
     }
 }

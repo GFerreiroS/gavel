@@ -8,7 +8,7 @@
 
 use app_core::market::materialise::{self, CHART_POINTS};
 use app_core::market::window::{ROLLING_DAYS, Window};
-use app_core::market::{Catalog, Copper, ItemId, PriceSample, Region, analyse, downsample};
+use app_core::market::{Catalog, Copper, ItemId, Ladder, PriceSample, Region, analyse, downsample};
 use cluster_core::Millis;
 
 const HOUR: u64 = 60 * 60 * 1000;
@@ -78,7 +78,15 @@ fn the_stored_state_is_what_analyse_would_have_said() {
     let key = catalog.market_of(&history[0]);
     let expected = analyse(&history, NOW);
 
-    let stored = materialise::commodity(key, &history, &catalog, &Window::universal(), NOW).state;
+    let stored = materialise::commodity(
+        key,
+        &history,
+        &Ladder::default(),
+        &catalog,
+        &Window::universal(),
+        NOW,
+    )
+    .state;
 
     assert_eq!(stored.key, key);
     assert_eq!(stored.samples, expected.samples as u32);
@@ -120,7 +128,8 @@ fn a_window_row_is_what_window_stats_reduces() {
     let history = history(ItemId(10));
     let key = catalog.market_of(&history[0]);
     let windows = Window::universal();
-    let stored = materialise::commodity(key, &history, &catalog, &windows, NOW).windows;
+    let stored =
+        materialise::commodity(key, &history, &Ladder::default(), &catalog, &windows, NOW).windows;
 
     for days in ROLLING_DAYS {
         let window = Window::Days(days);
@@ -179,7 +188,14 @@ fn an_empty_window_is_absent_rather_than_zero() {
         listings: 2,
     }];
     let key = catalog.market_of(&old[0]);
-    let out = materialise::commodity(key, &old, &catalog, &Window::all_for(&catalog), NOW);
+    let out = materialise::commodity(
+        key,
+        &old,
+        &Ladder::default(),
+        &catalog,
+        &Window::all_for(&catalog),
+        NOW,
+    );
 
     let present: Vec<String> = out.windows.iter().map(|w| w.window.key()).collect();
     for days in ROLLING_DAYS {
@@ -203,7 +219,15 @@ fn a_window_says_how_much_of_itself_was_observed() {
     let catalog = catalog();
     let history = history(ItemId(10));
     let key = catalog.market_of(&history[0]);
-    let stored = materialise::commodity(key, &history, &catalog, &Window::universal(), NOW).windows;
+    let stored = materialise::commodity(
+        key,
+        &history,
+        &Ladder::default(),
+        &catalog,
+        &Window::universal(),
+        NOW,
+    )
+    .windows;
 
     let week = stored.iter().find(|w| w.window == Window::Days(7)).unwrap();
     assert_eq!(week.expected_buckets, Some(7 * 24));

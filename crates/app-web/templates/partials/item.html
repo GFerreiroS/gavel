@@ -123,6 +123,81 @@
   </article>
 </div>
 
+{# --- what it costs to buy what you need -------------------------------- #}
+<article class="viz-root panel">
+  {% call panel_head(analysis.depth_panel) %}
+  {% if let Some(depth) = analysis.depth %}
+  <div class="verdict-row">
+    <div class="stat">
+      <span class="label">{{ "Cheapest one"|t }}</span>
+      <span class="value">{{ depth.cheapest }}</span>
+      <span class="when muted">{{ "{} units over {} prices"|t|fill(depth.total)|fill(depth.levels) }}</span>
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Buying {}"|t|fill(depth.target) }}</span>
+      {% if depth.complete %}
+      <span class="value">{{ depth.average_unit }}</span>
+      <span class="when muted">{{ "each · {} in total · last unit at {}"|t|fill(depth.total_cost)|fill(depth.clearing_price) }}</span>
+      {% else %}
+      {# §2: a market that cannot fill the order says so, rather than quoting
+         a price for units that are not there. #}
+      <span class="value muted">{{ "only {} listed"|t|fill(depth.filled) }}</span>
+      <span class="when muted">{{ "not enough on the market"|t }}</span>
+      {% endif %}
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Price impact"|t }}</span>
+      <span class="value {% if depth.impact_percent >= 25 %}bad{% endif %}">+{{ depth.impact_percent }}%</span>
+      <span class="when muted">{{ "dearer than the sticker price"|t }}</span>
+    </div>
+    {% if !depth.sparse %}
+    <div class="stat">
+      <span class="label">{{ "Available near the top"|t }}</span>
+      <span class="value">{% if let Some(within) = depth.within_5 %}{{ within }}{% else %}—{% endif %}</span>
+      <span class="when muted">{% if let Some(within) = depth.within_20 %}{{ "within 5% · {} within 20%"|t|fill(within) }}{% endif %}</span>
+    </div>
+    <div class="stat">
+      {# Supply percentiles: units on the shelf, not hours of history. The
+         third kind of percentile on this page, and the panel names which one
+         it is rather than leaving three to be told apart by context. #}
+      <span class="label">{{ "Half the supply by"|t }}</span>
+      <span class="value">{% if let Some(p50) = depth.p50 %}{{ p50 }}{% else %}—{% endif %}</span>
+      <span class="when muted">{% if let Some(p25) = depth.p25 %}{{ "a quarter of it by {}"|t|fill(p25) }}{% endif %}</span>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if depth.sparse %}
+  {# A BoE with four auctions. The percentiles and the liquidity proxies are
+     absent rather than guessed: with four listings, "the cheapest quarter of
+     supply" is a long way of saying "the second one". #}
+  <p class="hint">
+    {{ "Only a handful of these are listed, so the supply percentiles and liquidity figures are not shown: with this few auctions they would dress a guess up as a measurement."|t }}
+  </p>
+  {% endif %}
+
+  {{ depth.chart|safe }}
+
+  {% if !depth.walls.is_empty() %}
+  <p class="hint">
+    <strong>{{ "Held up by few sellers."|t }}</strong>
+    {% for wall in depth.walls %}{{ "{} units at {} ({}%)"|t|fill(wall.quantity)|fill(wall.price)|fill(wall.share_percent) }}{% if !loop.last %} · {% endif %}{% endfor %}
+  </p>
+  {% endif %}
+
+  <p class="hint">
+    {{ "Everything here describes what is listed at this moment. Nothing on this page knows how much of it sells."|t }}
+  </p>
+  {% else %}
+  {# Not "no depth": no depth *recorded*. The distinction matters because an
+     archive gathered before ladders were collected has none and can never be
+     given any, which is a fact about us rather than about the market. #}
+  <p class="hint">
+    {{ "No depth recorded for this market yet. Ladders are stored from each collection onwards; history gathered before that has none and cannot be given any."|t }}
+  </p>
+  {% endif %}
+</article>
+
 {# --- how good is the evidence ------------------------------------------ #}
 <article class="panel">
   {% call panel_head(analysis.quality_panel) %}

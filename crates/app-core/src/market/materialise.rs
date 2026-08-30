@@ -19,6 +19,7 @@ use cluster_core::Millis;
 
 use super::analysis::{self, Cycle, Point, Trend};
 use super::catalog::{Catalog, ItemKind};
+use super::depth::{Depth, Ladder, Target};
 use super::engine::{Buckets, Distribution, Gates, Position, Spark, Swing};
 use super::key::MarketKey;
 use super::series::{ChartSeries, Histogram, Observation};
@@ -91,6 +92,18 @@ pub struct MarketState {
 
     /// Chart-ready and already thinned.
     pub series: Vec<Point>,
+
+    /// The newest ladder: what is on the shelf, and at what prices.
+    ///
+    /// Empty for every market until ladder collection has run at least once --
+    /// which for an archive collected before Phase 7 is *all* of them, because
+    /// the listings were reduced and dropped. §2's rule applies: the panel says
+    /// there is no depth recorded yet rather than drawing an empty market.
+    pub ladder: Ladder,
+    /// What that ladder means for a buyer of the catalogue's target quantity.
+    /// Swept here rather than per request, and here rather than in storage,
+    /// because the target is a catalogue fact and storage has no catalogue.
+    pub depth: Option<Depth>,
 }
 
 impl MarketState {
@@ -125,6 +138,8 @@ impl MarketState {
             best_hour: None,
             best_weekday: None,
             series: Vec::new(),
+            ladder: Ladder::default(),
+            depth: None,
         }
     }
 
@@ -238,6 +253,7 @@ pub struct Materialised {
 pub fn commodity(
     key: MarketKey,
     history: &[PriceSample],
+    ladder: &Ladder,
     catalog: &Catalog,
     windows: &[Window],
     now: Millis,
@@ -276,6 +292,17 @@ pub fn commodity(
         best_weekday: analysis.best_weekday,
 
         series: analysis::downsample(&analysis.series, CHART_POINTS),
+
+        // The target is the catalogue's, defaulting per kind. §16: a target
+        // profile is domain metadata, not a number in a template.
+        depth: Depth::of(
+            ladder,
+            catalog
+                .find(key.item())
+                .map(|entry| entry.target())
+                .unwrap_or(Target(1)),
+        ),
+        ladder: ladder.clone(),
     };
 
     let windows = windows

@@ -145,6 +145,7 @@ pub const EXTERNAL_STRINGS: &[&str] = &[
     "How much of this window did we actually see?",
     "When in the week is it cheapest?",
     "How has each patch priced it?",
+    "What does it cost to buy what I need?",
     // ...and the units those panels answer in.
     "gold",
     "hours",

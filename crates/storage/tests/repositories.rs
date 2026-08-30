@@ -15,7 +15,8 @@ use app_core::market::{ItemKind, MarketEvent, MarketKey, Track};
 use app_core::model::Session;
 use app_core::repo::{
     CacheStore, EventRepository, JobRepository, KeyValueStore, MarketEventRepository,
-    ReadModelRepository, ReleaseRepository, SessionRepository, Store, UserRepository, VersionState,
+    PriceRepository, ReadModelRepository, ReleaseRepository, SessionRepository, Store,
+    UserRepository, VersionState,
 };
 use cluster_core::{
     ClusterEvent, ClusterStore, EventRecord, FailureReason, JobSpec, JobState, Millis, NodeId,
@@ -1276,6 +1277,24 @@ async fn a_window_holds_what_happened_and_what_was_still_happening() {
 
 fn materialised(item: u32, price: u64, samples: u32) -> Materialised {
     let key = MarketKey::commodity(Region::Eu, ItemId(item), 1);
+
+    // A dense ladder with a wall in it, and the summary swept from it rather
+    // than written by hand -- so the round trip covers a real encoding, walls
+    // and optional percentiles included, instead of a `None`.
+    let rung = |over: u64, quantity: u64| app_core::market::Listing {
+        item: ItemId(item),
+        unit_price: Copper(price + over),
+        quantity,
+    };
+    let ladder = app_core::market::Ladder::of(&[
+        rung(0, 5),
+        rung(10, 10),
+        rung(20, 20),
+        rung(30, 40),
+        rung(40, 80),
+    ]);
+    let depth = app_core::market::Depth::of(&ladder, app_core::market::Target(20));
+
     Materialised {
         state: MarketState {
             key,
@@ -1310,6 +1329,8 @@ fn materialised(item: u32, price: u64, samples: u32) -> Materialised {
                 price: Copper(price),
                 quantity: 100,
             }],
+            ladder,
+            depth,
         },
         windows: vec![MarketWindow {
             key,
@@ -1708,4 +1729,145 @@ async fn a_rollup_without_enough_history_keeps_its_reason() {
         .unwrap()
         .expect("the roll-up is published");
     assert_eq!(back.position, original.position);
+}
+
+// --- market depth (Phase 7) --------------------------------------------------
+
+/// Ladders round-trip, and re-recording an instant is a no-op.
+///
+/// The second half is the one that matters: a retried collection must not
+/// double a market's supply, and it must not replace a stored ladder with a
+/// differently-parsed copy of itself.
+#[tokio::test]
+async fn a_commodity_ladder_round_trips_and_a_retry_changes_nothing() {
+    let store = store().await;
+    let prices = store.prices();
+
+    let ladder = app_core::market::Ladder::of(&[
+        app_core::market::Listing {
+            item: ItemId(212_265),
+            unit_price: Copper(100),
+            quantity: 20,
+        },
+        app_core::market::Listing {
+            item: ItemId(212_265),
+            unit_price: Copper(150),
+            quantity: 300,
+        },
+    ]);
+    let rows = &[(ItemId(212_265), ladder.clone())];
+
+    assert_eq!(
+        prices
+            .record_ladders(Region::Eu, Millis(1_000), rows)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        prices
+            .record_ladders(Region::Eu, Millis(1_000), rows)
+            .await
+            .unwrap(),
+        0,
+        "the same instant twice is one ladder"
+    );
+
+    let back = prices.latest_ladders(Region::Eu).await.unwrap();
+    assert_eq!(back.len(), 1);
+    assert_eq!(back[0].0, ItemId(212_265));
+    assert_eq!(back[0].1, Millis(1_000));
+    assert_eq!(back[0].2, ladder);
+    assert_eq!(back[0].2.total(), 320);
+}
+
+/// The newest ladder wins, and the hot window drops the rest.
+#[tokio::test]
+async fn ladders_leave_the_hot_window_without_taking_the_newest_with_them() {
+    let store = store().await;
+    let prices = store.prices();
+    let rung = |price: u64, quantity: u64| app_core::market::Listing {
+        item: ItemId(1),
+        unit_price: Copper(price),
+        quantity,
+    };
+
+    for (at, price) in [(1_000u64, 100u64), (2_000, 200), (3_000, 300)] {
+        prices
+            .record_ladders(
+                Region::Eu,
+                Millis(at),
+                &[(ItemId(1), app_core::market::Ladder::of(&[rung(price, 5)]))],
+            )
+            .await
+            .unwrap();
+    }
+
+    let newest = prices.latest_ladders(Region::Eu).await.unwrap();
+    assert_eq!(newest.len(), 1, "one row per market, the newest");
+    assert_eq!(newest[0].1, Millis(3_000));
+
+    assert_eq!(
+        prices.prune_ladders_before(Millis(2_500)).await.unwrap(),
+        2,
+        "the two that left the window"
+    );
+    let after = prices.latest_ladders(Region::Eu).await.unwrap();
+    assert_eq!(after[0].1, Millis(3_000), "and the newest is still here");
+}
+
+/// The sparse half: per realm, per variant, and read one item at a time.
+///
+/// A region-wide sweep of these would be 35,720 markets to answer a question
+/// about one BoE, which is why the port asks for an item.
+#[tokio::test]
+async fn a_realm_ladder_is_stored_per_variant() {
+    let store = store().await;
+    let prices = store.realm_prices();
+    let one = |price: u64| {
+        app_core::market::Ladder::of(&[app_core::market::Listing {
+            item: ItemId(271_441),
+            unit_price: Copper(price),
+            quantity: 1,
+        }])
+    };
+
+    let rows = vec![
+        (ItemId(271_441), "12833,13333".to_string(), one(25_000)),
+        (ItemId(271_441), "12843,13334".to_string(), one(300_000)),
+    ];
+    assert_eq!(
+        prices
+            .record_ladders(Region::Eu, RealmId(1403), Millis(1_000), &rows)
+            .await
+            .unwrap(),
+        2,
+        "two variants are two markets"
+    );
+
+    let back = prices
+        .latest_ladders_for(Region::Eu, ItemId(271_441))
+        .await
+        .unwrap();
+    assert_eq!(back.len(), 2);
+    assert!(back.iter().all(|(realm, ..)| *realm == RealmId(1403)));
+    assert!(back.iter().all(|(_, _, at, _)| *at == Millis(1_000)));
+    let cheap = back
+        .iter()
+        .find(|(_, variant, _, _)| variant == "12833,13333")
+        .expect("the variant we stored");
+    assert_eq!(cheap.3.cheapest(), Some(Copper(25_000)));
+    assert!(
+        cheap.3.is_sparse(),
+        "one auction is not a distribution, and the metrics say so"
+    );
+
+    assert_eq!(prices.prune_ladders_before(Millis(2_000)).await.unwrap(), 2);
+    assert!(
+        prices
+            .latest_ladders_for(Region::Eu, ItemId(271_441))
+            .await
+            .unwrap()
+            .is_empty()
+    );
 }

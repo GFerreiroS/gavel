@@ -475,6 +475,19 @@ pub struct CatalogItem {
     /// the host and size belong to the template, not the catalog.
     #[serde(default)]
     pub icon: Option<String>,
+    /// How many of this a buyer is usually buying, for the depth figures.
+    ///
+    /// §16's Phase 7: "Define target profiles in catalogue/domain metadata
+    /// rather than templates." A template that hard-coded `20` would be a
+    /// product decision living in markup, and the next template would
+    /// eventually hard-code a different one -- §7's drift, in the one place it
+    /// would be invisible because both numbers look equally arbitrary.
+    ///
+    /// `None` takes [`super::Target::of`]'s default for the kind, which is
+    /// what almost everything wants; this is the override for an item whose
+    /// sensible quantity is not its category's.
+    #[serde(default)]
+    pub target_quantity: Option<u64>,
 }
 
 fn default_stat() -> Stat {
@@ -486,6 +499,16 @@ fn default_catalog_version() -> u32 {
 }
 
 impl CatalogItem {
+    /// How many of this the depth figures are computed for.
+    ///
+    /// The catalogue's own number when it has one, the kind's default
+    /// otherwise. One place decides, and it is on the domain side of the wall.
+    pub fn target(&self) -> super::Target {
+        self.target_quantity
+            .map(super::Target)
+            .unwrap_or_else(|| super::Target::of(self.kind))
+    }
+
     /// Full icon URL at the given square size. Blizzard serves 56px icons;
     /// larger requests fall back to the same asset, so 56 is what we ask for.
     pub fn icon_url(&self) -> Option<String> {

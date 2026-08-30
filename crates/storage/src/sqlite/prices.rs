@@ -1,5 +1,5 @@
 use app_core::error::RepoResult;
-use app_core::market::{Alert, AlertSeverity, Copper, ItemId, PriceSample, Region};
+use app_core::market::{Alert, AlertSeverity, Copper, ItemId, Ladder, PriceSample, Region};
 use app_core::repo::PriceRepository;
 use cluster_core::Millis;
 use sqlx::sqlite::SqliteRow;
@@ -260,6 +260,83 @@ impl PriceRepository for SqlitePrices {
 
     async fn prune_before(&self, before: Millis) -> RepoResult<u64> {
         let result = sqlx::query("DELETE FROM price_samples WHERE observed_at < ?")
+            .bind(before.get() as i64)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(result.rows_affected())
+    }
+
+    async fn record_ladders(
+        &self,
+        region: Region,
+        observed_at: Millis,
+        ladders: &[(ItemId, Ladder)],
+    ) -> RepoResult<u64> {
+        if ladders.is_empty() {
+            return Ok(0);
+        }
+        // One transaction for the whole snapshot, like `record_samples`: two
+        // thousand ladders is two thousand statements, and a commit apiece
+        // would make a collection cycle a disk-sync storm.
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        let mut written = 0;
+        for (item, ladder) in ladders {
+            if ladder.is_empty() {
+                continue;
+            }
+            // `OR IGNORE`, not upsert: an instant that is already recorded is
+            // the same snapshot, and rewriting it would let a retry replace a
+            // ladder with a differently-parsed copy of itself.
+            let result = sqlx::query(
+                "INSERT OR IGNORE INTO price_ladders
+                   (item_id, region, observed_at, levels, total, steps)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(item.get() as i64)
+            .bind(region.as_str())
+            .bind(observed_at.get() as i64)
+            .bind(ladder.levels() as i64)
+            .bind(ladder.total() as i64)
+            .bind(ladder.encode())
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+            written += result.rows_affected();
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok(written)
+    }
+
+    async fn latest_ladders(&self, region: Region) -> RepoResult<Vec<(ItemId, Millis, Ladder)>> {
+        // The bare-column form of "the newest row per item", which §11b
+        // records as 4.5x faster than the window function on the real archive
+        // and which `latest_matches_the_window_function` holds against the
+        // portable spelling.
+        let rows = sqlx::query(
+            "SELECT item_id, max(observed_at) AS observed_at, steps
+               FROM price_ladders
+              WHERE region = ?
+              GROUP BY item_id",
+        )
+        .bind(region.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                (
+                    ItemId(row.get::<i64, _>("item_id") as u32),
+                    Millis(row.get::<i64, _>("observed_at") as u64),
+                    Ladder::decode(&row.get::<String, _>("steps")),
+                )
+            })
+            .collect())
+    }
+
+    async fn prune_ladders_before(&self, before: Millis) -> RepoResult<u64> {
+        let result = sqlx::query("DELETE FROM price_ladders WHERE observed_at < ?")
             .bind(before.get() as i64)
             .execute(&self.pool)
             .await

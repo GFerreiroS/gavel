@@ -15,8 +15,8 @@ use crate::market::materialise::{
 };
 use crate::market::window::Window;
 use crate::market::{
-    Alert, ItemId, MarketEvent, MarketKey, PriceSample, Realm, RealmId, RealmSample, Region,
-    WindowStats,
+    Alert, ItemId, Ladder, MarketEvent, MarketKey, PriceSample, Realm, RealmId, RealmSample,
+    Region, WindowStats,
 };
 
 // Job and event persistence are cluster concepts, so their ports live in
@@ -183,6 +183,41 @@ pub trait PriceRepository: Send + Sync + 'static {
     /// region per day, instead of being deleted to save space. Returns the
     /// number of rows removed.
     fn downsample_before(&self, before: Millis) -> impl Future<Output = RepoResult<u64>> + Send;
+
+    // --- market depth (Phase 7) -------------------------------------------
+    //
+    // Kept on this port rather than a new one, because a ladder is the same
+    // observation as the sample beside it -- same item, same region, same
+    // instant, written by the same collection pass. Splitting them would let
+    // one be recorded without the other.
+
+    /// Store one snapshot's ladders. Re-recording an instant is a no-op, for
+    /// the reason `record_samples` is: a retried collection must not double.
+    fn record_ladders(
+        &self,
+        region: Region,
+        observed_at: Millis,
+        ladders: &[(ItemId, Ladder)],
+    ) -> impl Future<Output = RepoResult<u64>> + Send;
+
+    /// The newest ladder of every market in a region.
+    ///
+    /// What the materialiser sweeps. One query rather than one per item, for
+    /// the reason `history_in_region` gives.
+    fn latest_ladders(
+        &self,
+        region: Region,
+    ) -> impl Future<Output = RepoResult<Vec<(ItemId, Millis, Ladder)>>> + Send;
+
+    /// Drop ladders older than `before`.
+    ///
+    /// Separate from `prune_before` because these are kept to a different
+    /// policy: price history is the archive and is kept for ever, while
+    /// ladders are bulky and are kept for a *hot window*. §16 is explicit that
+    /// the compact historical encoding must not be chosen before there is real
+    /// depth data to prove which analyses survive it -- so until then this is
+    /// a plain window with an honest name, not a compaction.
+    fn prune_ladders_before(&self, before: Millis) -> impl Future<Output = RepoResult<u64>> + Send;
 }
 
 /// Per-realm auction history: gear, which is not a commodity.
@@ -198,6 +233,34 @@ pub trait RealmPriceRepository: Send + Sync + 'static {
         &self,
         samples: &[RealmSample],
     ) -> impl Future<Output = RepoResult<u64>> + Send;
+
+    /// Store one realm snapshot's ladders, keyed by item and variant.
+    ///
+    /// These are the *sparse* ladders: a BoE is four auctions of one item
+    /// each, so a rung is usually one unit and a ladder is usually four rungs.
+    /// Tiny rows, and a great many of them.
+    fn record_ladders(
+        &self,
+        region: Region,
+        realm: RealmId,
+        observed_at: Millis,
+        ladders: &[(ItemId, String, Ladder)],
+    ) -> impl Future<Output = RepoResult<u64>> + Send;
+
+    /// The newest ladder of every variant of one item across a region.
+    ///
+    /// Per item rather than per region: the analysis page asks about one BoE,
+    /// and a region-wide sweep of these would be 35,720 markets to answer a
+    /// question about one.
+    fn latest_ladders_for(
+        &self,
+        region: Region,
+        item: ItemId,
+    ) -> impl Future<Output = RepoResult<Vec<(RealmId, String, Millis, Ladder)>>> + Send;
+
+    /// Drop realm ladders older than `before`. See
+    /// [`PriceRepository::prune_ladders_before`].
+    fn prune_ladders_before(&self, before: Millis) -> impl Future<Output = RepoResult<u64>> + Send;
 
     /// The most recent observation of every tracked variant on one realm.
     fn latest(

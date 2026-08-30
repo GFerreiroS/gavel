@@ -948,6 +948,7 @@ mod tests {
             }],
             floor_copper: None,
             icon: None,
+            target_quantity: None,
         };
 
         // One track listed out of four.
@@ -985,6 +986,7 @@ mod tests {
             }],
             floor_copper: None,
             icon: None,
+            target_quantity: None,
         };
         // Roll-ups exist, but for a different item.
         let elsewhere = rollup(Some(Track::Champion));

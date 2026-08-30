@@ -203,6 +203,7 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
         cli.market_interval_minutes,
         cli.market_retain_days,
         cli.market_downsample_days,
+        cli.market_ladder_days,
     );
 
     let env = Runtime::new(Inner {

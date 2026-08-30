@@ -11,8 +11,8 @@ use cluster_core::Millis;
 
 use crate::error::AppResult;
 use crate::market::{
-    Alert, AlertRule, Catalog, CommodityProvider, Copper, ItemId, ItemKind, Listing, PriceSample,
-    Region, Snapshot, alerts, summarise,
+    Alert, AlertRule, Catalog, CommodityProvider, Copper, ItemId, ItemKind, Ladder, Listing,
+    PriceSample, Region, Snapshot, alerts, summarise,
 };
 use crate::repo::PriceRepository;
 
@@ -43,6 +43,11 @@ pub enum Outcome {
     Collected {
         samples: usize,
         written: u64,
+        /// Ladder rows stored. Separate from `written` because they are a
+        /// separate table with a separate retention policy, and because a
+        /// deployment can have one without the other for an hour after the
+        /// upgrade that added them.
+        ladders: u64,
         alerts: Vec<Alert>,
     },
 }
@@ -137,8 +142,17 @@ where
             }
         };
 
-        let samples = self.summarise_all(region, generated_at, listings);
+        let (samples, ladders) = self.summarise_all(region, generated_at, listings);
         let written = self.prices.record_samples(&samples).await?;
+        // Written whatever `written` says. A snapshot whose samples all
+        // collided is one we have seen, and `record_ladders` ignores a
+        // duplicate instant for itself -- but a deployment that gained ladder
+        // collection *after* recording a snapshot has samples without ladders,
+        // and this is what fills them in rather than waiting an hour.
+        let ladder_rows = self
+            .prices
+            .record_ladders(region, generated_at, &ladders)
+            .await?;
 
         // Zero rows written means every one of them collided with an existing
         // primary key: we have seen this snapshot before. Alerting again would
@@ -159,29 +173,45 @@ where
             outcome: Outcome::Collected {
                 samples: samples.len(),
                 written,
+                ladders: ladder_rows,
                 alerts,
             },
         })
     }
 
-    /// Group listings by item and reduce each group to one observation.
+    /// Group listings by item, and reduce each group twice.
+    ///
+    /// Once to the [`PriceSample`] that has always been stored, and once to
+    /// the [`Ladder`] that was always being thrown away. Both come from the
+    /// same pass over the same listings, which is the reason they are computed
+    /// together rather than in two places: they describe one snapshot, and a
+    /// ladder recorded from a different fetch than the sample beside it would
+    /// be two moments filed under one timestamp.
     fn summarise_all(
         &self,
         region: Region,
         at: Millis,
         listings: Vec<Listing>,
-    ) -> Vec<PriceSample> {
+    ) -> (Vec<PriceSample>, Vec<(ItemId, Ladder)>) {
         let mut by_item: BTreeMap<ItemId, Vec<Listing>> = BTreeMap::new();
         for listing in listings {
             by_item.entry(listing.item).or_default().push(listing);
         }
 
-        by_item
-            .into_iter()
-            .filter_map(|(item, mut group)| {
-                summarise(&mut group).map(|stats| stats.into_sample(item, region, at))
-            })
-            .collect()
+        let mut samples = Vec::with_capacity(by_item.len());
+        let mut ladders = Vec::with_capacity(by_item.len());
+        for (item, mut group) in by_item {
+            // The ladder before `summarise`, which sorts the slice in place --
+            // harmless either way, since grouping by price does not care about
+            // order, but taking it first keeps the dependency from being one
+            // somebody has to notice.
+            let ladder = Ladder::of(&group);
+            if let Some(stats) = summarise(&mut group) {
+                samples.push(stats.into_sample(item, region, at));
+                ladders.push((item, ladder));
+            }
+        }
+        (samples, ladders)
     }
 
     async fn raise_alerts(&self, samples: &[PriceSample], now: Millis) -> AppResult<Vec<Alert>> {

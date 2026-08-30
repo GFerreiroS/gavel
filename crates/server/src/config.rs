@@ -168,6 +168,17 @@ pub struct Cli {
     #[arg(long, env = "APP_MARKET_DOWNSAMPLE_DAYS", default_value_t = 14)]
     pub market_downsample_days: u64,
 
+    /// How long price ladders are kept, in days -- the depth "hot window".
+    ///
+    /// Their own policy because they are bulky: a ladder is every rung of a
+    /// market's supply, not five summary numbers. Zero keeps them forever,
+    /// which will need a disk. The compact historical encoding is not built
+    /// yet on purpose (CLAUDE.md §16, Phase 7): choosing it before there are
+    /// real ladders to prove which analyses survive it would be picking an
+    /// archive format blind.
+    #[arg(long, env = "APP_MARKET_LADDER_DAYS", default_value_t = 14)]
+    pub market_ladder_days: u64,
+
     /// Tracing filter, e.g. `info`, `debug`, `server=debug,cluster_local=trace`.
     #[arg(
         long,

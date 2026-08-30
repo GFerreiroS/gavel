@@ -15,6 +15,7 @@
 use app_core::error::{RepoError, RepoResult};
 use app_core::market::analysis::{Cycle, Point, Trend};
 use app_core::market::catalog::{ItemKind, Track};
+use app_core::market::depth::{Depth, Ladder};
 use app_core::market::engine::{
     Anomaly, Distribution, Insufficient, Position, Spark, Swing, Valuation,
 };
@@ -328,6 +329,17 @@ fn state_from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<MarketState> {
         best_hour: row.get::<Option<i64>, _>("best_hour").map(|v| v as u8),
         best_weekday: row.get::<Option<i64>, _>("best_weekday").map(|v| v as u8),
         series: points_from(&row.get::<String, _>("series")),
+        // Empty until ladder collection has run for this market. `try_get`
+        // for the same reason the window's chart series uses it: a query that
+        // does not ask for these gets no ladder rather than a decode error.
+        ladder: row
+            .try_get::<String, _>("ladder")
+            .map(|raw| Ladder::decode(&raw))
+            .unwrap_or_default(),
+        depth: row
+            .try_get::<String, _>("depth")
+            .ok()
+            .and_then(|raw| Depth::decode(&raw)),
     })
 }
 
@@ -554,9 +566,9 @@ impl ReadModelRepository for SqliteReadModel {
                     observed_at, price, min_price, median_price, quantity, listings,
                     first_seen, samples, mean, median, low, low_at, high, high_at, swing,
                     day_percent, day_known, week_percent, week_known, month_percent, month_known,
-                    best_hour, best_weekday, by_hour, by_weekday, series)
+                    best_hour, best_weekday, by_hour, by_weekday, series, ladder, depth)
                  VALUES (?, 'staging', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(market_key, state) DO UPDATE SET
                     version = excluded.version, observed_at = excluded.observed_at,
                     price = excluded.price, min_price = excluded.min_price,
@@ -570,7 +582,8 @@ impl ReadModelRepository for SqliteReadModel {
                     month_percent = excluded.month_percent, month_known = excluded.month_known,
                     best_hour = excluded.best_hour, best_weekday = excluded.best_weekday,
                     by_hour = excluded.by_hour, by_weekday = excluded.by_weekday,
-                    series = excluded.series",
+                    series = excluded.series, ladder = excluded.ladder,
+                    depth = excluded.depth",
             )
             .bind(key.to_string())
             .bind(version as i64)
@@ -606,6 +619,14 @@ impl ReadModelRepository for SqliteReadModel {
             .bind(cycles_json(&state.by_hour))
             .bind(cycles_json(&state.by_weekday))
             .bind(points_json(&state.series))
+            .bind(state.ladder.encode())
+            .bind(
+                state
+                    .depth
+                    .as_ref()
+                    .map(|depth| depth.encode())
+                    .unwrap_or_default(),
+            )
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;
