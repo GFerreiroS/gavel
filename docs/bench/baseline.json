@@ -1,25 +1,25 @@
 {
   "database": "data/bench/market-realistic.db",
   "fixture": {
-    "built_at": "2026-08-30T00:15:04Z",
-    "bytes": 71970816,
+    "built_at": "2026-08-30T02:57:14Z",
+    "bytes": 84602880,
     "kind": "sanitized",
-    "latest_observation_ms": 1788047851000,
+    "latest_observation_ms": 1788057076000,
     "markets": {
-      "commodity": 2040,
-      "realm_variant": 35420,
-      "total": 37460
+      "commodity": 2042,
+      "realm_variant": 35720,
+      "total": 37762
     },
-    "migration_version": 12,
+    "migration_version": 15,
     "rows": {
       "cache": 18478,
       "collection_settings": 0,
-      "price_samples": 73320,
-      "realm_price_samples": 362854,
+      "price_samples": 78348,
+      "realm_price_samples": 447481,
       "realms": 184
     },
     "script_version": 1,
-    "sha256": "ac17dfe7d97a1b309025d64c2f7d6a36e81c38d9b7860cea57c6c02a6188d127",
+    "sha256": "009bf02cee55a992ae027c4fcada9696af6fd86065e757506f4d2cde3fadd800",
     "source": "data/cluster.db"
   },
   "machine": {
@@ -27,432 +27,432 @@
     "cpu": "AMD Ryzen 9 5900X 12-Core Processor",
     "platform": "linux"
   },
-  "measured_at": "2026-08-30T00:33:33Z",
+  "measured_at": "2026-08-30T02:57:25Z",
   "profiles": {
     "debug": {
       "BoE analysis": {
-        "bytes_uncompressed": 25338,
-        "bytes_wire": 4602,
-        "cold_ms": 117.38,
-        "mean_ms": 92.45,
+        "bytes_uncompressed": 27254,
+        "bytes_wire": 4725,
+        "cold_ms": 136.33,
+        "mean_ms": 108.47,
         "note": "one track on every realm of a region",
-        "p50_ms": 92.16,
-        "p95_ms": 97.77,
-        "p99_ms": 97.77,
+        "p50_ms": 107.52,
+        "p95_ms": 116.03,
+        "p99_ms": 116.03,
         "path": "/wow/gear/271441/hero",
-        "rows": 8633,
+        "rows": 10867,
         "samples": 15,
         "stages_ms": {
           "cache": 0.0,
-          "calc": 9.242,
-          "db": 32.13,
-          "tpl": 0.148
+          "calc": 11.438,
+          "db": 37.039,
+          "tpl": 0.142
         },
         "statements": 3
       },
       "commodity analysis": {
-        "bytes_uncompressed": 36335,
-        "bytes_wire": 5884,
-        "cold_ms": 50.53,
-        "mean_ms": 46.28,
+        "bytes_uncompressed": 37491,
+        "bytes_wire": 5910,
+        "cold_ms": 7.3,
+        "mean_ms": 8.37,
         "note": "one market's whole history, reduced per request",
-        "p50_ms": 46.22,
-        "p95_ms": 48.92,
-        "p99_ms": 48.92,
+        "p50_ms": 8.22,
+        "p95_ms": 9.22,
+        "p99_ms": 9.22,
         "path": "/wow/item/237367",
-        "rows": 1139,
+        "rows": 12,
         "samples": 15,
         "stages_ms": {
           "cache": 0.0,
-          "calc": 0.203,
-          "db": 32.91,
-          "tpl": 0.133
-        },
-        "statements": 9
-      },
-      "consumable cards": {
-        "bytes_uncompressed": 446054,
-        "bytes_wire": 22753,
-        "cold_ms": 224.18,
-        "mean_ms": 226.37,
-        "note": "curated commodity list",
-        "p50_ms": 227.84,
-        "p95_ms": 234.97,
-        "p99_ms": 234.97,
-        "path": "/partials/consumables",
-        "rows": 5294,
-        "samples": 15,
-        "stages_ms": {
-          "cache": 7.422,
-          "calc": 0.226,
-          "db": 150.801,
-          "tpl": 4.183
-        },
-        "statements": 16
-      },
-      "enchant cards": {
-        "bytes_uncompressed": 141100,
-        "bytes_wire": 8914,
-        "cold_ms": 125.34,
-        "mean_ms": 122.81,
-        "note": "generated from the catalogue",
-        "p50_ms": 121.61,
-        "p95_ms": 133.38,
-        "p99_ms": 133.38,
-        "path": "/partials/enchants",
-        "rows": 3234,
-        "samples": 15,
-        "stages_ms": {
-          "cache": 6.653,
           "calc": 0.0,
-          "db": 85.797,
-          "tpl": 2.028
-        },
-        "statements": 8
-      },
-      "gear cards": {
-        "bytes_uncompressed": 53751,
-        "bytes_wire": 4419,
-        "cold_ms": 424.11,
-        "mean_ms": 399.75,
-        "note": "EU, all realms: nine cards from ~18k markets",
-        "p50_ms": 396.09,
-        "p95_ms": 438.1,
-        "p99_ms": 438.1,
-        "path": "/partials/gear",
-        "rows": 19654,
-        "samples": 15,
-        "stages_ms": {
-          "cache": 6.935,
-          "calc": 33.569,
-          "db": 263.308,
-          "tpl": 0.607
+          "db": 0.225,
+          "tpl": 0.119
         },
         "statements": 4
       },
-      "gear shell": {
-        "bytes_uncompressed": 6741,
-        "bytes_wire": 1626,
-        "cold_ms": 5.92,
-        "mean_ms": 4.74,
-        "note": "paints immediately; one small query",
-        "p50_ms": 4.42,
-        "p95_ms": 6.0,
-        "p99_ms": 6.0,
-        "path": "/wow/auctions/gear",
-        "rows": 184,
-        "samples": 15,
-        "stages_ms": {
-          "cache": 0.0,
-          "calc": 0.012,
-          "db": 0.618,
-          "tpl": 0.109
-        },
-        "statements": 1
-      },
-      "reagent cards": {
-        "bytes_uncompressed": 425361,
-        "bytes_wire": 22858,
-        "cold_ms": 154.34,
-        "mean_ms": 157.32,
-        "note": "every reagent of the expansion: 223 cards",
-        "p50_ms": 155.92,
-        "p95_ms": 182.02,
-        "p99_ms": 182.02,
-        "path": "/partials/reagents",
+      "consumable cards": {
+        "bytes_uncompressed": 445943,
+        "bytes_wire": 22833,
+        "cold_ms": 55.23,
+        "mean_ms": 118.63,
+        "note": "curated commodity list",
+        "p50_ms": 119.98,
+        "p95_ms": 126.71,
+        "p99_ms": 126.71,
+        "path": "/partials/consumables",
         "rows": 3234,
         "samples": 15,
         "stages_ms": {
-          "cache": 5.933,
-          "calc": 0.0,
-          "db": 85.143,
-          "tpl": 4.609
+          "cache": 5.308,
+          "calc": 0.215,
+          "db": 36.607,
+          "tpl": 3.947
         },
-        "statements": 8
-      }
-    },
-    "release": {
-      "BoE analysis": {
-        "bytes_uncompressed": 25338,
-        "bytes_wire": 4602,
-        "cold_ms": 39.71,
-        "mean_ms": 30.65,
-        "note": "one track on every realm of a region",
-        "p50_ms": 30.18,
-        "p95_ms": 37.15,
-        "p99_ms": 37.15,
-        "path": "/wow/gear/271441/hero",
-        "rows": 8633,
-        "samples": 15,
-        "stages_ms": {
-          "cache": 0.0,
-          "calc": 1.596,
-          "db": 18.12,
-          "tpl": 0.021
-        },
-        "statements": 3
-      },
-      "commodity analysis": {
-        "bytes_uncompressed": 36335,
-        "bytes_wire": 5884,
-        "cold_ms": 15.68,
-        "mean_ms": 13.85,
-        "note": "one market's whole history, reduced per request",
-        "p50_ms": 13.95,
-        "p95_ms": 14.94,
-        "p99_ms": 14.94,
-        "path": "/wow/item/237367",
-        "rows": 1139,
-        "samples": 15,
-        "stages_ms": {
-          "cache": 0.0,
-          "calc": 0.02,
-          "db": 10.122,
-          "tpl": 0.023
-        },
-        "statements": 9
-      },
-      "consumable cards": {
-        "bytes_uncompressed": 446054,
-        "bytes_wire": 22753,
-        "cold_ms": 67.47,
-        "mean_ms": 64.17,
-        "note": "curated commodity list",
-        "p50_ms": 63.81,
-        "p95_ms": 66.42,
-        "p99_ms": 66.42,
-        "path": "/partials/consumables",
-        "rows": 5294,
-        "samples": 15,
-        "stages_ms": {
-          "cache": 3.946,
-          "calc": 0.126,
-          "db": 47.634,
-          "tpl": 0.431
-        },
-        "statements": 16
+        "statements": 10
       },
       "enchant cards": {
-        "bytes_uncompressed": 141100,
-        "bytes_wire": 8914,
-        "cold_ms": 37.74,
-        "mean_ms": 37.4,
+        "bytes_uncompressed": 141974,
+        "bytes_wire": 9045,
+        "cold_ms": 30.95,
+        "mean_ms": 52.39,
         "note": "generated from the catalogue",
-        "p50_ms": 37.04,
-        "p95_ms": 39.59,
-        "p99_ms": 39.59,
+        "p50_ms": 52.21,
+        "p95_ms": 53.28,
+        "p99_ms": 53.28,
         "path": "/partials/enchants",
-        "rows": 3234,
+        "rows": 2204,
         "samples": 15,
         "stages_ms": {
-          "cache": 3.064,
+          "cache": 4.298,
           "calc": 0.0,
-          "db": 27.332,
-          "tpl": 0.178
+          "db": 15.338,
+          "tpl": 1.772
         },
-        "statements": 8
+        "statements": 6
       },
       "gear cards": {
-        "bytes_uncompressed": 53751,
-        "bytes_wire": 4419,
-        "cold_ms": 145.53,
-        "mean_ms": 114.51,
+        "bytes_uncompressed": 53708,
+        "bytes_wire": 4391,
+        "cold_ms": 498.71,
+        "mean_ms": 439.44,
         "note": "EU, all realms: nine cards from ~18k markets",
-        "p50_ms": 113.88,
-        "p95_ms": 128.96,
-        "p99_ms": 128.96,
+        "p50_ms": 436.44,
+        "p95_ms": 464.21,
+        "p99_ms": 464.21,
         "path": "/partials/gear",
-        "rows": 19654,
+        "rows": 19706,
         "samples": 15,
         "stages_ms": {
-          "cache": 3.727,
-          "calc": 6.797,
-          "db": 81.186,
-          "tpl": 0.076
+          "cache": 5.709,
+          "calc": 33.471,
+          "db": 307.241,
+          "tpl": 0.598
         },
         "statements": 4
       },
       "gear shell": {
         "bytes_uncompressed": 6741,
         "bytes_wire": 1628,
-        "cold_ms": 2.1,
-        "mean_ms": 1.41,
+        "cold_ms": 6.76,
+        "mean_ms": 4.4,
         "note": "paints immediately; one small query",
-        "p50_ms": 1.3,
-        "p95_ms": 2.14,
-        "p99_ms": 2.14,
+        "p50_ms": 4.13,
+        "p95_ms": 6.02,
+        "p99_ms": 6.02,
         "path": "/wow/auctions/gear",
         "rows": 184,
         "samples": 15,
         "stages_ms": {
           "cache": 0.0,
-          "calc": 0.003,
-          "db": 0.351,
+          "calc": 0.005,
+          "db": 1.228,
+          "tpl": 0.071
+        },
+        "statements": 27
+      },
+      "reagent cards": {
+        "bytes_uncompressed": 423007,
+        "bytes_wire": 22892,
+        "cold_ms": 60.88,
+        "mean_ms": 85.18,
+        "note": "every reagent of the expansion: 223 cards",
+        "p50_ms": 84.19,
+        "p95_ms": 93.38,
+        "p99_ms": 93.38,
+        "path": "/partials/reagents",
+        "rows": 2204,
+        "samples": 15,
+        "stages_ms": {
+          "cache": 5.165,
+          "calc": 0.0,
+          "db": 19.004,
+          "tpl": 5.174
+        },
+        "statements": 6
+      }
+    },
+    "release": {
+      "BoE analysis": {
+        "bytes_uncompressed": 27254,
+        "bytes_wire": 4722,
+        "cold_ms": 54.71,
+        "mean_ms": 33.57,
+        "note": "one track on every realm of a region",
+        "p50_ms": 32.98,
+        "p95_ms": 36.88,
+        "p99_ms": 36.88,
+        "path": "/wow/gear/271441/hero",
+        "rows": 10867,
+        "samples": 15,
+        "stages_ms": {
+          "cache": 0.0,
+          "calc": 2.322,
+          "db": 18.112,
+          "tpl": 0.02
+        },
+        "statements": 3
+      },
+      "commodity analysis": {
+        "bytes_uncompressed": 37491,
+        "bytes_wire": 5909,
+        "cold_ms": 2.97,
+        "mean_ms": 1.79,
+        "note": "one market's whole history, reduced per request",
+        "p50_ms": 1.77,
+        "p95_ms": 2.06,
+        "p99_ms": 2.06,
+        "path": "/wow/item/237367",
+        "rows": 12,
+        "samples": 15,
+        "stages_ms": {
+          "cache": 0.0,
+          "calc": 0.0,
+          "db": 0.136,
+          "tpl": 0.017
+        },
+        "statements": 4
+      },
+      "consumable cards": {
+        "bytes_uncompressed": 445943,
+        "bytes_wire": 22834,
+        "cold_ms": 16.64,
+        "mean_ms": 39.44,
+        "note": "curated commodity list",
+        "p50_ms": 39.37,
+        "p95_ms": 41.23,
+        "p99_ms": 41.23,
+        "path": "/partials/consumables",
+        "rows": 3234,
+        "samples": 15,
+        "stages_ms": {
+          "cache": 2.779,
+          "calc": 0.065,
+          "db": 22.806,
+          "tpl": 0.376
+        },
+        "statements": 10
+      },
+      "enchant cards": {
+        "bytes_uncompressed": 141974,
+        "bytes_wire": 9046,
+        "cold_ms": 12.36,
+        "mean_ms": 19.33,
+        "note": "generated from the catalogue",
+        "p50_ms": 19.38,
+        "p95_ms": 20.84,
+        "p99_ms": 20.84,
+        "path": "/partials/enchants",
+        "rows": 2204,
+        "samples": 15,
+        "stages_ms": {
+          "cache": 2.121,
+          "calc": 0.0,
+          "db": 11.932,
+          "tpl": 0.149
+        },
+        "statements": 6
+      },
+      "gear cards": {
+        "bytes_uncompressed": 53708,
+        "bytes_wire": 4391,
+        "cold_ms": 209.09,
+        "mean_ms": 133.72,
+        "note": "EU, all realms: nine cards from ~18k markets",
+        "p50_ms": 123.82,
+        "p95_ms": 192.67,
+        "p99_ms": 192.67,
+        "path": "/partials/gear",
+        "rows": 19706,
+        "samples": 15,
+        "stages_ms": {
+          "cache": 3.462,
+          "calc": 6.423,
+          "db": 91.649,
+          "tpl": 0.061
+        },
+        "statements": 4
+      },
+      "gear shell": {
+        "bytes_uncompressed": 6741,
+        "bytes_wire": 1627,
+        "cold_ms": 2.19,
+        "mean_ms": 1.58,
+        "note": "paints immediately; one small query",
+        "p50_ms": 1.5,
+        "p95_ms": 2.29,
+        "p99_ms": 2.29,
+        "path": "/wow/auctions/gear",
+        "rows": 184,
+        "samples": 15,
+        "stages_ms": {
+          "cache": 0.0,
+          "calc": 0.002,
+          "db": 0.31,
           "tpl": 0.01
         },
         "statements": 1
       },
       "reagent cards": {
-        "bytes_uncompressed": 425361,
-        "bytes_wire": 22858,
-        "cold_ms": 43.66,
-        "mean_ms": 41.65,
+        "bytes_uncompressed": 423007,
+        "bytes_wire": 22892,
+        "cold_ms": 16.84,
+        "mean_ms": 24.62,
         "note": "every reagent of the expansion: 223 cards",
-        "p50_ms": 41.89,
-        "p95_ms": 43.45,
-        "p99_ms": 43.45,
+        "p50_ms": 24.35,
+        "p95_ms": 28.31,
+        "p99_ms": 28.31,
         "path": "/partials/reagents",
-        "rows": 3234,
+        "rows": 2204,
         "samples": 15,
         "stages_ms": {
-          "cache": 3.343,
+          "cache": 2.009,
           "calc": 0.0,
-          "db": 30.169,
-          "tpl": 0.521
+          "db": 11.352,
+          "tpl": 0.381
         },
-        "statements": 8
+        "statements": 6
       }
     },
     "release-fast": {
       "BoE analysis": {
-        "bytes_uncompressed": 25338,
-        "bytes_wire": 4601,
-        "cold_ms": 36.59,
-        "mean_ms": 18.96,
+        "bytes_uncompressed": 27254,
+        "bytes_wire": 4725,
+        "cold_ms": 46.53,
+        "mean_ms": 21.82,
         "note": "one track on every realm of a region",
-        "p50_ms": 18.52,
-        "p95_ms": 23.49,
-        "p99_ms": 23.49,
+        "p50_ms": 21.41,
+        "p95_ms": 25.37,
+        "p99_ms": 25.37,
         "path": "/wow/gear/271441/hero",
-        "rows": 8633,
+        "rows": 10867,
         "samples": 15,
         "stages_ms": {
           "cache": 0.0,
-          "calc": 1.152,
-          "db": 9.529,
-          "tpl": 0.019
+          "calc": 1.329,
+          "db": 10.988,
+          "tpl": 0.017
         },
         "statements": 3
       },
       "commodity analysis": {
-        "bytes_uncompressed": 36335,
-        "bytes_wire": 5884,
-        "cold_ms": 13.63,
-        "mean_ms": 11.58,
+        "bytes_uncompressed": 37491,
+        "bytes_wire": 5912,
+        "cold_ms": 2.48,
+        "mean_ms": 1.32,
         "note": "one market's whole history, reduced per request",
-        "p50_ms": 11.5,
-        "p95_ms": 13.32,
-        "p99_ms": 13.32,
+        "p50_ms": 1.26,
+        "p95_ms": 1.69,
+        "p99_ms": 1.69,
         "path": "/wow/item/237367",
-        "rows": 1139,
+        "rows": 12,
         "samples": 15,
         "stages_ms": {
           "cache": 0.0,
-          "calc": 0.02,
-          "db": 8.684,
-          "tpl": 0.02
+          "calc": 0.0,
+          "db": 0.119,
+          "tpl": 0.013
         },
-        "statements": 9
+        "statements": 4
       },
       "consumable cards": {
-        "bytes_uncompressed": 446054,
-        "bytes_wire": 22753,
-        "cold_ms": 54.85,
-        "mean_ms": 49.98,
+        "bytes_uncompressed": 445943,
+        "bytes_wire": 22838,
+        "cold_ms": 10.81,
+        "mean_ms": 30.22,
         "note": "curated commodity list",
-        "p50_ms": 50.53,
-        "p95_ms": 51.53,
-        "p99_ms": 51.53,
+        "p50_ms": 29.87,
+        "p95_ms": 32.67,
+        "p99_ms": 32.67,
         "path": "/partials/consumables",
-        "rows": 5294,
-        "samples": 15,
-        "stages_ms": {
-          "cache": 3.201,
-          "calc": 0.084,
-          "db": 41.84,
-          "tpl": 0.265
-        },
-        "statements": 16
-      },
-      "enchant cards": {
-        "bytes_uncompressed": 141100,
-        "bytes_wire": 8914,
-        "cold_ms": 30.74,
-        "mean_ms": 29.23,
-        "note": "generated from the catalogue",
-        "p50_ms": 29.15,
-        "p95_ms": 31.6,
-        "p99_ms": 31.6,
-        "path": "/partials/enchants",
         "rows": 3234,
         "samples": 15,
         "stages_ms": {
-          "cache": 3.093,
-          "calc": 0.0,
-          "db": 23.679,
-          "tpl": 0.15
+          "cache": 3.369,
+          "calc": 0.07,
+          "db": 23.28,
+          "tpl": 0.22
         },
-        "statements": 8
+        "statements": 10
       },
-      "gear cards": {
-        "bytes_uncompressed": 53751,
-        "bytes_wire": 4419,
-        "cold_ms": 104.99,
-        "mean_ms": 84.59,
-        "note": "EU, all realms: nine cards from ~18k markets",
-        "p50_ms": 81.92,
-        "p95_ms": 117.56,
-        "p99_ms": 117.56,
-        "path": "/partials/gear",
-        "rows": 19654,
+      "enchant cards": {
+        "bytes_uncompressed": 141974,
+        "bytes_wire": 9045,
+        "cold_ms": 9.58,
+        "mean_ms": 15.19,
+        "note": "generated from the catalogue",
+        "p50_ms": 15.13,
+        "p95_ms": 16.62,
+        "p99_ms": 16.62,
+        "path": "/partials/enchants",
+        "rows": 2204,
         "samples": 15,
         "stages_ms": {
-          "cache": 4.007,
-          "calc": 4.612,
-          "db": 63.792,
+          "cache": 1.569,
+          "calc": 0.0,
+          "db": 11.062,
+          "tpl": 0.152
+        },
+        "statements": 6
+      },
+      "gear cards": {
+        "bytes_uncompressed": 53708,
+        "bytes_wire": 4391,
+        "cold_ms": 180.82,
+        "mean_ms": 100.36,
+        "note": "EU, all realms: nine cards from ~18k markets",
+        "p50_ms": 95.6,
+        "p95_ms": 145.06,
+        "p99_ms": 145.06,
+        "path": "/partials/gear",
+        "rows": 19706,
+        "samples": 15,
+        "stages_ms": {
+          "cache": 3.422,
+          "calc": 4.711,
+          "db": 67.358,
           "tpl": 0.034
         },
         "statements": 4
       },
       "gear shell": {
         "bytes_uncompressed": 6741,
-        "bytes_wire": 1628,
-        "cold_ms": 2.17,
-        "mean_ms": 1.07,
+        "bytes_wire": 1629,
+        "cold_ms": 2.15,
+        "mean_ms": 1.04,
         "note": "paints immediately; one small query",
-        "p50_ms": 0.97,
-        "p95_ms": 1.8,
-        "p99_ms": 1.8,
+        "p50_ms": 0.92,
+        "p95_ms": 1.64,
+        "p99_ms": 1.64,
         "path": "/wow/auctions/gear",
         "rows": 184,
         "samples": 15,
         "stages_ms": {
           "cache": 0.0,
-          "calc": 0.001,
-          "db": 0.187,
-          "tpl": 0.006
+          "calc": 0.002,
+          "db": 0.617,
+          "tpl": 0.007
         },
         "statements": 1
       },
       "reagent cards": {
-        "bytes_uncompressed": 425361,
-        "bytes_wire": 22858,
-        "cold_ms": 32.7,
-        "mean_ms": 30.65,
+        "bytes_uncompressed": 423007,
+        "bytes_wire": 22892,
+        "cold_ms": 13.9,
+        "mean_ms": 17.33,
         "note": "every reagent of the expansion: 223 cards",
-        "p50_ms": 30.65,
-        "p95_ms": 32.57,
-        "p99_ms": 32.57,
+        "p50_ms": 16.97,
+        "p95_ms": 19.51,
+        "p99_ms": 19.51,
         "path": "/partials/reagents",
-        "rows": 3234,
+        "rows": 2204,
         "samples": 15,
         "stages_ms": {
-          "cache": 3.258,
+          "cache": 1.865,
           "calc": 0.0,
-          "db": 24.622,
-          "tpl": 0.269
+          "db": 9.876,
+          "tpl": 0.232
         },
-        "statements": 8
+        "statements": 6
       }
     }
   },

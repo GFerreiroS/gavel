@@ -31,6 +31,7 @@ the queries. All three are this script's job.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -383,6 +384,34 @@ def compare(report: dict, baseline: dict, tolerance: float, floor_ms: float) -> 
     return regressions
 
 
+def verify_fixture(database: Path, manifest: Path) -> None:
+    """Refuse a fixture that is not the one its manifest describes.
+
+    The working copy above stops this benchmark mutating the archive it
+    measures. This stops it measuring an archive something *else* mutated --
+    which is not hypothetical: two runs before the copy existed migrated the
+    fixture in place, and the only reason it was noticed is that the manifest
+    records a hash. A baseline whose fixture has moved underneath it is a
+    baseline comparing two different databases and calling the difference a
+    regression.
+    """
+    if not manifest.exists():
+        print(f"warning: no manifest beside {database}; cannot verify it")
+        return
+    digest = hashlib.sha256()
+    with database.open("rb") as handle:
+        for block in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(block)
+    recorded = json.loads(manifest.read_text()).get("sha256")
+    if recorded and digest.hexdigest() != recorded:
+        raise SystemExit(
+            f"{database} is not the fixture its manifest describes.\n"
+            f"  recorded {recorded}\n"
+            f"  actual   {digest.hexdigest()}\n"
+            "Rebuild it: python3 scripts/bench-fixture.py sanitize"
+        )
+
+
 def machine() -> dict:
     """Enough about this machine that a number can be read a year later."""
     model = ""
@@ -432,6 +461,7 @@ def main(argv: list[str]) -> int:
             " Build one: python3 scripts/bench-fixture.py sanitize"
         )
     manifest = Path(f"{database}.manifest.json")
+    verify_fixture(database, manifest)
 
     profiles = args.profile or ["release", "release-fast"]
     logs = REPO / "target" / "bench" / "logs"

@@ -32,6 +32,11 @@ python3 scripts/bench-fixture.py synthetic \
 | Real, sanitised | The official p50/p95/p99, and any index or query decision |
 | Synthetic, deterministic | Tests, statement counts, query plans, structural regressions |
 
+Both hold **source observations only**. The read model is derived, so it is not
+copied: the server rebuilds it from the observations on first start, which is
+the path a real deployment takes, and shipping a read model built by an older
+algorithm version would mean benchmarking a stale one.
+
 The synthetic one is **not** a latency measurement. Its distributions are
 imitated and a CI machine is not a reference machine; what it is good for is
 that a query plan or an N+1 shows up in it exactly as it would in the real one.
@@ -60,6 +65,13 @@ decoded, and response bytes both uncompressed and over the wire.
 **Cold** means a freshly started process: SQLite's page cache and the
 connection pool are empty. It does not mean the file is out of the operating
 system's cache, which cannot be arranged without root.
+
+It **verifies the fixture against its manifest** before it starts, and refuses
+one that has drifted. That is not hypothetical: two runs before the working
+copy existed migrated the fixture in place, and the only reason it was caught
+is that the manifest records a SHA-256. A baseline whose fixture moved
+underneath it compares two different databases and calls the difference a
+regression.
 
 It runs against a **copy** of the fixture, not the fixture. The server migrates
 and materialises on first start, and a benchmark that mutates the archive it is

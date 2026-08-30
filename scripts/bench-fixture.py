@@ -70,6 +70,15 @@ COPIED = {
     "collection_settings",
 }
 
+# Not copied. Two different reasons live here, and both are worth stating.
+#
+# Most of these must not travel: they belong to a person or to a deployment.
+# The rest are *derived* -- a read model built by some earlier algorithm
+# version -- and copying those would be worse than useless, because a benchmark
+# measuring a stale read model is measuring the wrong thing. The server
+# rebuilds them from the observations on first start, which is the same path a
+# real deployment takes.
+#
 # Named so that adding a table to a migration is a decision here rather than an
 # omission. The reason matters more than the name: it is what the next person
 # reads when they wonder whether their new table belongs above or below.
@@ -88,6 +97,11 @@ EMPTIED = {
     "admins": "who administers this instance",
     "kv": "boot configuration; a deployment's settings, not the market",
     "_sqlx_migrations": "written by the migration run itself, not copied",
+    "catalog_releases": "which catalogue this deployment activated; the seed rebuilds it",
+    "market_events": "re-derived from the catalogue at every start",
+    "analysis_versions": "derived: this deployment's calculation history",
+    "market_current": "derived: rebuilt from the observations on first start",
+    "market_windows": "derived: rebuilt from the observations on first start",
 }
 
 # The tooltip cache is copied, but only the item tooltips: a category page's
@@ -191,8 +205,9 @@ def check_whitelist(db: sqlite3.Connection) -> None:
         raise SystemExit(
             "bench-fixture does not know what to do with: "
             + ", ".join(unknown)
-            + "\nAdd each to COPIED (market data, safe to publish in a fixture)"
-            " or to EMPTIED (with the reason it must not travel)."
+            + "\nAdd each to COPIED (source observations, safe to publish in a"
+            " fixture) or to EMPTIED (with the reason: whose it is, or that it"
+            " is derived and will be rebuilt)."
             "\nRefusing to guess: guessing is how a fixture starts carrying"
             " somebody's session."
         )
