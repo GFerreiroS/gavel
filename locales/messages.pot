@@ -5,7 +5,7 @@
 # renders as English rather than as a missing key.
 msgid ""
 msgstr ""
-"Project-Id-Version: wow-auction-tracker ab95b04-dirty\n"
+"Project-Id-Version: wow-auction-tracker 1622c03-dirty\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"

@@ -5,10 +5,12 @@
 //! SQL string, because callers never do either.
 
 use app_core::market::catalog::CatalogStatus;
+use app_core::market::event::{EventKind, EventScope, Provenance, Validation, Visibility};
+use app_core::market::{MarketEvent, MarketKey};
 use app_core::model::Session;
 use app_core::repo::{
-    CacheStore, EventRepository, JobRepository, KeyValueStore, ReleaseRepository,
-    SessionRepository, Store, UserRepository,
+    CacheStore, EventRepository, JobRepository, KeyValueStore, MarketEventRepository,
+    ReleaseRepository, SessionRepository, Store, UserRepository,
 };
 use cluster_core::{
     ClusterEvent, ClusterStore, EventRecord, FailureReason, JobSpec, JobState, Millis, NodeId,
@@ -1108,4 +1110,159 @@ async fn the_schema_refuses_a_second_active_catalogue() {
         .execute(store.pool())
         .await
         .expect("nothing active is allowed");
+}
+
+// --- the game's timeline -----------------------------------------------------
+
+fn event(id: &str, at: u64, validation: Validation, visibility: Visibility) -> MarketEvent {
+    MarketEvent {
+        id: id.to_string(),
+        kind: EventKind::Annotation,
+        title: format!("Event {id}"),
+        notes: Some("a note".into()),
+        starts_at: Millis(at),
+        ends_at: None,
+        scope: EventScope {
+            regions: vec![Region::Eu],
+            patch: Some("12.1".into()),
+            ..EventScope::default()
+        },
+        provenance: Provenance::Administrator,
+        validation,
+        visibility,
+    }
+}
+
+#[tokio::test]
+async fn an_event_round_trips_with_its_whole_scope() {
+    let store = store().await;
+    let mut original = event("a", 1_000, Validation::Validated, Visibility::Public);
+    original.scope.market = Some(MarketKey::commodity(Region::Eu, ItemId(212_265), 3));
+    original.scope.tier = Some("venomous-abyss".into());
+    original.ends_at = Some(Millis(2_000));
+
+    assert_eq!(
+        store
+            .market_events()
+            .record(&[original.clone()])
+            .await
+            .unwrap(),
+        1
+    );
+    let back = store
+        .market_events()
+        .between(Millis(0), Millis(10_000), false)
+        .await
+        .unwrap();
+    assert_eq!(back, vec![original]);
+}
+
+/// The catalogue's events are re-derived at every start, so recording them
+/// twice must not produce two copies of a patch release.
+#[tokio::test]
+async fn recording_the_same_event_twice_writes_it_once() {
+    let store = store().await;
+    let one = event("a", 1_000, Validation::Validated, Visibility::Public);
+
+    assert_eq!(
+        store
+            .market_events()
+            .record(std::slice::from_ref(&one))
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        store
+            .market_events()
+            .record(std::slice::from_ref(&one))
+            .await
+            .unwrap(),
+        0,
+        "the second start adds nothing"
+    );
+
+    // And an edit made after the first seed survives the second, the same way
+    // a release state somebody set survives an upgrade.
+    let mut edited = one.clone();
+    edited.title = "Corrected by hand".into();
+    assert_eq!(store.market_events().record(&[edited]).await.unwrap(), 0);
+    let back = store
+        .market_events()
+        .between(Millis(0), Millis(10_000), false)
+        .await
+        .unwrap();
+    assert_eq!(back[0].title, one.title, "a seed never overwrites");
+}
+
+/// An internal note must not leak, and neither must one nobody has checked.
+#[tokio::test]
+async fn a_visitor_sees_only_checked_public_events() {
+    let store = store().await;
+    store
+        .market_events()
+        .record(&[
+            event("public", 1_000, Validation::Validated, Visibility::Public),
+            event(
+                "unchecked",
+                2_000,
+                Validation::Unvalidated,
+                Visibility::Public,
+            ),
+            event("rejected", 3_000, Validation::Rejected, Visibility::Public),
+            event(
+                "internal",
+                4_000,
+                Validation::Validated,
+                Visibility::Internal,
+            ),
+        ])
+        .await
+        .unwrap();
+
+    let everything = store
+        .market_events()
+        .between(Millis(0), Millis(10_000), false)
+        .await
+        .unwrap();
+    assert_eq!(everything.len(), 4);
+
+    let visible = store
+        .market_events()
+        .between(Millis(0), Millis(10_000), true)
+        .await
+        .unwrap();
+    let ids: Vec<&str> = visible.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(ids, ["public"]);
+}
+
+/// "What was going on then" wants both the instants inside the window and the
+/// intervals that were still running through it.
+#[tokio::test]
+async fn a_window_holds_what_happened_and_what_was_still_happening() {
+    let store = store().await;
+    let mut running = event("running", 1_000, Validation::Validated, Visibility::Public);
+    running.ends_at = Some(Millis(9_000));
+    let inside = event("inside", 5_000, Validation::Validated, Visibility::Public);
+    let after = event("after", 20_000, Validation::Validated, Visibility::Public);
+    let mut ended_before = event("before", 100, Validation::Validated, Visibility::Public);
+    ended_before.ends_at = Some(Millis(200));
+
+    store
+        .market_events()
+        .record(&[running, inside, after, ended_before])
+        .await
+        .unwrap();
+
+    let window = store
+        .market_events()
+        .between(Millis(4_000), Millis(6_000), false)
+        .await
+        .unwrap();
+    let ids: Vec<&str> = window.iter().map(|e| e.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["running", "inside"],
+        "oldest first: the one still going on, and the one that started inside"
+    );
 }

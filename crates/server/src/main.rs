@@ -18,7 +18,9 @@ use anyhow::Context;
 use app_core::Metrics;
 use app_core::auth::{Argon2Hasher, OsTokens};
 use app_core::market::{CatalogSet, ReleaseStates};
-use app_core::repo::{CacheStore, KeyValueStore, ReleaseRepository, SessionRepository, Store};
+use app_core::repo::{
+    CacheStore, KeyValueStore, MarketEventRepository, ReleaseRepository, SessionRepository, Store,
+};
 use app_integrations::{
     BlizzardAuctions, BlizzardConfig, BlizzardCredentials, BlizzardItems, DiscordWebhook,
     RaiderIoClient, RaiderIoConfig,
@@ -173,6 +175,26 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
         "catalogue releases"
     );
     releases.replace(known.into_iter().map(|r| (r.catalog, r.state)));
+
+    // The timeline every catalogue already states: when each patch shipped and
+    // when each raid opened. Nothing is inferred -- these are dates a reviewer
+    // read in `catalogs.json` -- and recording them is idempotent by id, so
+    // starting twice does not produce two copies of a patch release.
+    //
+    // Archived catalogues too, not only the active one: the archive is the
+    // product, and a frozen expansion whose timeline went missing is an
+    // archive that cannot explain itself.
+    let timeline: Vec<_> = catalogs
+        .catalogs
+        .iter()
+        .flat_map(app_core::market::event::from_catalogue)
+        .collect();
+    match store.market_events().record(&timeline).await {
+        Ok(added) => tracing::info!(added, known = timeline.len(), "catalogue timeline"),
+        // Not fatal. The timeline is what Phase 8 correlates against; a page
+        // that shows prices without it is still the product.
+        Err(error) => tracing::warn!(%error, "could not record the catalogue timeline"),
+    }
 
     let market_config = market::config(
         cli.regions(),

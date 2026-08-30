@@ -10,6 +10,7 @@ pub mod alerts;
 pub mod analysis;
 pub mod catalog;
 pub mod collector;
+pub mod event;
 pub mod key;
 pub mod realm;
 pub mod release;
@@ -28,6 +29,7 @@ pub use catalog::{
     Profession, Slot, Stat, Track,
 };
 pub use collector::{AlertSink, Collector, NullSink, Outcome, Report};
+pub use event::{EventKind, EventScope, MarketEvent, Provenance, Validation, Visibility};
 pub use key::{BadMarketKey, MarketKey};
 pub use realm::{
     GearListing, Realm, RealmAuctionProvider, RealmId, RealmSample, RealmSnapshot, summarise_realm,

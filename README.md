@@ -271,6 +271,12 @@ Tests live next to what they cover:
 - `crates/app-core/tests/characterization.rs` — what the price, alert and chart
   reductions answer today, pinned to exact numbers before anything replaces
   them
+- `crates/app-core/tests/market_key.rs` — a market has one name, and nothing
+  else decodes to one
+- `crates/app-core/tests/release.rs` — a PTR catalogue reaches nobody but the
+  administrator; an archived one stays browsable
+- `crates/app-core/tests/event.rs` — the game's timeline, and what it refuses
+  to claim about a reset hour it has not checked
 
 ### Measuring
 

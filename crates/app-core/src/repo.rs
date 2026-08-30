@@ -10,7 +10,9 @@ use cluster_core::Millis;
 
 use crate::error::RepoResult;
 use crate::market::catalog::CatalogStatus;
-use crate::market::{Alert, ItemId, PriceSample, Realm, RealmId, RealmSample, Region, WindowStats};
+use crate::market::{
+    Alert, ItemId, MarketEvent, PriceSample, Realm, RealmId, RealmSample, Region, WindowStats,
+};
 
 // Job and event persistence are cluster concepts, so their ports live in
 // `cluster-core` where the runtime can reach them without depending on the
@@ -348,6 +350,37 @@ pub trait ReleaseRepository: Send + Sync + 'static {
     ) -> impl Future<Output = RepoResult<Activation>> + Send;
 }
 
+/// The timeline market movement is read against.
+///
+/// A separate port from [`EventRepository`], which is the *cluster's* event
+/// log: a node going offline and a raid opening are both "events" and have
+/// nothing else in common. One is how the deployment is doing; the other is
+/// what happened in the game.
+///
+/// Phase 1 records them. Phase 8 correlates against them, and §11 is explicit
+/// that an association is never described as a cause.
+pub trait MarketEventRepository: Send + Sync + 'static {
+    /// Write events that are not already there, by id.
+    ///
+    /// Idempotent on purpose: the catalogue's own events are re-derived at
+    /// every start, and starting the server twice must not produce two copies
+    /// of a patch release. Returns how many rows were new.
+    fn record(&self, events: &[MarketEvent]) -> impl Future<Output = RepoResult<u64>> + Send;
+
+    /// Events overlapping `[from, until)`, oldest first.
+    ///
+    /// `public_only` is not a convenience: an internal note and an event
+    /// nobody has checked must not reach a visitor, and making the caller pass
+    /// the audience keeps that decision at the boundary rather than in a
+    /// filter somebody forgets.
+    fn between(
+        &self,
+        from: Millis,
+        until: Millis,
+        public_only: bool,
+    ) -> impl Future<Output = RepoResult<Vec<MarketEvent>>> + Send;
+}
+
 pub trait Store: Send + Sync + 'static {
     type Users: UserRepository;
     type Sessions: SessionRepository;
@@ -360,6 +393,7 @@ pub trait Store: Send + Sync + 'static {
     type Settings: SettingsRepository;
     type Watches: WatchRepository;
     type Releases: ReleaseRepository;
+    type MarketEvents: MarketEventRepository;
 
     fn users(&self) -> &Self::Users;
     fn sessions(&self) -> &Self::Sessions;
@@ -376,4 +410,6 @@ pub trait Store: Send + Sync + 'static {
     fn watches(&self) -> &Self::Watches;
     /// Where each catalogue is in its life.
     fn releases(&self) -> &Self::Releases;
+    /// What happened in the game, and when.
+    fn market_events(&self) -> &Self::MarketEvents;
 }
