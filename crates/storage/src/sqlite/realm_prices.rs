@@ -123,6 +123,28 @@ impl RealmPriceRepository for SqliteRealmPrices {
         rows.iter().map(sample_from_row).collect()
     }
 
+    async fn window_in_region(
+        &self,
+        region: Region,
+        since: Millis,
+    ) -> RepoResult<Vec<RealmSample>> {
+        // Ordered by market and then by time, which is what the materialiser
+        // groups on and what the window index already holds.
+        let rows = sqlx::query(
+            "SELECT item_id, region, realm_id, variant, observed_at,
+                    min_price, median_price, max_price, listings
+               FROM realm_price_samples
+              WHERE region = ? AND observed_at >= ?
+              ORDER BY item_id, realm_id, variant, observed_at",
+        )
+        .bind(region.as_str())
+        .bind(since.get() as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(sample_from_row).collect()
+    }
+
     async fn history(
         &self,
         item: ItemId,

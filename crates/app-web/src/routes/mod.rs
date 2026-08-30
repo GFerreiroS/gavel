@@ -27,11 +27,14 @@ use std::sync::Arc;
 use app_core::Ports;
 use axum::Extension;
 use axum::Router;
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
+
+use app_core::repo::Store;
 
 use crate::throttle::{LoginThrottle, SignUpThrottle};
 use crate::{assets, csrf, error, headers, metrics, prefs};
@@ -141,9 +144,18 @@ pub fn router<E: Ports>(env: E, shutdown: crate::Shutdown) -> Router {
         .route("/wow/character", get(wow::character::<E>))
         // Live updates. The fragments above keep a slow poll as a fallback.
         .route("/events/stream", get(stream::events::<E>))
-        // Container/readiness probe. No port call and therefore no database
-        // dependency: it only proves the HTTP process can answer.
+        // Liveness. No port call and therefore no database dependency: it
+        // only proves the HTTP process can answer.
         .route("/healthz", get(healthz))
+        // Readiness, which is a different question and needs its own answer.
+        // A process can answer HTTP a long time before it has anything to
+        // serve: the first start after a deployment materialises the archive,
+        // and until it has, every page is a shell around nothing. A proxy that
+        // sent traffic on `/healthz` alone would send it to those.
+        //
+        // It is also what stopped `scripts/bench.py` measuring a server whose
+        // read model was still being built, which it did until this existed.
+        .route("/readyz", get(readyz::<E>))
         // actions
         .route("/account/register", post(account::register::<E>))
         .route("/account/login", post(account::login::<E>))
@@ -200,6 +212,39 @@ pub fn router<E: Ports>(env: E, shutdown: crate::Shutdown) -> Router {
 
 async fn healthz() -> StatusCode {
     StatusCode::NO_CONTENT
+}
+
+/// `GET /readyz` -- 204 once there is analysis to serve, 503 until then.
+///
+/// The published version's number goes in a header so an operator, or a
+/// benchmark, can tell "ready" from "ready with the version I was expecting"
+/// without a second request. Not gated behind the administrator layer: a probe
+/// that needs a session is a probe a proxy cannot make, and "this instance has
+/// published analysis" says no more than `/healthz` already does by answering.
+async fn readyz<E: Ports>(State(env): State<E>) -> Response {
+    use app_core::repo::ReadModelRepository;
+
+    match env.store().read_model().published().await {
+        Ok(Some(version)) => (
+            StatusCode::NO_CONTENT,
+            [("x-analysis-version", version.version.to_string())],
+        )
+            .into_response(),
+        Ok(None) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "no published market analysis yet",
+        )
+            .into_response(),
+        // A database that cannot be asked is not a ready one.
+        Err(error) => {
+            tracing::warn!(%error, "readiness check failed");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "the read model could not be reached",
+            )
+                .into_response()
+        }
+    }
 }
 
 async fn not_found() -> Response {
@@ -261,17 +306,16 @@ mod tests {
         assert!(broken.contains("catalogs().by_id("));
     }
 
-    /// The commodity pages, which Phase 2 moved onto the read model.
-    ///
-    /// Gear and recipes are not here yet: they are the second slice, and
-    /// listing them before they are moved would be a test that fails for a
-    /// reason nobody has got to. Add each as it lands.
+    /// Every route Phase 2 moved onto the read model, which is every route
+    /// that shows a price.
     const MATERIALISED_ROUTES: &[(&str, &str)] = &[
         ("market.rs", include_str!("market.rs")),
         ("reagents.rs", include_str!("reagents.rs")),
         ("enhancements.rs", include_str!("enhancements.rs")),
         ("item.rs", include_str!("item.rs")),
         ("alerts.rs", include_str!("alerts.rs")),
+        ("gear.rs", include_str!("gear.rs")),
+        ("gear_stats.rs", include_str!("gear_stats.rs")),
     ];
 
     /// CLAUDE.md §16, Phase 2: "No handler calls `analysis::analyse`, scans a
@@ -291,6 +335,16 @@ mod tests {
             (".history_in_region(", "read a whole region's history"),
             // The reduction the store used to do, once per patch column.
             (".window_stats(", "calculate a window during a request"),
+            // The per-realm equivalents: rebuilding a region's current state
+            // from the archive is what cost the Gear page ninety milliseconds.
+            (
+                ".latest_in_region(",
+                "rebuild a region's markets from the archive",
+            ),
+            (
+                ".window_in_region(",
+                "read a whole region's per-realm window",
+            ),
         ];
         let mut offenders: Vec<String> = Vec::new();
         for (name, source) in MATERIALISED_ROUTES {

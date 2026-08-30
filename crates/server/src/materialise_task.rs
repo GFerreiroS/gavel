@@ -15,7 +15,7 @@ use app_core::Ports;
 use app_core::market::materialise::{self, ALGORITHM_VERSION, Materialised};
 use app_core::market::window::Window;
 use app_core::market::{Catalog, PriceSample, Region};
-use app_core::repo::{PriceRepository, ReadModelRepository, Store};
+use app_core::repo::{PriceRepository, ReadModelRepository, RealmPriceRepository, Store};
 use cluster_core::Millis;
 
 /// Markets staged per transaction.
@@ -26,21 +26,36 @@ use cluster_core::Millis;
 /// per-transaction cost is not what dominates.
 const BATCH: usize = 250;
 
-/// Recalculate every commodity market in these regions and publish.
+/// The interval the per-realm pages are about.
 ///
-/// Publishes once, at the end: §15's rule is that a page never sees a partial
-/// version, and four regions arriving one at a time would be four moments at
-/// which half the site had moved on.
+/// Gear and recipes are collected far less densely than commodities -- a
+/// market is caught by roughly one snapshot in three -- so a month is what
+/// makes a chart a chart rather than a scatter of five points. It is also what
+/// `routes::gear_stats` has always fetched, and this phase is not the place to
+/// change what a page covers.
+const REALM_WINDOW: Window = Window::Days(30);
+
+/// Recalculate the markets in these regions and publish, in **one** version.
+///
+/// Commodities and per-realm markets together, deliberately. §15's rule is
+/// that a page never sees a partial version, and publishing the two halves
+/// separately would be a moment at which the consumables page had moved on and
+/// the gear page had not -- which is the same fault as four regions arriving
+/// one at a time, and it is the fault that let a benchmark measure a server
+/// whose roll-ups were still being built.
+///
+/// Either list may be empty: a cycle where only the commodity snapshots moved
+/// recalculates only those, and the per-realm rows keep what they had.
 ///
 /// Failure abandons the candidate and leaves the published version exactly
 /// where it was. That is the whole point of the staging state, and it is why
 /// this returns `()` rather than propagating -- there is nothing for the
 /// caller to do about it that is better than the next cycle trying again.
-pub async fn commodities<E: Ports>(env: &E, regions: &[Region]) {
+pub async fn publish<E: Ports>(env: &E, commodity: &[Region], per_realm: &[Region]) {
     let Some(catalog) = env.active_catalog() else {
         return;
     };
-    if regions.is_empty() {
+    if commodity.is_empty() && per_realm.is_empty() {
         return;
     }
 
@@ -60,19 +75,28 @@ pub async fn commodities<E: Ports>(env: &E, regions: &[Region]) {
     let mut oldest: Option<Millis> = None;
     let mut newest: Option<Millis> = None;
 
-    for region in regions {
-        match region_batch(env, catalog, *region, version, now).await {
+    let passes = commodity
+        .iter()
+        .map(|region| ("commodity", *region))
+        .chain(per_realm.iter().map(|region| ("per-realm", *region)));
+
+    for (kind, region) in passes {
+        let outcome = match kind {
+            "commodity" => commodity_region(env, catalog, region, version, now).await,
+            _ => realm_region(env, catalog, region, version, now).await,
+        };
+        match outcome {
             Ok(report) => {
                 markets += report.markets;
                 oldest = min_option(oldest, report.oldest);
                 newest = max_option(newest, report.newest);
             }
             Err(error) => {
-                tracing::warn!(%region, %error, "materialisation failed");
+                tracing::warn!(%region, kind, %error, "materialisation failed");
                 // Abandoning is not tidying up: it is what keeps the published
-                // version whole. A half-staged candidate that were left alive
-                // would be published by the next run as if it were complete.
-                let note = format!("{region}: {error}");
+                // version whole. A half-staged candidate left alive would be
+                // published by the next run as if it were complete.
+                let note = format!("{kind} {region}: {error}");
                 if let Err(error) = read_model.abandon(version, &note).await {
                     tracing::warn!(%error, version, "could not abandon the candidate");
                 }
@@ -88,7 +112,8 @@ pub async fn commodities<E: Ports>(env: &E, regions: &[Region]) {
         Ok(()) => tracing::info!(
             version,
             markets,
-            regions = regions.len(),
+            commodity_regions = commodity.len(),
+            realm_regions = per_realm.len(),
             seconds = started.elapsed().as_secs_f32(),
             "published a market analysis version"
         ),
@@ -107,7 +132,7 @@ struct RegionReport {
     newest: Option<Millis>,
 }
 
-async fn region_batch<E: Ports>(
+async fn commodity_region<E: Ports>(
     env: &E,
     catalog: &Catalog,
     region: Region,
@@ -163,6 +188,49 @@ fn grouped(history: &[PriceSample]) -> impl Iterator<Item = &[PriceSample]> {
         let group = &history[start..end];
         start = end;
         Some(group)
+    })
+}
+
+/// Roll one region's per-realm markets up, region-wide and per realm.
+///
+/// One read of the region's window rather than one per item or one per realm:
+/// the page used to ask for one item's history across 92 realms, and the
+/// materialiser asks once for all of them.
+async fn realm_region<E: Ports>(
+    env: &E,
+    catalog: &Catalog,
+    region: Region,
+    version: u64,
+    now: Millis,
+) -> app_core::error::RepoResult<RegionReport> {
+    let Some((from, _)) = REALM_WINDOW.bounds(catalog, now) else {
+        return Ok(RegionReport {
+            markets: 0,
+            oldest: None,
+            newest: None,
+        });
+    };
+
+    let history = env
+        .store()
+        .realm_prices()
+        .window_in_region(region, from)
+        .await?;
+    let oldest = history.iter().map(|s| s.observed_at).min();
+    let newest = history.iter().map(|s| s.observed_at).max();
+
+    let rollups = materialise::rollups(&history, catalog, &REALM_WINDOW);
+    let read_model = env.store().read_model();
+
+    let mut markets = 0u64;
+    for batch in rollups.chunks(BATCH) {
+        markets += read_model.stage_rollups(version, batch).await?;
+    }
+
+    Ok(RegionReport {
+        markets,
+        oldest,
+        newest,
     })
 }
 

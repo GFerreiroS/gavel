@@ -285,7 +285,7 @@ impl Profession {
 
 /// What kind of market an entry is, and therefore which page shows it and how
 /// it is grouped: consumables by who drinks them, reagents by profession.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemKind {
     /// Defaulted so every catalogue written before reagents existed still
@@ -1034,6 +1034,35 @@ impl Catalog {
             .and_then(|entry| entry.rank_of(sample.item))
             .unwrap_or(1);
         MarketKey::commodity(sample.region, sample.item, rank)
+    }
+
+    /// The names of the optional bonuses a variant carries, in catalogue order.
+    ///
+    /// A socketed piece is the same piece; it just sells for more. These do not
+    /// divide a market, they are counted within one (§8), which is why they
+    /// live beside [`Catalog::track_in`] rather than in the page that draws
+    /// them.
+    pub fn modifier_names<'a>(&'a self, variant: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+        Catalog::bonuses(variant).filter_map(|id| self.modifier(id))
+    }
+
+    /// The item levels a set of variants covers, as one label: "285" or
+    /// "279-285".
+    ///
+    /// An en dash, not a hyphen: this is a range, and the hyphen is already
+    /// doing other work in "Veteran 1/6". Empty when nothing resolves, which
+    /// is what makes a row read as "no listings" rather than as a level of
+    /// zero.
+    pub fn level_range<'a>(&self, variants: impl IntoIterator<Item = &'a str>) -> String {
+        let levels: Vec<u16> = variants
+            .into_iter()
+            .filter_map(|v| self.rank_in(v).map(|l| l.item_level))
+            .collect();
+        match (levels.iter().min(), levels.iter().max()) {
+            (Some(low), Some(high)) if low == high => low.to_string(),
+            (Some(low), Some(high)) => format!("{low}\u{2013}{high}"),
+            _ => String::new(),
+        }
     }
 
     /// The commodity market an item trades in, without an observation in hand.

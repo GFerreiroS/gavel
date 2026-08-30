@@ -277,6 +277,10 @@ Tests live next to what they cover:
   administrator; an archived one stays browsable
 - `crates/app-core/tests/event.rs` — the game's timeline, and what it refuses
   to claim about a reset hour it has not checked
+- `crates/app-core/tests/materialise.rs` — the stored rows say exactly what the
+  request used to calculate
+- `crates/app-core/tests/rollup.rs` — a region's worth of per-realm markets,
+  including the three different meanings of "the dearest one"
 
 ### Measuring
 
@@ -289,6 +293,17 @@ python3 scripts/query-plans.py                 # re-record docs/bench/query-plan
 
 [`docs/bench/README.md`](docs/bench/README.md) explains what each number is and
 what it does not claim.
+
+---
+
+## Probes
+
+`/healthz` is liveness: no port call, no database, it only proves the HTTP
+process can answer. `/readyz` is readiness, which is a different question --
+204 once there is published market analysis to serve, 503 until then, with the
+version in `X-Analysis-Version`. A process answers HTTP long before it has
+anything to show: the first start after a deployment materialises the archive,
+and a proxy sending traffic on `/healthz` alone would send it to empty pages.
 
 ---
 

@@ -13,15 +13,15 @@
 //! `crates/app-core/tests/characterization.rs` mean something: if a number
 //! moves in this phase, it moved by accident.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use cluster_core::Millis;
 
 use super::analysis::{self, Cycle, Point, Trend};
-use super::catalog::Catalog;
+use super::catalog::{Catalog, ItemKind};
 use super::key::MarketKey;
 use super::window::Window;
-use super::{Copper, PriceSample};
+use super::{Copper, ItemId, PriceSample};
 
 /// Bumped whenever a definition here changes, so a stored row can say which
 /// rules produced it and a rebuild can be told apart from a re-read.
@@ -343,4 +343,473 @@ fn summarise(
         observed_buckets: hours.len() as u32,
         largest_gap_ms,
     })
+}
+
+// --- per-realm markets, rolled up ------------------------------------------
+//
+// A commodity market is one price for a region, so its stored row is the whole
+// answer. A gear or recipe market is one price *per connected realm*, and both
+// the card and the analysis page ask about a region's worth of them at once:
+// "what is the cheapest Veteran copy anywhere in EU, at what item levels, with
+// how many listings behind it". That question is a roll-up over markets rather
+// than a market, so it is a read-model row of its own -- `docs/market-analysis`
+// calls these category-card facts, and §3 keeps `MarketKey` for real markets.
+//
+// The same row shape serves one realm, because "one realm" is the same
+// question with one market in it. That is what stops the page having two
+// implementations of everything it shows.
+
+use super::Region;
+use super::catalog::{ItemLevel, Track};
+use super::realm::{RealmId, RealmSample};
+
+/// One item level inside a track, and what it costs.
+///
+/// The track is the market and the ranks inside it are not (§8), so these are
+/// a breakdown of one market rather than several. Levels the catalogue cannot
+/// name are left out rather than shown as zero: the sync script resolves them,
+/// and a level of 0 is a lie.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LevelStat {
+    pub item_level: u16,
+    /// "Champion 2/6", the catalogue's own wording.
+    pub upgrade: String,
+    pub cheapest: Copper,
+    pub highest: Copper,
+    pub listings: u32,
+    /// How many connected realms list it. Always 1 in a realm-scoped roll-up.
+    pub realms: u32,
+}
+
+/// How common one socket or tertiary is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModifierStat {
+    pub name: String,
+    /// Listings carrying it in the newest snapshot.
+    pub now: u32,
+    /// Listings carrying it across the window.
+    pub seen: u32,
+}
+
+/// What a roll-up covers.
+///
+/// A sentinel rather than a nullable realm: this is half a primary key, and
+/// SQLite treats NULLs in a unique index as distinct, which would let the same
+/// region's roll-up be written twice.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Scope {
+    /// Every connected realm in the region.
+    Region,
+    /// One connected realm.
+    Realm(RealmId),
+}
+
+impl Scope {
+    /// The stored form. Realm ids start well above zero, so zero is free to
+    /// mean "all of them".
+    pub const fn realm_id(self) -> u32 {
+        match self {
+            Scope::Region => 0,
+            Scope::Realm(realm) => realm.get(),
+        }
+    }
+
+    pub const fn parse(realm_id: u32) -> Scope {
+        match realm_id {
+            0 => Scope::Region,
+            id => Scope::Realm(RealmId(id)),
+        }
+    }
+}
+
+/// A region's -- or one realm's -- worth of one per-realm market.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MarketRollup {
+    pub region: Region,
+    pub item: ItemId,
+    /// Which per-realm market this is. Carried rather than inferred: a recipe
+    /// and a BoE on a track no catalogue names both have no track, and they
+    /// are not the same thing.
+    pub kind: ItemKind,
+    /// `None` for a recipe, which has one version of itself, and for a track
+    /// no catalogue names.
+    pub track: Option<Track>,
+    pub scope: Scope,
+    /// The interval the figures cover.
+    pub window: Window,
+
+    /// The newest observation anywhere in scope.
+    pub observed_at: Option<Millis>,
+    /// Distinct snapshot instants in the window. What "how much evidence"
+    /// means for a market collected per realm on its own schedule.
+    pub snapshots: u32,
+    /// Connected realms with a listing in the newest snapshot.
+    pub realms_listing: u32,
+
+    /// Over the newest snapshot of each realm.
+    ///
+    /// Three different questions, and the page asks all three. A *realm's*
+    /// price is its cheapest copy -- that is what you would pay there -- so
+    /// the cheapest, the median and the dearest of those describe the spread
+    /// *across realms*, which is what a card shows and which realm to fly to.
+    /// The dearest *listing* is a different fact: it is the spread *within*
+    /// the market, which is all there is to see once a realm is chosen.
+    /// Collapsing them would make a card name a realm for a price nobody
+    /// there is charging.
+    pub cheapest_now: Option<Copper>,
+    pub cheapest_realm: Option<RealmId>,
+    /// The dearest of the realms' cheapest copies.
+    pub dearest_realm_now: Option<Copper>,
+    pub dearest_realm: Option<RealmId>,
+    /// The median of the realms' cheapest copies: a card's headline figure.
+    pub median_realm_now: Option<Copper>,
+    /// The dearest listing anywhere in scope.
+    pub highest_now: Option<Copper>,
+    /// Over the whole window.
+    pub cheapest_ever: Option<Copper>,
+    pub highest_ever: Option<Copper>,
+    pub listings_now: u32,
+    /// Every listing seen across the window: the denominator a modifier's
+    /// share is a share of.
+    pub listings_seen: u32,
+
+    /// "279-285", or empty where no level resolves.
+    pub level_range: String,
+    pub levels: Vec<LevelStat>,
+    pub modifiers: Vec<ModifierStat>,
+    /// One point per snapshot: the price is the median of what the realms in
+    /// scope charge for the cheapest copy, the quantity is their listings
+    /// summed. Both charts on the page are drawn from this one series.
+    pub series: Vec<Point>,
+}
+
+impl MarketRollup {
+    /// A market nothing has ever been listed on.
+    ///
+    /// A tracked piece with no auctions anywhere is a real answer, and the
+    /// page needs one shape whether or not the read model has a row for it --
+    /// two branches per figure is how a page ends up rendering a zero.
+    pub fn empty(
+        region: Region,
+        item: ItemId,
+        kind: ItemKind,
+        track: Option<Track>,
+    ) -> MarketRollup {
+        MarketRollup {
+            region,
+            item,
+            kind,
+            track,
+            scope: Scope::Region,
+            window: Window::All,
+            observed_at: None,
+            snapshots: 0,
+            realms_listing: 0,
+            cheapest_now: None,
+            cheapest_realm: None,
+            dearest_realm_now: None,
+            dearest_realm: None,
+            median_realm_now: None,
+            highest_now: None,
+            cheapest_ever: None,
+            highest_ever: None,
+            listings_now: 0,
+            listings_seen: 0,
+            level_range: String::new(),
+            levels: Vec::new(),
+            modifiers: Vec::new(),
+            series: Vec::new(),
+        }
+    }
+}
+
+/// Roll up one region's per-realm history.
+///
+/// `history` is every observation in the window for the markets being rolled
+/// up, in any order. Grouped by item and track here rather than by the caller,
+/// because which track a variant belongs to is a catalogue rule and this is
+/// the side of the wall the catalogue is on.
+///
+/// Produces one row for the region and one for each realm that has any
+/// history, for every (item, track) present. `window` names the interval the
+/// caller already narrowed `history` to; nothing here filters by time, because
+/// the store did it with an index.
+pub fn rollups(history: &[RealmSample], catalog: &Catalog, window: &Window) -> Vec<MarketRollup> {
+    let mut grouped: BTreeMap<(Region, ItemId, ItemKind, Option<Track>), Vec<&RealmSample>> =
+        BTreeMap::new();
+    for sample in history {
+        // An item the catalogue no longer lists is treated as gear, because
+        // that is the shape the per-realm table holds. Its history stays
+        // addressable either way, which is what an archive is for.
+        let kind = catalog
+            .find(sample.item)
+            .map(|e| e.kind)
+            .unwrap_or(ItemKind::Boe);
+        let track = match kind {
+            ItemKind::Recipe => None,
+            _ => catalog.track_in(&sample.variant),
+        };
+        grouped
+            .entry((sample.region, sample.item, kind, track))
+            .or_default()
+            .push(sample);
+    }
+
+    // When each realm last had a snapshot of each item, across every track.
+    //
+    // Computed here rather than inside a group, and that distinction is the
+    // whole of "is this still on sale". One snapshot covers a realm's whole
+    // auction house, so a variant whose newest row is older than its realm's
+    // newest row for the item was *delisted* -- somebody bought it or pulled
+    // it. Deciding within a track cannot see that: a track nobody lists any
+    // more would keep reporting its last known listings for ever, which is
+    // what both pages used to do.
+    let mut newest: BTreeMap<(Region, ItemId, RealmId), Millis> = BTreeMap::new();
+    for sample in history {
+        let at = newest
+            .entry((sample.region, sample.item, sample.realm))
+            .or_insert(sample.observed_at);
+        *at = (*at).max(sample.observed_at);
+    }
+
+    let mut out = Vec::new();
+    for ((region, item, kind, track), samples) in grouped {
+        out.push(roll(
+            region,
+            item,
+            kind,
+            track,
+            Scope::Region,
+            &samples,
+            &newest,
+            catalog,
+            window,
+        ));
+
+        let mut realms: Vec<RealmId> = samples.iter().map(|s| s.realm).collect();
+        realms.sort();
+        realms.dedup();
+        for realm in realms {
+            let mine: Vec<&RealmSample> = samples
+                .iter()
+                .copied()
+                .filter(|s| s.realm == realm)
+                .collect();
+            out.push(roll(
+                region,
+                item,
+                kind,
+                track,
+                Scope::Realm(realm),
+                &mine,
+                &newest,
+                catalog,
+                window,
+            ));
+        }
+    }
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn roll(
+    region: Region,
+    item: ItemId,
+    kind: ItemKind,
+    track: Option<Track>,
+    scope: Scope,
+    samples: &[&RealmSample],
+    newest: &BTreeMap<(Region, ItemId, RealmId), Millis>,
+    catalog: &Catalog,
+    window: &Window,
+) -> MarketRollup {
+    // "Now" is per realm, because realms are generated on their own schedules
+    // and the newest observation overall would silently drop every realm that
+    // had not refreshed yet. It is per realm across *every* track of the item,
+    // because one snapshot covers the whole auction house: a variant older
+    // than its realm's newest row for this item is one nobody is selling.
+    let current: Vec<&RealmSample> = samples
+        .iter()
+        .copied()
+        .filter(|s| newest.get(&(s.region, s.item, s.realm)) == Some(&s.observed_at))
+        .collect();
+
+    // A realm's price is its cheapest copy. One realm may list the same track
+    // several times, so this is per realm before it is anything else.
+    let mut per_realm: BTreeMap<RealmId, Copper> = BTreeMap::new();
+    for sample in &current {
+        let slot = per_realm.entry(sample.realm).or_insert(sample.min_price);
+        *slot = (*slot).min(sample.min_price);
+    }
+    let mut across: Vec<Copper> = per_realm.values().copied().collect();
+    across.sort_unstable();
+    let cheapest_realm = per_realm
+        .iter()
+        .min_by_key(|(realm, price)| (price.get(), realm.get()))
+        .map(|(realm, _)| *realm);
+    // Ties broken by realm id at both ends, so the answer is stable rather
+    // than whichever the map happened to yield. Which realm is named when two
+    // charge the same is arbitrary; that it is the same one every time is not.
+    let dearest_realm = per_realm
+        .iter()
+        .max_by_key(|(realm, price)| (price.get(), realm.get()))
+        .map(|(realm, _)| *realm);
+
+    let cheapest_now = across.first().copied();
+    // Rows written before `max_price` existed carry zero, which is not a
+    // price: fall back to the cheapest rather than reporting nothing.
+    let highest_now = current
+        .iter()
+        .map(|s| s.max_price)
+        .max()
+        .filter(|p| p.get() > 0)
+        .or(cheapest_now);
+    let cheapest_ever = samples.iter().map(|s| s.min_price).min();
+    let highest_ever = samples
+        .iter()
+        .map(|s| s.max_price)
+        .max()
+        .filter(|p| p.get() > 0)
+        .or(cheapest_ever);
+
+    MarketRollup {
+        region,
+        item,
+        kind,
+        track,
+        scope,
+        window: window.clone(),
+        observed_at: samples.iter().map(|s| s.observed_at).max(),
+        snapshots: samples
+            .iter()
+            .map(|s| s.observed_at)
+            .collect::<BTreeSet<_>>()
+            .len() as u32,
+        realms_listing: current
+            .iter()
+            .map(|s| s.realm)
+            .collect::<BTreeSet<_>>()
+            .len() as u32,
+        cheapest_now,
+        cheapest_realm,
+        dearest_realm_now: across.last().copied(),
+        dearest_realm,
+        median_realm_now: across.get(across.len() / 2).copied(),
+        highest_now,
+        cheapest_ever,
+        highest_ever,
+        listings_now: current.iter().map(|s| s.listings).sum(),
+        listings_seen: samples.iter().map(|s| s.listings).sum(),
+        level_range: catalog.level_range(current.iter().map(|s| s.variant.as_str())),
+        levels: levels(&current, catalog),
+        modifiers: modifiers(samples, &current, catalog),
+        series: series(samples),
+    }
+}
+
+/// The track broken apart by item level.
+///
+/// ilvl 311 going for less than an ilvl 305 is exactly the thing worth seeing,
+/// and it is a breakdown rather than a split: they are one market.
+fn levels(current: &[&RealmSample], catalog: &Catalog) -> Vec<LevelStat> {
+    let mut by_level: BTreeMap<u16, (&ItemLevel, Vec<&RealmSample>)> = BTreeMap::new();
+    for sample in current {
+        let Some(level) = catalog.rank_in(&sample.variant) else {
+            continue;
+        };
+        by_level
+            .entry(level.item_level)
+            .or_insert_with(|| (level, Vec::new()))
+            .1
+            .push(sample);
+    }
+
+    by_level
+        .into_iter()
+        .map(|(item_level, (level, samples))| {
+            let cheapest = samples
+                .iter()
+                .map(|s| s.min_price)
+                .min()
+                .unwrap_or_default();
+            let highest = samples
+                .iter()
+                .map(|s| s.max_price)
+                .max()
+                .filter(|p| p.get() > 0)
+                .unwrap_or(cheapest);
+            LevelStat {
+                item_level,
+                upgrade: level.upgrade.clone(),
+                cheapest,
+                highest,
+                listings: samples.iter().map(|s| s.listings).sum(),
+                realms: samples
+                    .iter()
+                    .map(|s| s.realm)
+                    .collect::<BTreeSet<_>>()
+                    .len() as u32,
+            }
+        })
+        .collect()
+}
+
+/// How common each socket or tertiary is: in the newest snapshot, and across
+/// the window.
+fn modifiers(
+    samples: &[&RealmSample],
+    current: &[&RealmSample],
+    catalog: &Catalog,
+) -> Vec<ModifierStat> {
+    let mut now: BTreeMap<&str, u32> = BTreeMap::new();
+    for sample in current {
+        for name in catalog.modifier_names(&sample.variant) {
+            *now.entry(name).or_default() += sample.listings;
+        }
+    }
+    let mut seen: BTreeMap<&str, u32> = BTreeMap::new();
+    for sample in samples {
+        for name in catalog.modifier_names(&sample.variant) {
+            *seen.entry(name).or_default() += sample.listings;
+        }
+    }
+    seen.into_iter()
+        .map(|(name, count)| ModifierStat {
+            name: name.to_string(),
+            now: now.get(name).copied().unwrap_or(0),
+            seen: count,
+        })
+        .collect()
+}
+
+/// One point per snapshot: the median of what the realms in scope charge for
+/// the cheapest copy, and their listings summed.
+///
+/// The median rather than the minimum, because a line of "the single cheapest
+/// realm" is a line about whichever realm was having a bad day. Thinned to
+/// [`CHART_POINTS`] the same way every stored series is.
+fn series(samples: &[&RealmSample]) -> Vec<Point> {
+    let mut by_instant: BTreeMap<Millis, Vec<&RealmSample>> = BTreeMap::new();
+    for sample in samples {
+        by_instant
+            .entry(sample.observed_at)
+            .or_default()
+            .push(sample);
+    }
+    let points: Vec<Point> = by_instant
+        .into_iter()
+        .map(|(at, at_instant)| {
+            let mut cheapest: Vec<Copper> = at_instant.iter().map(|s| s.min_price).collect();
+            cheapest.sort_unstable();
+            Point {
+                at,
+                price: cheapest
+                    .get(cheapest.len() / 2)
+                    .copied()
+                    .unwrap_or_default(),
+                quantity: at_instant.iter().map(|s| s.listings as u64).sum(),
+            }
+        })
+        .collect();
+    analysis::downsample(&points, CHART_POINTS)
 }

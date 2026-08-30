@@ -9,8 +9,10 @@ use std::future::Future;
 use cluster_core::Millis;
 
 use crate::error::RepoResult;
-use crate::market::catalog::CatalogStatus;
-use crate::market::materialise::{MarketState, MarketSummary, MarketWindow, Materialised};
+use crate::market::catalog::{CatalogStatus, ItemKind, Track};
+use crate::market::materialise::{
+    MarketRollup, MarketState, MarketSummary, MarketWindow, Materialised, Scope,
+};
 use crate::market::window::Window;
 use crate::market::{
     Alert, ItemId, MarketEvent, MarketKey, PriceSample, Realm, RealmId, RealmSample, Region,
@@ -217,6 +219,17 @@ pub trait RealmPriceRepository: Send + Sync + 'static {
         item: ItemId,
         region: Region,
         realm: RealmId,
+        since: Millis,
+    ) -> impl Future<Output = RepoResult<Vec<RealmSample>>> + Send;
+
+    /// Every per-realm observation in a region since `since`.
+    ///
+    /// One query rather than one per item or one per realm. It exists for the
+    /// materialiser, which rolls a whole region up at a time; a handler that
+    /// called this would be doing what Phase 2 moved to the write path.
+    fn window_in_region(
+        &self,
+        region: Region,
         since: Millis,
     ) -> impl Future<Output = RepoResult<Vec<RealmSample>>> + Send;
 
@@ -460,6 +473,18 @@ pub trait ReadModelRepository: Send + Sync + 'static {
     /// not be mistaken for this attempt's.
     fn begin(&self, algorithm: u32, now: Millis) -> impl Future<Output = RepoResult<u64>> + Send;
 
+    /// Write part of a candidate's per-realm roll-ups.
+    ///
+    /// Separate from [`Self::stage`] rather than folded into it because they
+    /// are different shapes with different volumes: 2,042 commodity markets
+    /// against 35,720 realm ones, rolled up two ways. Both land in the same
+    /// version and are published by the same transaction.
+    fn stage_rollups(
+        &self,
+        version: u64,
+        rollups: &[MarketRollup],
+    ) -> impl Future<Output = RepoResult<u64>> + Send;
+
     /// Write part of a candidate. Called many times per version -- once per
     /// batch of markets -- so that a large rebuild does not hold one
     /// transaction open across the whole archive.
@@ -536,6 +561,27 @@ pub trait ReadModelRepository: Send + Sync + 'static {
         &self,
         key: MarketKey,
     ) -> impl Future<Output = RepoResult<Vec<MarketWindow>>> + Send;
+
+    /// Every published roll-up of one kind in a region at one scope, ordered
+    /// by item.
+    ///
+    /// What a gear or recipe card page reads: a few hundred rows rather than
+    /// the eighteen thousand markets behind them.
+    fn rollups(
+        &self,
+        region: Region,
+        kind: ItemKind,
+        scope: Scope,
+    ) -> impl Future<Output = RepoResult<Vec<MarketRollup>>> + Send;
+
+    /// One roll-up: one item's track, in a region or on a realm.
+    fn rollup(
+        &self,
+        region: Region,
+        item: ItemId,
+        track: Option<Track>,
+        scope: Scope,
+    ) -> impl Future<Output = RepoResult<Option<MarketRollup>>> + Send;
 }
 
 pub trait Store: Send + Sync + 'static {

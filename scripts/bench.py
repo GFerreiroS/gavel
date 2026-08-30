@@ -135,7 +135,7 @@ class Server:
             except subprocess.TimeoutExpired:
                 self.process.kill()
 
-    def await_ready(self, seconds: float = 60.0) -> None:
+    def await_ready(self, seconds: float = 300.0) -> None:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
             if self.process and self.process.poll() is not None:
@@ -149,7 +149,12 @@ class Server:
             except OSError:
                 time.sleep(0.1)
                 continue
-            if fetch(self.port, "/healthz").status == 204:
+            # Readiness, not liveness. The process answers HTTP long before it
+            # has anything to serve: the first start on a fresh copy
+            # materialises the archive, and measuring during that measures a
+            # server building its read model. It did, until `/readyz` existed --
+            # and the tell was the response *size*, not the timing.
+            if fetch(self.port, "/readyz").status == 204:
                 return
         raise SystemExit(f"the server never became ready; see {self.log}")
 

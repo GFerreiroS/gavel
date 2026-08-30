@@ -14,9 +14,13 @@
 
 use app_core::error::{RepoError, RepoResult};
 use app_core::market::analysis::{Cycle, Point, Trend};
-use app_core::market::materialise::{MarketState, MarketSummary, MarketWindow, Materialised};
+use app_core::market::catalog::{ItemKind, Track};
+use app_core::market::materialise::{
+    LevelStat, MarketRollup, MarketState, MarketSummary, MarketWindow, Materialised, ModifierStat,
+    Scope,
+};
 use app_core::market::window::Window;
-use app_core::market::{Copper, MarketKey, Region};
+use app_core::market::{Copper, ItemId, MarketKey, RealmId, Region};
 use app_core::repo::{AnalysisVersion, ReadModelRepository, VersionState};
 use cluster_core::Millis;
 use serde::{Deserialize, Serialize};
@@ -100,6 +104,139 @@ fn cycles_from(raw: &str) -> Vec<Cycle> {
             samples: c.samples,
         })
         .collect()
+}
+
+#[derive(Serialize, Deserialize)]
+struct StoredLevel {
+    item_level: u16,
+    upgrade: String,
+    cheapest: u64,
+    highest: u64,
+    listings: u32,
+    realms: u32,
+}
+
+#[derive(Serialize, Deserialize)]
+struct StoredModifier {
+    name: String,
+    now: u32,
+    seen: u32,
+}
+
+fn levels_json(levels: &[LevelStat]) -> String {
+    let stored: Vec<StoredLevel> = levels
+        .iter()
+        .map(|l| StoredLevel {
+            item_level: l.item_level,
+            upgrade: l.upgrade.clone(),
+            cheapest: l.cheapest.get(),
+            highest: l.highest.get(),
+            listings: l.listings,
+            realms: l.realms,
+        })
+        .collect();
+    serde_json::to_string(&stored).unwrap_or_else(|_| "[]".into())
+}
+
+fn levels_from(raw: &str) -> Vec<LevelStat> {
+    serde_json::from_str::<Vec<StoredLevel>>(raw)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|l| LevelStat {
+            item_level: l.item_level,
+            upgrade: l.upgrade,
+            cheapest: Copper(l.cheapest),
+            highest: Copper(l.highest),
+            listings: l.listings,
+            realms: l.realms,
+        })
+        .collect()
+}
+
+fn modifiers_json(modifiers: &[ModifierStat]) -> String {
+    let stored: Vec<StoredModifier> = modifiers
+        .iter()
+        .map(|m| StoredModifier {
+            name: m.name.clone(),
+            now: m.now,
+            seen: m.seen,
+        })
+        .collect();
+    serde_json::to_string(&stored).unwrap_or_else(|_| "[]".into())
+}
+
+fn modifiers_from(raw: &str) -> Vec<ModifierStat> {
+    serde_json::from_str::<Vec<StoredModifier>>(raw)
+        .unwrap_or_default()
+        .into_iter()
+        .map(|m| ModifierStat {
+            name: m.name,
+            now: m.now,
+            seen: m.seen,
+        })
+        .collect()
+}
+
+/// The track's stored form. `-` for one no catalogue names, `` for a recipe:
+/// both are real answers and neither may collide with a track's own slug.
+fn track_column(track: Option<Track>, kind: ItemKind) -> &'static str {
+    match (kind, track) {
+        (ItemKind::Recipe, _) => "",
+        (_, None) => "-",
+        (_, Some(track)) => track.slug(),
+    }
+}
+
+fn track_from(raw: &str) -> Option<Track> {
+    match raw {
+        "" | "-" => None,
+        slug => Track::from_slug(slug),
+    }
+}
+
+fn copper(value: Option<i64>) -> Option<Copper> {
+    value.map(|v| Copper(v as u64))
+}
+
+fn realm(value: Option<i64>) -> Option<RealmId> {
+    value.map(|v| RealmId(v as u32))
+}
+
+fn rollup_from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<MarketRollup> {
+    let region: String = row.get("region");
+    let window: String = row.get("window");
+    let track: String = row.get("track");
+    let kind: String = row.get("kind");
+    Ok(MarketRollup {
+        region: Region::parse(&region).ok_or_else(|| corrupt("region", region))?,
+        item: ItemId(row.get::<i64, _>("item_id") as u32),
+        kind: ItemKind::ALL
+            .into_iter()
+            .find(|k| k.as_str() == kind)
+            .ok_or_else(|| corrupt("rollup kind", kind))?,
+        track: track_from(&track),
+        scope: Scope::parse(row.get::<i64, _>("realm_id") as u32),
+        window: Window::parse(&window).ok_or_else(|| corrupt("analysis window", window))?,
+        observed_at: row
+            .get::<Option<i64>, _>("observed_at")
+            .map(|v| Millis(v as u64)),
+        snapshots: row.get::<i64, _>("snapshots") as u32,
+        realms_listing: row.get::<i64, _>("realms") as u32,
+        cheapest_now: copper(row.get("cheapest_now")),
+        cheapest_realm: realm(row.get("cheapest_realm")),
+        dearest_realm_now: copper(row.get("dearest_realm_now")),
+        dearest_realm: realm(row.get("dearest_realm")),
+        median_realm_now: copper(row.get("median_realm_now")),
+        highest_now: copper(row.get("highest_now")),
+        cheapest_ever: copper(row.get("cheapest_ever")),
+        highest_ever: copper(row.get("highest_ever")),
+        listings_now: row.get::<i64, _>("listings_now") as u32,
+        listings_seen: row.get::<i64, _>("listings_seen") as u32,
+        level_range: row.get("level_range"),
+        levels: levels_from(&row.get::<String, _>("levels")),
+        modifiers: modifiers_from(&row.get::<String, _>("modifiers")),
+        series: points_from(&row.get::<String, _>("series")),
+    })
 }
 
 /// The market's components, spread across the columns a page filters on.
@@ -261,6 +398,10 @@ impl ReadModelRepository for SqliteReadModel {
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;
+        sqlx::query("DELETE FROM market_rollup WHERE state = 'staging'")
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
 
         let row: (i64,) = sqlx::query_as(
             "INSERT INTO analysis_versions (state, algorithm, started_at)
@@ -405,6 +546,117 @@ impl ReadModelRepository for SqliteReadModel {
         Ok(written)
     }
 
+    async fn stage_rollups(&self, version: u64, rollups: &[MarketRollup]) -> RepoResult<u64> {
+        if rollups.is_empty() {
+            return Ok(0);
+        }
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        let mut written = 0u64;
+        for rollup in rollups {
+            let kind = rollup.kind;
+            sqlx::query(
+                "INSERT INTO market_rollup
+                   (region, item_id, track, realm_id, state, version, kind, window,
+                    observed_at, snapshots, realms, cheapest_now, cheapest_realm,
+                    dearest_realm_now, dearest_realm, median_realm_now, highest_now,
+                    cheapest_ever, highest_ever, listings_now, listings_seen,
+                    level_range, levels, modifiers, series)
+                 VALUES (?, ?, ?, ?, 'staging', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                         ?, ?, ?, ?)
+                 ON CONFLICT(region, item_id, track, realm_id, state) DO UPDATE SET
+                    version = excluded.version, kind = excluded.kind,
+                    window = excluded.window, observed_at = excluded.observed_at,
+                    snapshots = excluded.snapshots, realms = excluded.realms,
+                    cheapest_now = excluded.cheapest_now,
+                    cheapest_realm = excluded.cheapest_realm,
+                    dearest_realm_now = excluded.dearest_realm_now,
+                    dearest_realm = excluded.dearest_realm,
+                    median_realm_now = excluded.median_realm_now,
+                    highest_now = excluded.highest_now,
+                    cheapest_ever = excluded.cheapest_ever, highest_ever = excluded.highest_ever,
+                    listings_now = excluded.listings_now, listings_seen = excluded.listings_seen,
+                    level_range = excluded.level_range, levels = excluded.levels,
+                    modifiers = excluded.modifiers, series = excluded.series",
+            )
+            .bind(rollup.region.as_str())
+            .bind(rollup.item.get() as i64)
+            .bind(track_column(rollup.track, kind))
+            .bind(rollup.scope.realm_id() as i64)
+            .bind(version as i64)
+            .bind(kind.as_str())
+            .bind(rollup.window.key())
+            .bind(rollup.observed_at.map(|v| v.get() as i64))
+            .bind(rollup.snapshots as i64)
+            .bind(rollup.realms_listing as i64)
+            .bind(rollup.cheapest_now.map(|v| v.get() as i64))
+            .bind(rollup.cheapest_realm.map(|r| r.get() as i64))
+            .bind(rollup.dearest_realm_now.map(|v| v.get() as i64))
+            .bind(rollup.dearest_realm.map(|r| r.get() as i64))
+            .bind(rollup.median_realm_now.map(|v| v.get() as i64))
+            .bind(rollup.highest_now.map(|v| v.get() as i64))
+            .bind(rollup.cheapest_ever.map(|v| v.get() as i64))
+            .bind(rollup.highest_ever.map(|v| v.get() as i64))
+            .bind(rollup.listings_now as i64)
+            .bind(rollup.listings_seen as i64)
+            .bind(&rollup.level_range)
+            .bind(levels_json(&rollup.levels))
+            .bind(modifiers_json(&rollup.modifiers))
+            .bind(points_json(&rollup.series))
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+            written += 1;
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok(written)
+    }
+
+    async fn rollups(
+        &self,
+        region: Region,
+        kind: ItemKind,
+        scope: Scope,
+    ) -> RepoResult<Vec<MarketRollup>> {
+        let rows = sqlx::query(
+            "SELECT * FROM market_rollup
+              WHERE state = 'published' AND kind = ? AND region = ? AND realm_id = ?
+              ORDER BY item_id, track",
+        )
+        .bind(kind.as_str())
+        .bind(region.as_str())
+        .bind(scope.realm_id() as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(rollup_from_row).collect()
+    }
+
+    async fn rollup(
+        &self,
+        region: Region,
+        item: ItemId,
+        track: Option<Track>,
+        scope: Scope,
+    ) -> RepoResult<Option<MarketRollup>> {
+        // Both spellings of "no track": a recipe stores the empty string and
+        // an unresolved gear track stores `-`. One query rather than making
+        // every caller know which it is.
+        let rows = sqlx::query(
+            "SELECT * FROM market_rollup
+              WHERE state = 'published' AND region = ? AND item_id = ?
+                AND realm_id = ? AND track IN (?, ?)",
+        )
+        .bind(region.as_str())
+        .bind(item.get() as i64)
+        .bind(scope.realm_id() as i64)
+        .bind(track.map(|t| t.slug()).unwrap_or(""))
+        .bind(track.map(|t| t.slug()).unwrap_or("-"))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.as_ref().map(rollup_from_row).transpose()
+    }
+
     async fn publish(
         &self,
         version: u64,
@@ -432,11 +684,11 @@ impl ReadModelRepository for SqliteReadModel {
         // Drop only the published rows this candidate replaces. Every other
         // market keeps what it had -- that is what makes a failed realm cost
         // its own freshness and nobody else's.
-        for table in ["market_current", "market_windows"] {
-            let key = if table == "market_current" {
-                "market_key"
-            } else {
-                "market_key, window"
+        for table in ["market_current", "market_windows", "market_rollup"] {
+            let key = match table {
+                "market_current" => "market_key",
+                "market_windows" => "market_key, window",
+                _ => "region, item_id, track, realm_id",
             };
             sqlx::query(&format!(
                 "DELETE FROM {table}
@@ -481,6 +733,11 @@ impl ReadModelRepository for SqliteReadModel {
             .await
             .map_err(map_err)?;
         sqlx::query("DELETE FROM market_windows WHERE state = 'staging' AND version = ?")
+            .bind(version as i64)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+        sqlx::query("DELETE FROM market_rollup WHERE state = 'staging' AND version = ?")
             .bind(version as i64)
             .execute(&mut *tx)
             .await

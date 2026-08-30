@@ -58,8 +58,19 @@ async fn run<E: Ports>(env: E) {
         // does no analysis work, which is CLAUDE.md §16's Phase 2 in one line:
         // the upstream said nothing changed, so nothing needs recalculating.
         let collected = collect_once(&env).await;
-        crate::materialise_task::commodities(&env, &collected).await;
-        collect_realms(&env).await;
+        // A cycle that fetched no realm has nothing to roll up. When any realm
+        // moved the whole region is recalculated, because the roll-up a card
+        // reads is *across* realms: one realm's new price changes what the
+        // region's cheapest copy is.
+        let realms = if collect_realms(&env).await {
+            env.market().regions.clone()
+        } else {
+            Vec::new()
+        };
+        // One version for both halves. Publishing them separately would leave
+        // a moment where the consumables page had moved on and the gear page
+        // had not, which is exactly what §15 says a reader must never see.
+        crate::materialise_task::publish(&env, &collected, &realms).await;
         warm_tooltips(&env).await;
         downsample(&env).await;
         prune(&env).await;
@@ -94,7 +105,7 @@ async fn backfill<E: Ports>(env: &E) {
         regions = ?regions.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
         "no published analysis yet: materialising the existing archive"
     );
-    crate::materialise_task::commodities(env, &regions).await;
+    crate::materialise_task::publish(env, &regions, &regions).await;
 }
 
 /// Collect every region's commodity snapshot.
@@ -186,12 +197,16 @@ async fn disabled_kinds<E: Ports>(env: &E) -> Vec<String> {
 ///
 /// What the cluster does decide today is *how much* work is in flight, which
 /// is the part that makes 184 realms possible at all.
-async fn collect_realms<E: Ports>(env: &E) {
+/// Collect every enabled realm's snapshot.
+///
+/// Returns whether anything actually changed, which is what decides if the
+/// roll-ups need rebuilding.
+async fn collect_realms<E: Ports>(env: &E) -> bool {
     if !env.realm_auctions().is_configured() {
-        return;
+        return false;
     }
     let Some(catalog) = env.active_catalog() else {
-        return;
+        return false;
     };
     let disabled = disabled_kinds(env).await;
     let wanted: Vec<ItemId> = catalog
@@ -201,7 +216,7 @@ async fn collect_realms<E: Ports>(env: &E) {
         .flat_map(|i| i.item_ids())
         .collect();
     if wanted.is_empty() {
-        return;
+        return false;
     }
 
     // The store is the source of truth for which realms to collect, not the
@@ -210,11 +225,11 @@ async fn collect_realms<E: Ports>(env: &E) {
         Ok(realms) => realms.into_iter().filter(|r| r.enabled).collect(),
         Err(e) => {
             tracing::warn!(error = %e, "could not read the realm list");
-            return;
+            return false;
         }
     };
     if realms.is_empty() {
-        return;
+        return false;
     }
 
     let width = fan_out(env).await;
@@ -257,6 +272,7 @@ async fn collect_realms<E: Ports>(env: &E) {
         seconds = started.elapsed().as_secs_f32(),
         "gear collection cycle finished"
     );
+    collected > 0
 }
 
 /// What one realm's collection did, for the cycle summary.

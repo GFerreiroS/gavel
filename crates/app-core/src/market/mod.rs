@@ -33,7 +33,10 @@ pub use catalog::{
 pub use collector::{AlertSink, Collector, NullSink, Outcome, Report};
 pub use event::{EventKind, EventScope, MarketEvent, Provenance, Validation, Visibility};
 pub use key::{BadMarketKey, MarketKey};
-pub use materialise::{ALGORITHM_VERSION, MarketState, MarketWindow, Materialised};
+pub use materialise::{
+    ALGORITHM_VERSION, LevelStat, MarketRollup, MarketState, MarketSummary, MarketWindow,
+    Materialised, ModifierStat, Scope,
+};
 pub use realm::{
     GearListing, Realm, RealmAuctionProvider, RealmId, RealmSample, RealmSnapshot, summarise_realm,
 };

@@ -21,11 +21,11 @@
 use std::collections::{BTreeMap, HashMap};
 
 use app_core::Ports;
+use app_core::market::materialise::{MarketRollup, Scope};
 use app_core::market::{
-    ALL_PROFESSIONS, Catalog, CatalogItem, Copper, ItemId, ItemKind, ItemLevel, Realm, RealmId,
-    RealmSample, Region, Track,
+    ALL_PROFESSIONS, Catalog, CatalogItem, ItemId, ItemKind, Realm, RealmId, Region, Track,
 };
-use app_core::repo::{RealmPriceRepository, Store};
+use app_core::repo::{ReadModelRepository, RealmPriceRepository, Store};
 use app_core::timing::{self, Stage};
 use askama::Template;
 use axum::Extension;
@@ -303,35 +303,30 @@ async fn build<E: Ports>(
         .as_deref()
         .and_then(|want| realms.iter().find(|r| realm_matches(r, want)));
 
-    // One query per region for the cross-realm view; one for the realm when
-    // a realm is chosen. Either way it is the newest row per item, realm and
-    // variant, which the store computes rather than us.
-    let mut samples: Vec<RealmSample> = Vec::new();
-    match (detail, selected) {
+    // One query: the stored roll-ups for this kind, in this region, at the
+    // scope the reader chose. A few hundred rows rather than the eighteen
+    // thousand markets behind them, and no reduction at all -- this page used
+    // to rebuild every market in the region from the archive to draw nine
+    // cards.
+    let scope = selected.map_or(Scope::Region, |realm| Scope::Realm(realm.id));
+    let rollups: Vec<MarketRollup> = match detail {
         // The shell asks for no prices at all: that is the whole point of it.
-        (Detail::Shell, _) => {}
-        (Detail::Full, Some(realm)) => samples.extend(prices.latest(realm.region, realm.id).await?),
-        // One region, one query. This used to fan out over every collected
-        // region and merge them, which was both slower and a worse page: the
-        // reader already chose a region on the index, and four columns of
-        // prices they cannot buy is four columns of noise.
-        (Detail::Full, None) => samples.extend(prices.latest_in_region(prefs.region).await?),
-    }
+        Detail::Shell => Vec::new(),
+        Detail::Full => {
+            env.store()
+                .read_model()
+                .rollups(prefs.region, kind, scope)
+                .await?
+        }
+    };
 
-    let observed = samples.iter().map(|s| s.observed_at).max();
+    let observed = rollups.iter().filter_map(|r| r.observed_at).max();
 
-    // Grouped once, here, rather than by each card scanning the whole list for
-    // its own item. A region holds ~18k markets and a page draws ~600 cards;
-    // the scan was eleven million comparisons to answer six hundred questions,
-    // and it was most of what this page cost.
-    let by_item: HashMap<ItemId, Vec<&RealmSample>> = {
-        // Read-model work, charged to the analysis stage: no statistic is
-        // named here, but reducing a region's markets during a request is
-        // exactly what Phase 2 moves to the write path.
+    let by_item: HashMap<ItemId, Vec<&MarketRollup>> = {
         let _timing = timing::start(Stage::Analysis);
-        let mut by_item: HashMap<ItemId, Vec<&RealmSample>> = HashMap::new();
-        for sample in &samples {
-            by_item.entry(sample.item).or_default().push(sample);
+        let mut by_item: HashMap<ItemId, Vec<&MarketRollup>> = HashMap::new();
+        for rollup in &rollups {
+            by_item.entry(rollup.item).or_default().push(rollup);
         }
         by_item
     };
@@ -350,7 +345,7 @@ async fn build<E: Ports>(
         }
         let mut cards: Vec<GearCard> = entries
             .into_iter()
-            .map(|entry| card(entry, &by_item, &named, selected, &tooltips, catalog))
+            .map(|entry| card(entry, &by_item, &named, selected, &tooltips))
             .filter(|card| matches(card, &needle))
             .collect();
         if cards.is_empty() {
@@ -551,61 +546,25 @@ pub(crate) fn realm_matches(realm: &Realm, want: &str) -> bool {
 
 fn card(
     entry: &CatalogItem,
-    by_item: &HashMap<ItemId, Vec<&RealmSample>>,
+    by_item: &HashMap<ItemId, Vec<&MarketRollup>>,
     named: &BTreeMap<(Region, RealmId), (String, String)>,
     selected: Option<&Realm>,
     tooltips: &BTreeMap<u32, crate::views::TooltipView>,
-    catalog: &Catalog,
 ) -> GearCard {
     let item = entry.ranks.first().map(|r| r.item_id).unwrap_or(ItemId(0));
-    let mine: Vec<&RealmSample> = by_item.get(&item).cloned().unwrap_or_default();
+    let mine: Vec<&MarketRollup> = by_item.get(&item).cloned().unwrap_or_default();
 
-    // One scope per column: the chosen realm, or every region side by side.
-    // Regions are never merged -- a EU price is not something a US player can
-    // act on.
-    let scopes: Vec<(String, Vec<&RealmSample>)> = match selected {
-        Some(realm) => vec![(realm.name.clone(), mine.clone())],
-        None => {
-            let mut regions: Vec<Region> = mine.iter().map(|s| s.region).collect();
-            regions.sort();
-            regions.dedup();
-            regions
-                .into_iter()
-                .map(|region| {
-                    (
-                        region.to_string().to_uppercase(),
-                        mine.iter()
-                            .copied()
-                            .filter(|s| s.region == region)
-                            .collect(),
-                    )
-                })
-                .collect()
-        }
+    // One column. The reader chose a region on the Auction House index and a
+    // realm here, and §7 does not let this page offer the other three regions
+    // as though they were an option -- a EU price is not something a US player
+    // can act on.
+    let label = match selected {
+        Some(realm) => realm.name.clone(),
+        None => mine
+            .first()
+            .map(|r| r.region.to_string().to_uppercase())
+            .unwrap_or_default(),
     };
-
-    // Figures per scope, keyed by track, then transposed into rows. The
-    // transpose is the point: a row holds the same track in every scope, so
-    // one having an extra line of detail cannot push the other out of step.
-    let per_scope: Vec<BTreeMap<Option<Track>, GearCell>> = scopes
-        .iter()
-        .map(|(_, samples)| match selected {
-            Some(_) => realm_cells(samples, catalog),
-            None => region_cells(samples, named, catalog),
-        })
-        .collect();
-
-    // Which item levels each track actually holds, for the range on its row.
-    let mut levels_seen: BTreeMap<Option<Track>, Vec<u16>> = BTreeMap::new();
-    for sample in &mine {
-        let level = rank_of(&sample.variant, catalog).map(|l| l.item_level);
-        if let Some(level) = level {
-            levels_seen
-                .entry(track_of(&sample.variant, catalog))
-                .or_default()
-                .push(level);
-        }
-    }
 
     // A recipe has one version of itself and no track; gear always shows all
     // four, so a card with nothing listed at Myth still lines up with the card
@@ -619,13 +578,13 @@ fn card(
     let tracks: Vec<GearTrackRow> = wanted
         .into_iter()
         .map(|track| {
-            let cells: Vec<GearCell> = per_scope
-                .iter()
-                .map(|cells| cells.get(&track).cloned().unwrap_or_default())
-                .collect();
+            let rollup = mine.iter().copied().find(|r| r.track == track);
+            let cell = rollup
+                .map(|r| cell(r, named, selected.is_some()))
+                .unwrap_or_default();
             GearTrackRow {
                 track: track.map(Track::as_str).unwrap_or(""),
-                levels: level_range(levels_seen.get(&track).map(Vec::as_slice).unwrap_or(&[])),
+                levels: rollup.map(|r| r.level_range.clone()).unwrap_or_default(),
                 leveled: track.is_some(),
                 href: match track {
                     Some(track) => format!("/wow/gear/{}/{}", item.get(), track.slug()),
@@ -634,10 +593,10 @@ fn card(
                     }
                     None => String::new(),
                 },
-                listed: cells.iter().any(|c| c.listed),
-                // A scope with nothing in this track still gets a cell, which
-                // is what keeps the row square.
-                cells,
+                listed: cell.listed,
+                // A track with nothing in it still gets a cell, which is what
+                // keeps the row square.
+                cells: vec![cell],
             }
         })
         .collect();
@@ -660,391 +619,245 @@ fn card(
                 .get(&tooltip_item_id)
                 .and_then(|t| t.material.clone()),
         },
-        unlisted: tracks.iter().all(|t| t.cells.iter().all(|c| !c.listed)),
-        scopes: scopes.into_iter().map(|(label, _)| label).collect(),
+        unlisted: tracks.iter().all(|t| !t.listed),
+        scopes: vec![label],
         tracks,
     }
 }
 
-/// One region's figures, per item level: the median across its realms, and
-/// the extremes with the realm that holds them.
-fn region_cells(
-    samples: &[&RealmSample],
+/// One stored roll-up as the cell a card draws.
+///
+/// The two scopes read different figures out of the same row, and the reason
+/// is in the row's own comment: across realms the useful spread is between
+/// realms -- the cheapest one, the median one, the dearest one, and which they
+/// are -- while on a single realm there is no other realm to compare with, so
+/// what is left is the spread between that realm's own listings.
+fn cell(
+    rollup: &MarketRollup,
     named: &BTreeMap<(Region, RealmId), (String, String)>,
-    catalog: &Catalog,
-) -> BTreeMap<Option<Track>, GearCell> {
-    let mut cells = BTreeMap::new();
-    for (upgrade, group) in by_track(samples, catalog) {
-        // A realm's price is its cheapest copy: that is what you would pay
-        // there. One realm may list the same item level several times.
-        let mut per_realm: BTreeMap<RealmId, (Copper, u32)> = BTreeMap::new();
-        for sample in &group {
-            let slot = per_realm
-                .entry(sample.realm)
-                .or_insert((sample.min_price, 0));
-            slot.0 = slot.0.min(sample.min_price);
-            slot.1 += sample.listings;
-        }
+    one_realm: bool,
+) -> GearCell {
+    let Some(cheapest) = rollup.cheapest_now else {
+        return GearCell::default();
+    };
+    let name = |realm: Option<RealmId>| {
+        realm
+            .and_then(|realm| named.get(&(rollup.region, realm)).cloned())
+            .unwrap_or_else(|| {
+                (
+                    realm.map(|r| r.to_string()).unwrap_or_default(),
+                    String::new(),
+                )
+            })
+    };
 
-        let mut priced: Vec<(RealmId, Copper)> = per_realm
-            .iter()
-            .map(|(id, (price, _))| (*id, *price))
-            .collect();
-        priced.sort_by_key(|(_, price)| price.get());
-        let Some((cheapest_realm, cheapest_price)) = priced.first().copied() else {
-            continue;
-        };
-        let (highest_realm, highest_price) = *priced.last().expect("non-empty");
+    let (price, high, high_realm) = if one_realm {
+        (cheapest, rollup.highest_now.unwrap_or(cheapest), None)
+    } else {
+        (
+            rollup.median_realm_now.unwrap_or(cheapest),
+            rollup.dearest_realm_now.unwrap_or(cheapest),
+            rollup.dearest_realm,
+        )
+    };
 
-        let region = group.first().map(|s| s.region);
-        let name = |realm: RealmId| {
-            region
-                .and_then(|region| named.get(&(region, realm)).cloned())
-                .unwrap_or_else(|| (realm.to_string(), String::new()))
-        };
-        cells.insert(
-            upgrade,
-            GearCell {
-                listed: true,
-                price: priced[priced.len() / 2].1.to_string(),
-                cheapest: {
-                    let (short, full) = name(cheapest_realm);
-                    GearWhere {
-                        realm: Some(short),
-                        realm_full: full,
-                        price: cheapest_price.to_string(),
-                    }
-                },
-                highest: {
-                    let (short, full) = name(highest_realm);
-                    GearWhere {
-                        realm: Some(short),
-                        realm_full: full,
-                        price: highest_price.to_string(),
-                    }
-                },
-                listings: per_realm.values().map(|(_, n)| n).sum(),
-                realms: priced.len(),
-                extras: extras(&group, catalog),
+    GearCell {
+        listed: true,
+        price: price.to_string(),
+        cheapest: GearWhere {
+            realm: (!one_realm).then(|| name(rollup.cheapest_realm).0),
+            realm_full: if one_realm {
+                String::new()
+            } else {
+                name(rollup.cheapest_realm).1
             },
-        );
-    }
-    cells
-}
-
-/// One realm's own figures, per item level.
-///
-/// Cheapest and highest stay, because the spread is the only comparison left
-/// once there is no other realm -- but there is no realm to name.
-fn realm_cells(samples: &[&RealmSample], catalog: &Catalog) -> BTreeMap<Option<Track>, GearCell> {
-    let mut cells = BTreeMap::new();
-    for (upgrade, group) in by_track(samples, catalog) {
-        let Some(cheapest) = group.iter().map(|s| s.min_price).min() else {
-            continue;
-        };
-        // Rows written before `max_price` existed carry zero, which is not a
-        // price: fall back to the cheapest rather than reporting nothing.
-        let highest = group
-            .iter()
-            .map(|s| s.max_price)
-            .max()
-            .filter(|p| p.get() > 0)
-            .unwrap_or(cheapest);
-        cells.insert(
-            upgrade,
-            GearCell {
-                listed: true,
-                price: cheapest.to_string(),
-                cheapest: GearWhere {
-                    realm: None,
-                    realm_full: String::new(),
-                    price: cheapest.to_string(),
-                },
-                highest: GearWhere {
-                    realm: None,
-                    realm_full: String::new(),
-                    price: highest.to_string(),
-                },
-                listings: group.iter().map(|s| s.listings).sum(),
-                realms: 1,
-                extras: extras(&group, catalog),
+            price: cheapest.to_string(),
+        },
+        highest: GearWhere {
+            realm: (!one_realm).then(|| name(high_realm).0),
+            realm_full: if one_realm {
+                String::new()
+            } else {
+                name(high_realm).1
             },
-        );
+            price: high.to_string(),
+        },
+        listings: rollup.listings_now,
+        realms: rollup.realms_listing as usize,
+        extras: rollup
+            .modifiers
+            .iter()
+            .filter(|m| m.now > 0)
+            .map(|m| GearExtra {
+                name: m.name.clone(),
+                listings: m.now,
+            })
+            .collect(),
     }
-    cells
-}
-
-/// Group an item's variants by item level: one market per upgrade bonus.
-///
-/// Ordered by item level, so the ladder reads the same on every realm. A
-/// variant carrying no upgrade bonus at all -- a recipe, or gear that never
-/// had one -- sorts first as the base version.
-/// Samples grouped by the track they belong to, weakest first.
-///
-/// One group per track, not per rank. The ranks inside a track are a range on
-/// the row and a breakdown on the statistics page; they are not eight markets.
-fn by_track<'a>(
-    samples: &[&'a RealmSample],
-    catalog: &Catalog,
-) -> Vec<(Option<Track>, Vec<&'a RealmSample>)> {
-    let mut grouped: BTreeMap<Option<Track>, Vec<&RealmSample>> = BTreeMap::new();
-    for sample in samples {
-        grouped
-            .entry(track_of(&sample.variant, catalog))
-            .or_default()
-            .push(sample);
-    }
-    // `Track` orders weakest to strongest and `None` sorts first, which is the
-    // order a card wants and the order a recipe's single row needs.
-    grouped.into_iter().collect()
-}
-
-/// The resolved rank a variant carries, for other route modules.
-pub(crate) fn rank_of_public<'a>(variant: &str, catalog: &'a Catalog) -> Option<&'a ItemLevel> {
-    rank_of(variant, catalog)
-}
-
-/// The upgrade track a variant belongs to, for other route modules.
-pub(crate) fn track_of_public(variant: &str, catalog: &Catalog) -> Option<Track> {
-    track_of(variant, catalog)
-}
-
-/// The item levels a set of samples covers, as one range label.
-pub(crate) fn level_range_of(samples: &[&RealmSample], catalog: &Catalog) -> String {
-    let levels: Vec<u16> = samples
-        .iter()
-        .filter_map(|s| rank_of(&s.variant, catalog).map(|l| l.item_level))
-        .collect();
-    level_range(&levels)
-}
-
-/// The resolved rank a variant carries, if the catalog knows it.
-fn rank_of<'a>(variant: &str, catalog: &'a Catalog) -> Option<&'a ItemLevel> {
-    catalog.rank_in(variant)
-}
-
-/// The upgrade track a variant belongs to.
-///
-/// The track bonus first, because it is the reliable one: the market carries
-/// rank 12827 that no sync has resolved, and its listings still land in
-/// Veteran because 13332 is beside it in the same variant. The rank's own
-/// wording is the fallback, for a catalog synced before tracks were recorded.
-fn track_of(variant: &str, catalog: &Catalog) -> Option<Track> {
-    catalog.track_in(variant)
-}
-
-/// The item levels a track holds, as one label: "285" or "279–285".
-///
-/// An en dash, not a hyphen: this is a range, and the hyphen is already doing
-/// other work in "Veteran 1/6". Empty when nothing is listed, which is what
-/// makes the row render as "no listings" rather than as a level of zero.
-fn level_range(levels: &[u16]) -> String {
-    let low = levels.iter().min();
-    let high = levels.iter().max();
-    match (low, high) {
-        (Some(low), Some(high)) if low == high => low.to_string(),
-        (Some(low), Some(high)) => format!("{low}\u{2013}{high}"),
-        _ => String::new(),
-    }
-}
-
-/// The names of the optional bonuses a variant carries, in catalog order.
-pub(super) fn modifier_names<'a>(
-    variant: &'a str,
-    catalog: &'a Catalog,
-) -> impl Iterator<Item = &'a str> + 'a {
-    Catalog::bonuses(variant).filter_map(|id| catalog.modifier(id))
-}
-
-/// The optional bonuses in a market, counted by name.
-///
-/// A socketed piece is the same piece; it just sells for more. Pooling them
-/// keeps a market thick enough to have a price, and the count says how much of
-/// it is the plain version. Two bonus ids can share a name -- there is more
-/// than one id for a Prismatic Socket -- so they are summed by name.
-fn extras(samples: &[&RealmSample], catalog: &Catalog) -> Vec<GearExtra> {
-    let mut counted: BTreeMap<&str, u32> = BTreeMap::new();
-    for sample in samples {
-        for id in Catalog::bonuses(&sample.variant) {
-            if let Some(name) = catalog.modifier(id) {
-                *counted.entry(name).or_default() += sample.listings;
-            }
-        }
-    }
-    counted
-        .into_iter()
-        .map(|(name, listings)| GearExtra {
-            name: name.to_string(),
-            listings,
-        })
-        .collect()
-}
-
-/// The same grouping `build` does, for tests that call `card` directly.
-#[cfg(test)]
-fn index_by_item(samples: &[RealmSample]) -> HashMap<ItemId, Vec<&RealmSample>> {
-    let mut by_item: HashMap<ItemId, Vec<&RealmSample>> = HashMap::new();
-    for sample in samples {
-        by_item.entry(sample.item).or_default().push(sample);
-    }
-    by_item
 }
 
 #[cfg(test)]
 mod tests {
-    use cluster_core::Millis;
+    use std::collections::BTreeMap;
+
+    use app_core::market::materialise::{MarketRollup, ModifierStat, Scope};
+    use app_core::market::window::Window;
 
     use super::*;
 
-    fn sample(realm: u32, variant: &str, price: u64, listings: u32) -> RealmSample {
-        RealmSample {
-            item: ItemId(271438),
+    fn rollup(track: Option<Track>) -> MarketRollup {
+        MarketRollup {
             region: Region::Eu,
-            realm: RealmId(realm),
-            variant: variant.to_string(),
-            observed_at: Millis(1_000),
-            min_price: Copper(price),
-            median_price: Copper(price),
-            max_price: Copper(price),
-            listings,
+            item: ItemId(271_438),
+            kind: ItemKind::Boe,
+            track,
+            scope: Scope::Region,
+            window: Window::Days(30),
+            observed_at: Some(cluster_core::Millis(1_000)),
+            snapshots: 4,
+            realms_listing: 3,
+            cheapest_now: Some(app_core::market::Copper(90_000_000)),
+            cheapest_realm: Some(RealmId(1403)),
+            dearest_realm_now: Some(app_core::market::Copper(200_000_000)),
+            dearest_realm: Some(RealmId(1084)),
+            median_realm_now: Some(app_core::market::Copper(150_000_000)),
+            highest_now: Some(app_core::market::Copper(500_000_000)),
+            cheapest_ever: Some(app_core::market::Copper(80_000_000)),
+            highest_ever: Some(app_core::market::Copper(600_000_000)),
+            listings_now: 7,
+            listings_seen: 20,
+            level_range: "305\u{2013}311".into(),
+            levels: Vec::new(),
+            modifiers: vec![
+                ModifierStat {
+                    name: "Leech".into(),
+                    now: 2,
+                    seen: 5,
+                },
+                // Seen in the window but not now: a card shows what is on sale.
+                ModifierStat {
+                    name: "Speed".into(),
+                    now: 0,
+                    seen: 3,
+                },
+            ],
+            series: Vec::new(),
         }
     }
 
-    fn catalog() -> Catalog {
-        app_core::market::CatalogSet::embedded()
-            .shipped_active()
-            .expect("an active catalog")
-            .clone()
+    fn named() -> BTreeMap<(Region, RealmId), (String, String)> {
+        BTreeMap::from([
+            (
+                (Region::Eu, RealmId(1403)),
+                ("Sargeras".to_string(), "Sargeras".to_string()),
+            ),
+            (
+                (Region::Eu, RealmId(1084)),
+                ("Kazzak".to_string(), "Kazzak".to_string()),
+            ),
+        ])
     }
 
-    /// The upgrade bonus is the market. It comes out of the stored bonus list
-    /// by asking the catalog which id it knows an item level for, so an id
-    /// nobody has resolved yet cannot silently become a market of its own.
+    /// Across realms, the useful spread is between realms: which one is
+    /// cheapest, what the middle one charges, which one is dearest. The
+    /// headline is the median, not the minimum -- one realm having a bad day
+    /// is not what the market costs.
     #[test]
-    fn the_upgrade_bonus_identifies_the_item_level() {
-        let catalog = catalog();
-        let variant = "6652,10844,12834,13333,13662,13696";
-        assert_eq!(catalog.upgrade_in(variant), Some(12834));
-        let level = catalog
-            .item_level(12834)
-            .expect("resolved by the sync script");
-        assert_eq!(level.item_level, 295);
-        assert_eq!(level.upgrade, "Champion 2/6");
-        assert_eq!(catalog.upgrade_in("40,10844,13662"), None);
-    }
+    fn the_cross_realm_cell_names_where_to_go() {
+        let cell = cell(&rollup(Some(Track::Champion)), &named(), false);
 
-    /// A track is one market, and the ranks inside it are a range.
-    ///
-    /// The reverse of what this page used to do: eight rows, one per rank,
-    /// which is eight markets nobody chooses between and a card too tall to
-    /// compare with the one beside it. What a buyer picks is Veteran or Hero;
-    /// which rung of Hero they end up with is a range and a breakdown on the
-    /// statistics page.
-    #[test]
-    fn a_track_is_one_market_and_its_ranks_are_a_range() {
-        let catalog = catalog();
-        let samples = [
-            sample(1403, "12825,13332", 90_000_000, 1),
-            sample(1403, "12826,13332", 209_000_000, 1),
-            sample(1403, "12833,13333", 120_000_000, 1),
-            sample(1403, "12834,13333", 150_000_000, 1),
-            sample(1403, "12835,13333", 200_000_000, 1),
-            sample(1403, "12841,13334", 1_200_000_000, 1),
-            sample(1403, "12842,13334", 1_350_000_000, 1),
-            sample(1403, "12843,13334", 3_300_000_000, 1),
-        ];
-        let refs: Vec<&RealmSample> = samples.iter().collect();
-        let cells = realm_cells(&refs, &catalog);
-
-        assert_eq!(cells.len(), 3, "three tracks, three markets");
-        let tracks: Vec<Option<Track>> = cells.keys().copied().collect();
+        assert!(cell.listed);
         assert_eq!(
-            tracks,
-            [
-                Some(Track::Veteran),
-                Some(Track::Champion),
-                Some(Track::Hero)
-            ],
-            "weakest first, which is the order a card lists them in"
+            cell.price,
+            app_core::market::Copper(150_000_000).to_string()
         );
-
-        // And each row says which levels it is made of.
-        let hero: Vec<&RealmSample> = refs
-            .iter()
-            .copied()
-            .filter(|s| track_of(&s.variant, &catalog) == Some(Track::Hero))
-            .collect();
-        assert_eq!(level_range_of(&hero, &catalog), "305\u{2013}311");
+        assert_eq!(cell.cheapest.realm.as_deref(), Some("Sargeras"));
+        assert_eq!(
+            cell.cheapest.price,
+            app_core::market::Copper(90_000_000).to_string()
+        );
+        assert_eq!(cell.highest.realm.as_deref(), Some("Kazzak"));
+        assert_eq!(
+            cell.highest.price,
+            app_core::market::Copper(200_000_000).to_string(),
+            "the dearest realm, not the dearest listing"
+        );
+        assert_eq!(cell.realms, 3);
     }
 
-    /// The track bonus is what groups, not the rank. The market carries rank
-    /// 12827 that no sync has resolved; its listings must still land in
-    /// Veteran, because 13332 is right there in the same variant.
+    /// On one realm there is no other realm to compare with, so what is left
+    /// is the spread between that realm's own listings -- and there is no
+    /// realm to name.
     #[test]
-    fn an_unresolved_rank_still_lands_in_its_track() {
-        let catalog = catalog();
-        assert!(
-            catalog.item_level(12827).is_none(),
-            "12827 is deliberately not in the shipped catalog"
+    fn a_single_realm_keeps_the_spread_and_drops_the_name() {
+        let cell = cell(&rollup(Some(Track::Champion)), &named(), true);
+
+        assert_eq!(
+            cell.cheapest.price,
+            app_core::market::Copper(90_000_000).to_string()
         );
         assert_eq!(
-            track_of("6652,10844,12827,13332,13662", &catalog),
-            Some(Track::Veteran)
+            cell.highest.price,
+            app_core::market::Copper(500_000_000).to_string(),
+            "the dearest listing, which is the only spread there is"
         );
+        assert!(cell.cheapest.realm.is_none(), "one realm needs no name");
+        assert!(cell.highest.realm.is_none());
     }
 
-    /// A range of one level is that level, not "279-279".
+    /// Sockets and tertiary stats are counted inside a market rather than
+    /// splitting one: a socketed piece is the same piece. A card counts what
+    /// is on sale now, not what was seen last month.
     #[test]
-    fn a_single_level_is_not_a_range() {
-        assert_eq!(level_range(&[279]), "279");
-        assert_eq!(level_range(&[279, 285, 282]), "279\u{2013}285");
-        assert_eq!(level_range(&[]), "");
-    }
-
-    /// Sockets and tertiary stats are counted by name inside a market rather
-    /// than splitting one: a socketed piece is the same piece.
-    #[test]
-    fn optional_bonuses_are_statistics_rather_than_markets() {
-        let catalog = catalog();
-        let samples = [
-            sample(1403, "6652,10844,12834,13333,13662,13696", 90_000_000, 5),
-            sample(1403, "41,10844,12834,13333,13662,13695", 150_000_000, 2),
-        ];
-        let refs: Vec<&RealmSample> = samples.iter().collect();
-        let cells = realm_cells(&refs, &catalog);
-
-        assert_eq!(cells.len(), 1, "one track is one market");
-        let counted: Vec<(&str, u32)> = cells[&Some(Track::Champion)]
+    fn optional_bonuses_are_counted_and_only_the_listed_ones() {
+        let cell = cell(&rollup(Some(Track::Champion)), &named(), false);
+        let counted: Vec<(&str, u32)> = cell
             .extras
             .iter()
             .map(|e| (e.name.as_str(), e.listings))
             .collect();
-        // 6652 and 13696 are absence markers -- "no tertiary", "no socket" --
-        // and the catalog gives them no name, so they are not counted.
-        assert_eq!(counted, [("Leech", 2), ("Prismatic Socket", 2)]);
+        assert_eq!(counted, [("Leech", 2)]);
     }
 
-    /// On one realm the spread is the only comparison there is, so cheapest
-    /// and highest stay -- without a realm name, because there is one place.
+    /// Gear always shows all four tracks, so a card with nothing listed at
+    /// Myth still lines up with the card beside it that has one.
     #[test]
-    fn a_single_realm_keeps_the_spread_and_drops_the_name() {
-        let catalog = catalog();
-        let mut dear = sample(1403, "12834,13333", 90_000_000, 4);
-        dear.max_price = Copper(500_000_000);
-        let samples = [dear];
-        let refs: Vec<&RealmSample> = samples.iter().collect();
-        let cells = realm_cells(&refs, &catalog);
+    fn every_track_gets_a_row_whether_or_not_anybody_is_selling() {
+        let entry = CatalogItem {
+            name: "Venom Rite Mantle".into(),
+            category: app_core::market::Category::Boe,
+            kind: ItemKind::Boe,
+            profession: None,
+            slot: Some(app_core::market::Slot::Shoulder),
+            audience: app_core::market::Audience::Common,
+            stat: app_core::market::Stat::None,
+            ranks: vec![app_core::market::ItemRank {
+                rank: 1,
+                item_id: ItemId(271_434),
+            }],
+            floor_copper: None,
+            icon: None,
+        };
 
-        let cell = &cells[&Some(Track::Champion)];
-        assert_eq!(cell.cheapest.price, Copper(90_000_000).to_string());
-        assert_eq!(cell.highest.price, Copper(500_000_000).to_string());
-        assert!(cell.cheapest.realm.is_none(), "one realm needs no name");
-        assert_eq!(cell.listings, 4, "only this realm's listings");
+        // One track listed out of four.
+        let mut only_hero = rollup(Some(Track::Hero));
+        only_hero.item = ItemId(271_434);
+        let by_item = HashMap::from([(ItemId(271_434), vec![&only_hero])]);
+        let card = card(&entry, &by_item, &named(), None, &BTreeMap::new());
+
+        assert_eq!(card.tracks.len(), 4);
+        assert_eq!(
+            card.tracks.iter().filter(|t| t.listed).count(),
+            1,
+            "the other three still get their row, saying so"
+        );
+        assert!(!card.unlisted);
+        assert_eq!(card.tracks[2].levels, "305\u{2013}311");
     }
 
     /// Tracked, but nobody is selling one. The card still has to appear and
-    /// say so: "no listings" is an answer, and a different one from "we do
-    /// not follow this item".
+    /// say so: "no listings" is an answer, and a different one from "we do not
+    /// follow this item".
     #[test]
     fn an_item_nobody_is_selling_is_marked_unlisted() {
         let entry = CatalogItem {
@@ -1057,33 +870,20 @@ mod tests {
             stat: app_core::market::Stat::None,
             ranks: vec![app_core::market::ItemRank {
                 rank: 1,
-                item_id: ItemId(271434),
+                item_id: ItemId(271_434),
             }],
             floor_copper: None,
             icon: None,
         };
-        // Samples exist, but for a different item.
-        let elsewhere = [sample(1403, "12833,13333", 90_000_000, 3)];
-        let by_item = index_by_item(&elsewhere);
-        let card = card(
-            &entry,
-            &by_item,
-            &BTreeMap::new(),
-            None,
-            &BTreeMap::new(),
-            &catalog(),
-        );
+        // Roll-ups exist, but for a different item.
+        let elsewhere = rollup(Some(Track::Champion));
+        let by_item = HashMap::from([(ItemId(271_438), vec![&elsewhere])]);
+        let card = card(&entry, &by_item, &named(), None, &BTreeMap::new());
+
         assert!(card.unlisted);
         assert!(
-            card.tracks
-                .iter()
-                .all(|t| t.cells.iter().all(|c| !c.listed)),
+            card.tracks.iter().all(|t| !t.listed),
             "no track has anything to show"
-        );
-        assert_eq!(
-            card.tracks.len(),
-            4,
-            "all four tracks, so this card lines up with the one beside it"
         );
     }
 }
