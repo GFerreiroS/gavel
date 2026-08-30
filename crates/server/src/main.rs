@@ -7,6 +7,7 @@ mod collector_task;
 mod config;
 mod env_file;
 mod market;
+mod query_timing;
 mod runtime;
 mod worker;
 
@@ -26,7 +27,9 @@ use clap::Parser;
 use cluster_core::Clock;
 use cluster_local::{LocalCluster, SystemClock};
 use storage::{SqliteConfig, SqliteStore};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
+use tracing_subscriber::{EnvFilter, Layer as _};
 
 use crate::config::Cli;
 use crate::runtime::{Inner, Runtime};
@@ -45,7 +48,7 @@ fn main() -> anyhow::Result<()> {
 #[tokio::main]
 async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result<()> {
     let mut cli = Cli::parse();
-    init_tracing(&cli.log)?;
+    init_tracing(&cli.log, cli.server_timing)?;
     cli.resolve_cluster_token()?;
 
     // Worker mode short-circuits everything below: no HTTP, no database, no
@@ -245,11 +248,26 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
     Ok(())
 }
 
-fn init_tracing(filter: &str) -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::try_new(filter).context("parsing the log filter")?)
+fn init_tracing(filter: &str, server_timing: bool) -> anyhow::Result<()> {
+    let filter = EnvFilter::try_new(filter).context("parsing the log filter")?;
+    // The `--log` filter belongs to the console layer rather than to the
+    // registry: a filter added to the registry is global, and a global one at
+    // `info` would keep SQLx's statement events from ever being built, so the
+    // layer below would count nothing.
+    let console = tracing_subscriber::fmt::layer()
         .with_target(true)
         .compact()
+        .with_filter(filter);
+
+    // `--server-timing` adds a second layer that reads SQLx's statement events
+    // and charges them to the request being served. It carries its own filter,
+    // so the console still shows only what `--log` asked for: measurement must
+    // not turn into a wall of statements.
+    let queries = server_timing.then(query_timing::layer);
+
+    tracing_subscriber::registry()
+        .with(console)
+        .with(queries)
         .init();
     Ok(())
 }

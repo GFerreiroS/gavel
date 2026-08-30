@@ -10,6 +10,8 @@ use std::collections::BTreeMap;
 
 use cluster_core::Millis;
 
+use crate::timing::{self, Stage};
+
 use super::{Copper, PriceSample};
 
 /// A price at a moment: what a chart plots.
@@ -97,6 +99,11 @@ const DAY_MS: u64 = 24 * 60 * 60 * 1000;
 ///
 /// `samples` may arrive in any order; `now` anchors the trend windows.
 pub fn analyse(samples: &[PriceSample], now: Millis) -> ItemAnalysis {
+    // The whole reduction is charged here. The roadmap's Phase 2 exit gate is
+    // that no handler reaches this function at all, so the honest way to watch
+    // that happen is a stage that has to fall to zero rather than a stage that
+    // has to get quicker.
+    let _timing = timing::start(Stage::Analysis);
     let mut points: Vec<Point> = samples
         .iter()
         .map(|s| Point {

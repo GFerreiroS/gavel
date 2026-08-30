@@ -29,6 +29,10 @@ argon2 = "0.5"
 askama = "0.14"
 axum = "0.8"
 getrandom = "0.3"
+# The `Body` trait, for one call: the uncompressed size of a response, which
+# the timing middleware reports. Already in the tree as one of axum's own
+# dependencies; naming it here is what makes the trait importable.
+http-body = "1"
 clap = { version = "4", features = ["derive", "env"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde_json = "1"

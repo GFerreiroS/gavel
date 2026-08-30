@@ -33,6 +33,14 @@ pub struct WebConfig {
     /// Far longer than `upstream_cache_ttl_ms`, because this data only moves
     /// when the game patches.
     pub item_cache_ttl_ms: u64,
+    /// Break each response's time down in a `Server-Timing` header.
+    ///
+    /// **Off by default**, like the failure-simulation routes and for the same
+    /// reason: per-stage timings, statement counts and row counts say how the
+    /// deployment is doing, which §7 keeps on the operations side of the app.
+    /// A visitor is owed the page, not the shape of the read path behind it.
+    /// The benchmark turns it on; a deployment asks for it when it wants it.
+    pub server_timing: bool,
 }
 
 impl Default for WebConfig {
@@ -45,6 +53,7 @@ impl Default for WebConfig {
             secure_cookies: false,
             upstream_cache_ttl_ms: 10 * 60 * 1000,
             item_cache_ttl_ms: 7 * 24 * 60 * 60 * 1000,
+            server_timing: false,
         }
     }
 }

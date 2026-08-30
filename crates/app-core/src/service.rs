@@ -198,8 +198,12 @@ impl<'a, P: ItemDetailProvider, K: CacheStore> ItemTooltipService<'a, P, K> {
             .iter()
             .map(|item| ItemTooltip::cache_key(*item, locale))
             .collect();
-        let Ok(rows) = self.cache.get_many(&keys, now).await else {
-            return Vec::new();
+        let rows = {
+            let _timing = crate::timing::start(crate::timing::Stage::Cache);
+            match self.cache.get_many(&keys, now).await {
+                Ok(rows) => rows,
+                Err(_) => return Vec::new(),
+            }
         };
 
         // Keyed back by the id inside the decoded tooltip rather than by

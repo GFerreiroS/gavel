@@ -11,6 +11,7 @@ use app_core::market::{
     ALL_AUDIENCES_LABELS, Catalog, CommodityProvider, ItemId, ItemKind, PriceSample, WindowStats,
 };
 use app_core::repo::{PriceRepository, Store};
+use app_core::timing::{self, Stage};
 use askama::Template;
 use axum::Extension;
 use axum::extract::{OriginalUri, Path, Query, State};
@@ -334,6 +335,9 @@ async fn build<E: Ports>(
 
     // --- one card per market, grouped the way the raid is grouped ----------
     let mut groups: Vec<CardGroup> = Vec::new();
+    // Charged to the analysis stage for the same reason the gear page's
+    // grouping is: it is the read model being assembled inside a request.
+    let cards_timing = timing::start(Stage::Analysis);
     for (audience, label) in ALL_AUDIENCES_LABELS {
         if shell {
             break;
@@ -357,6 +361,7 @@ async fn build<E: Ports>(
             cards,
         });
     }
+    drop(cards_timing);
 
     // --- patch-by-patch, plus the whole expansion --------------------------
     let windows = catalog.patch_windows();

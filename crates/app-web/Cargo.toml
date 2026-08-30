@@ -17,6 +17,7 @@ cluster-core = { workspace = true }
 askama = { workspace = true }
 getrandom = { workspace = true }
 axum = { workspace = true }
+http-body = { workspace = true }
 serde = { workspace = true, features = ["std"] }
 tokio = { workspace = true, features = ["sync"] }
 tokio-stream = { workspace = true }

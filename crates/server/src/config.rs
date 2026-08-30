@@ -107,6 +107,17 @@ pub struct Cli {
     #[arg(skip)]
     pub cluster_token: Option<String>,
 
+    /// Break every response's time down in a `Server-Timing` header: database,
+    /// cache, analysis and template time, plus the statement and row counts.
+    ///
+    /// **Off by default.** Those numbers describe how the deployment is doing,
+    /// which CLAUDE.md §7 keeps on the operations side; a visitor is owed the
+    /// page, not the shape of the read path behind it. Turn it on to measure:
+    /// `scripts/bench.py` does exactly that, and the browser's network panel
+    /// reads the header without any further tooling.
+    #[arg(long, env = "APP_SERVER_TIMING", default_value_t = false, action = clap::ArgAction::Set)]
+    pub server_timing: bool,
+
     /// Mark cookies `Secure`. Requires HTTPS; off for local plain-HTTP dev.
     #[arg(long, env = "APP_SECURE_COOKIES", default_value_t = false, action = clap::ArgAction::Set)]
     pub secure_cookies: bool,
@@ -235,6 +246,7 @@ impl Cli {
         WebConfig {
             poll_interval_ms: self.poll_ms,
             debug_controls: self.debug_controls,
+            server_timing: self.server_timing,
             secure_cookies: self.secure_cookies,
             upstream_cache_ttl_ms: self.cache_ttl_secs * 1_000,
             ..WebConfig::default()
@@ -297,7 +309,7 @@ impl Cli {
                 r#"{{"workers":{},"heartbeat_ms":{},"suspect_ms":{},"offline_ms":{},"#,
                 r#""max_task_attempts":{},"gateway_min":{},"frontend_min":{},"#,
                 r#""backend_min":{},"storage_min":{},"coordinator_min":{},"#,
-                r#""debug_controls":{}}}"#
+                r#""debug_controls":{},"server_timing":{}}}"#
             ),
             self.workers,
             self.heartbeat_ms,
@@ -310,6 +322,7 @@ impl Cli {
             self.storage_min,
             self.coordinator_min,
             self.debug_controls,
+            self.server_timing,
         )
     }
 }

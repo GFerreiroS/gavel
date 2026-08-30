@@ -16,6 +16,7 @@ pub mod model;
 pub mod ports;
 pub mod repo;
 pub mod service;
+pub mod timing;
 pub mod wow;
 
 pub use error::{AppError, AppResult, RepoError, RepoResult};
@@ -25,3 +26,4 @@ pub use market::{Catalog, CatalogSet, Copper, ItemId, PriceSample, Region};
 pub use metrics::{Metrics, MetricsSnapshot};
 pub use ports::{Ports, WebConfig};
 pub use repo::{EventRepository, JobRepository, Store};
+pub use timing::{Stage, Timings};

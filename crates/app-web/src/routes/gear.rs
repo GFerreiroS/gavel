@@ -26,6 +26,7 @@ use app_core::market::{
     RealmSample, Region, Track,
 };
 use app_core::repo::{RealmPriceRepository, Store};
+use app_core::timing::{self, Stage};
 use askama::Template;
 use axum::Extension;
 use axum::extract::{OriginalUri, Query, State};
@@ -323,10 +324,17 @@ async fn build<E: Ports>(
     // its own item. A region holds ~18k markets and a page draws ~600 cards;
     // the scan was eleven million comparisons to answer six hundred questions,
     // and it was most of what this page cost.
-    let mut by_item: HashMap<ItemId, Vec<&RealmSample>> = HashMap::new();
-    for sample in &samples {
-        by_item.entry(sample.item).or_default().push(sample);
-    }
+    let by_item: HashMap<ItemId, Vec<&RealmSample>> = {
+        // Read-model work, charged to the analysis stage: no statistic is
+        // named here, but reducing a region's markets during a request is
+        // exactly what Phase 2 moves to the write path.
+        let _timing = timing::start(Stage::Analysis);
+        let mut by_item: HashMap<ItemId, Vec<&RealmSample>> = HashMap::new();
+        for sample in &samples {
+            by_item.entry(sample.item).or_default().push(sample);
+        }
+        by_item
+    };
 
     let tooltips = match detail {
         Detail::Shell => Default::default(),
@@ -335,6 +343,7 @@ async fn build<E: Ports>(
 
     let needle = super::reagents::normalise(query);
     let mut groups = Vec::new();
+    let cards_timing = timing::start(Stage::Analysis);
     for (label, anchor, entries) in sections(catalog, kind) {
         if detail == Detail::Shell {
             break;
@@ -354,6 +363,7 @@ async fn build<E: Ports>(
             cards,
         });
     }
+    drop(cards_timing);
 
     let text = Text::of(kind);
     // The name the reader picked, not the connected realm's joined name: they

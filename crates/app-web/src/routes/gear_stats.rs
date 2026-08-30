@@ -18,6 +18,7 @@ use app_core::market::{
     Catalog, Copper, ItemId, ItemKind, Point, Realm, RealmSample, Region, Track,
 };
 use app_core::repo::{RealmPriceRepository, Store};
+use app_core::timing::{self, Stage};
 use askama::Template;
 use axum::Extension;
 use axum::extract::{OriginalUri, Path, State};
@@ -234,6 +235,14 @@ async fn build<E: Ports>(
     } = input;
 
     let tooltip = super::tooltip::cached_one(env, prefs, entry, item, now).await;
+
+    // Everything from here to the view model is this page's statistics,
+    // derived from the full history during the request. It does not go through
+    // `analysis::analyse` -- the per-realm page has always had its own
+    // reduction, which is one of the forks `docs/market-analysis.md` §3 lists
+    // -- so without this guard the analysis stage would report zero for the
+    // page that does the most of it.
+    let _timing = timing::start(Stage::Analysis);
     let observed = history.iter().map(|s| s.observed_at).max();
 
     // The newest snapshot is "now". Taken per realm, because realms are
