@@ -117,4 +117,101 @@
   {% endfor %}
 </article>
 {% endfor %}
+
+{# --- market events ------------------------------------------------------
+   The one place an unvalidated or internal event is visible at all. §7's
+   operations gate is what keeps it that way -- one layer over a sub-router,
+   rather than a check inside each handler. #}
+<article>
+  <h2>{{ "What happened"|t }}</h2>
+  <p class="hint">
+    {{ "Events an analysis page may mark. A note lands unchecked and private whoever typed it: a page that marked it before anybody looked would be making a claim on the reader's behalf. Publishing is a second, deliberate press."|t }}
+  </p>
+
+  <form method="post" action="/admin/events" class="event-form">
+    <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
+    <label>{{ "Kind"|t }}
+      <select name="kind">
+        {% for kind in admin.event_kinds %}
+        <option value="{{ kind.0 }}"{% if kind.0 == "annotation" %} selected{% endif %}>{{ kind.1|t }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>{{ "What happened"|t }}
+      <input type="text" name="title" required maxlength="120"
+             placeholder="{{ "Herbalism nerfed in a hotfix"|t }}">
+    </label>
+    <label>{{ "When (UTC)"|t }}
+      <input type="date" name="starts_at" required>
+    </label>
+    <label>{{ "Region"|t }}
+      <select name="region">
+        {# Empty means every region. An event scoped to one region is not
+           evidence about another, and the analysis page prints the scope
+           for exactly that reason. #}
+        <option value="">{{ "every region"|t }}</option>
+        {% for region in admin.regions %}
+        <option value="{{ region.code }}">{{ region.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>{{ "Notes"|t }}
+      <input type="text" name="notes" maxlength="240">
+    </label>
+    <button type="submit">{{ "Write it down"|t }}</button>
+  </form>
+
+  {% if admin.events.is_empty() %}
+  <p class="muted">{{ "No events recorded."|t }}</p>
+  {% else %}
+  <div class="scroll-x">
+    <table>
+      <thead>
+        <tr>
+          <th>{{ "Event"|t }}</th><th>{{ "When"|t }}</th><th>{{ "Applies to"|t }}</th>
+          <th>{{ "Source"|t }}</th><th>{{ "State"|t }}</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for event in admin.events %}
+        <tr>
+          <td>{{ event.title }} <small class="muted">{{ event.kind|t }}</small></td>
+          <td class="muted">{{ event.when }}</td>
+          <td class="muted">{{ event.scope }}</td>
+          <td class="muted">{{ event.provenance|t }}</td>
+          <td>
+            {# Live means public *and* validated, both. Either alone is not a
+               state a reader ever sees, so the table does not report them
+               as if they were. #}
+            {% if event.live %}
+            <span class="band band-cheap">{{ "Live"|t }}</span>
+            {% else %}
+            <span class="muted">{{ event.validation|t }} · {{ event.visibility|t }}</span>
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" action="/admin/events/review" class="event-actions">
+              <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
+              <input type="hidden" name="id" value="{{ event.id }}">
+              {% if event.live %}
+              <button type="submit" name="action" value="retract" class="outline secondary">{{ "Retract"|t }}</button>
+              {% else %}
+              <button type="submit" name="action" value="publish" class="outline">{{ "Publish"|t }}</button>
+              <button type="submit" name="action" value="reject" class="outline secondary">{{ "Reject"|t }}</button>
+              {% endif %}
+              {# Only an administrator's own note can go. A patch release is
+                 re-derived from the catalogue at every start, so a delete
+                 button on one would appear not to work. #}
+              {% if event.removable %}
+              <button type="submit" name="action" value="forget" class="outline secondary">{{ "Forget"|t }}</button>
+              {% endif %}
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</article>
 {% endblock %}

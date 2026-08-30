@@ -84,6 +84,21 @@ impl FragmentKey {
 #[derive(Debug, Default)]
 pub struct FragmentCache {
     inner: Mutex<Inner>,
+    /// Bumped whenever an administrator changes the market events.
+    ///
+    /// **The one thing in a fragment that is not a function of the published
+    /// analysis version.** Everything else a cached fragment says comes from a
+    /// version, a catalogue and the reader's preferences, so a change to any
+    /// of them is a different key and a miss. Events are reviewed out of band:
+    /// publishing one is an administrator pressing a button, and the analysis
+    /// version does not move. Without this, a newly published event was
+    /// invisible on every page a reader had already warmed -- found by
+    /// publishing one and watching it not appear.
+    ///
+    /// Still not an invalidation *mechanism*: it goes into the key, so a
+    /// change simply misses. Nothing is cleared and no entry can be served
+    /// under a newer epoch's name.
+    events_epoch: std::sync::atomic::AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -98,6 +113,23 @@ impl FragmentCache {
         FragmentCache::default()
     }
 
+    /// The current events epoch, for a key that shows events.
+    ///
+    /// Only the fragments that render events include this. A category card
+    /// shows none, and putting the epoch in its key would throw away every
+    /// card on the site because somebody wrote down a hotfix.
+    pub(crate) fn events_epoch(&self) -> u64 {
+        self.events_epoch.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Move the epoch on, because the events changed.
+    pub fn bump_events(&self) {
+        self.events_epoch
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl FragmentCache {
     /// The cached fragment for this key, building it if nobody has.
     ///
     /// Concurrent callers with the same key share one build: the first to

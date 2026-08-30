@@ -146,6 +146,36 @@ pub const EXTERNAL_STRINGS: &[&str] = &[
     "When in the week is it cheapest?",
     "How has each patch priced it?",
     "What does it cost to buy what I need?",
+    "How steady is it, and what moves with it?",
+    "What happened around this market?",
+    // The one wording a correlation is allowed (market::correlate). Kept out
+    // of the templates so that "associated with" cannot drift into a claim
+    // about cause in a second place nobody re-reads.
+    "No association in this window",
+    "Higher prices associated with lower stock",
+    "Higher prices associated with more stock",
+    // Event kinds (market::event::EventKind), which reach the template from a
+    // stored row.
+    "Patch release",
+    "Raid opening",
+    "Season start",
+    "Weekly reset",
+    "Hotfix",
+    "Profession change",
+    "Holiday",
+    "Note",
+    // ...and the words for where an event came from and what has been done
+    // about it (Provenance, Validation, Visibility). The administrator's
+    // table renders these directly.
+    "catalogue",
+    "calendar",
+    "administrator",
+    "unvalidated",
+    "validated",
+    "rejected",
+    "internal",
+    "public",
+    "percent",
     // ...and the units those panels answer in.
     "gold",
     "hours",

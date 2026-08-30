@@ -74,6 +74,24 @@ impl EventKind {
         }
     }
 
+    /// The word a person reads, as a source string for translation.
+    ///
+    /// Separate from [`Self::as_str`], which is the machine word a form posts
+    /// and a column stores. A label that doubled as a key would make renaming
+    /// the label a migration.
+    pub const fn label(self) -> &'static str {
+        match self {
+            EventKind::PatchRelease => "Patch release",
+            EventKind::RaidOpening => "Raid opening",
+            EventKind::SeasonStart => "Season start",
+            EventKind::WeeklyReset => "Weekly reset",
+            EventKind::Hotfix => "Hotfix",
+            EventKind::ProfessionChange => "Profession change",
+            EventKind::Holiday => "Holiday",
+            EventKind::Annotation => "Note",
+        }
+    }
+
     pub fn parse(raw: &str) -> Option<EventKind> {
         EventKind::ALL.into_iter().find(|k| k.as_str() == raw)
     }

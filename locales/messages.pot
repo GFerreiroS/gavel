@@ -5,7 +5,7 @@
 # renders as English rather than as a missing key.
 msgid ""
 msgstr ""
-"Project-Id-Version: wow-auction-tracker f35e41b-dirty\n"
+"Project-Id-Version: wow-auction-tracker 3872908-dirty\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -34,7 +34,7 @@ msgstr ""
 msgid "A commodity category is one request per region per cycle. A per-realm one is a request per realm, so it is the expensive kind."
 msgstr ""
 
-#: crates/app-web/templates/gear_stats.html:131
+#: crates/app-web/templates/gear_stats.html:171
 msgid "A price with two listings behind it is a different fact from the same price with forty."
 msgstr ""
 
@@ -50,6 +50,10 @@ msgstr ""
 
 #: crates/app-web/templates/admin.html:53
 msgid "Activate"
+msgstr ""
+
+#: crates/app-web/templates/partials/item.html:323
+msgid "After"
 msgstr ""
 
 #: crates/app-web/templates/macros.html:99
@@ -77,6 +81,11 @@ msgstr ""
 #: crates/app-web/templates/gear_stats.html:81
 #: crates/app-web/templates/partials/realms.html:3
 msgid "All realms"
+msgstr ""
+
+#: crates/app-web/templates/admin.html:171
+#: crates/app-web/templates/partials/item.html:322
+msgid "Applies to"
 msgstr ""
 
 #: crates/app-web/templates/auctions.html:62
@@ -118,6 +127,10 @@ msgstr ""
 msgid "Available near the top"
 msgstr ""
 
+#: crates/app-web/templates/gear_stats.html:125
+msgid "Available on"
+msgstr ""
+
 #: crates/app-web/templates/partials/patches.html:7
 msgid "Average unit price per patch, with the low and high underneath. The last column is the whole expansion, which is what “what did this cost during {}” means once it is over."
 msgstr ""
@@ -138,6 +151,14 @@ msgstr ""
 msgid "Battle.net linking is not implemented in V0. The architecture is in place (see {}); the real OAuth flow will be written against the current official documentation."
 msgstr ""
 
+#: crates/app-web/templates/partials/item.html:323
+msgid "Before"
+msgstr ""
+
+#: crates/app-web/templates/partials/item.html:292
+msgid "Best rise"
+msgstr ""
+
 #: crates/app-web/src/i18n.rs
 msgid "Bind-on-equip gear"
 msgstr ""
@@ -146,20 +167,12 @@ msgstr ""
 msgid "Blacksmithing"
 msgstr ""
 
-#: crates/app-web/templates/gear_stats.html:142
+#: crates/app-web/templates/gear_stats.html:182
 msgid "Bonus"
 msgstr ""
 
 #: crates/app-web/templates/partials/item.html:137
 msgid "Buying {}"
-msgstr ""
-
-#: crates/app-web/templates/partials/item.html:264
-msgid "By hour (UTC)"
-msgstr ""
-
-#: crates/app-web/templates/partials/item.html:273
-msgid "By weekday"
 msgstr ""
 
 #: crates/app-web/templates/partials/nodes.html:14
@@ -183,6 +196,7 @@ msgid "Champion"
 msgstr ""
 
 #: crates/app-web/templates/partials/item.html:242
+#: crates/app-web/templates/partials/item.html:323
 msgid "Change"
 msgstr ""
 
@@ -200,16 +214,16 @@ msgstr ""
 msgid "Cheapest"
 msgstr ""
 
-#: crates/app-web/templates/partials/item.html:266
+#: crates/app-web/templates/partials/item.html:265
 msgid "Cheapest around"
-msgstr ""
-
-#: crates/app-web/templates/partials/item.html:275
-msgid "Cheapest on"
 msgstr ""
 
 #: crates/app-web/templates/partials/item.html:132
 msgid "Cheapest one"
+msgstr ""
+
+#: crates/app-web/templates/gear_stats.html:139
+msgid "Cheapest realm"
 msgstr ""
 
 #: crates/app-web/templates/gear_stats.html:116
@@ -288,9 +302,17 @@ msgstr ""
 msgid "Created"
 msgstr ""
 
+#: crates/app-web/templates/partials/item.html:269
+msgid "Darker is cheaper. A dashed cell is an hour of the week nothing has been collected in — not a cheap hour."
+msgstr ""
+
 #: crates/app-web/src/i18n.rs
 #: crates/app-web/templates/dashboard.html:3
 msgid "Dashboard"
+msgstr ""
+
+#: crates/app-web/templates/gear_stats.html:147
+msgid "Dearest realm"
 msgstr ""
 
 #: crates/app-web/templates/partials/job_detail.html:39
@@ -306,6 +328,10 @@ msgstr ""
 msgid "Duration"
 msgstr ""
 
+#: crates/app-web/templates/gear_stats.html:157
+msgid "Each realm's own cheapest copy, summarised across realms. Measured against the typical realm rather than the dearest: the dearest is one seller having a bad day, and nobody is choosing to fly there."
+msgstr ""
+
 #: crates/app-web/src/i18n.rs
 msgid "Enchanting"
 msgstr ""
@@ -318,8 +344,17 @@ msgstr ""
 msgid "Engineering"
 msgstr ""
 
+#: crates/app-web/templates/admin.html:171
+#: crates/app-web/templates/partials/item.html:322
+msgid "Event"
+msgstr ""
+
 #: crates/app-web/templates/cluster.html:16
 msgid "Events"
+msgstr ""
+
+#: crates/app-web/templates/admin.html:128
+msgid "Events an analysis page may mark. A note lands unchecked and private whoever typed it: a page that marked it before anybody looked would be making a claim on the reader's behalf. Publishing is a second, deliberate press."
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
@@ -452,6 +487,10 @@ msgstr ""
 msgid "Food"
 msgstr ""
 
+#: crates/app-web/templates/admin.html:206
+msgid "Forget"
+msgstr ""
+
 #: crates/app-web/templates/partials/stats.html:15
 msgid "Gateway"
 msgstr ""
@@ -484,12 +523,24 @@ msgstr ""
 msgid "Herbalism"
 msgstr ""
 
+#: crates/app-web/templates/admin.html:142
+msgid "Herbalism nerfed in a hotfix"
+msgstr ""
+
 #: crates/app-web/src/i18n.rs
 msgid "Hero"
 msgstr ""
 
-#: crates/app-web/templates/partials/item.html:288
+#: crates/app-web/templates/partials/item.html:371
 msgid "High"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "Higher prices associated with lower stock"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "Higher prices associated with more stock"
 msgstr ""
 
 #: crates/app-web/templates/gear_stats.html:115
@@ -502,6 +553,14 @@ msgstr ""
 msgid "Highest seen"
 msgstr ""
 
+#: crates/app-web/src/i18n.rs
+msgid "Holiday"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "Hotfix"
+msgstr ""
+
 #: crates/app-web/templates/partials/item.html:206
 msgid "Hours observed"
 msgstr ""
@@ -510,16 +569,24 @@ msgstr ""
 msgid "Hours spent at each price, with today's marked. A wide spread and a narrow one can give the same percentile and mean very different things."
 msgstr ""
 
+#: crates/app-web/templates/gear_stats.html:136
+msgid "How far apart the realms are"
+msgstr ""
+
 #: crates/app-web/src/i18n.rs
 msgid "How has each patch priced it?"
 msgstr ""
 
-#: crates/app-web/templates/gear_stats.html:129
+#: crates/app-web/templates/gear_stats.html:169
 msgid "How many are for sale"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
 msgid "How much of this window did we actually see?"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "How steady is it, and what moves with it?"
 msgstr ""
 
 #: crates/app-web/templates/partials/item.html:97
@@ -606,6 +673,10 @@ msgstr ""
 msgid "Jobs running"
 msgstr ""
 
+#: crates/app-web/templates/admin.html:133
+msgid "Kind"
+msgstr ""
+
 #: crates/app-web/src/i18n.rs
 msgid "Last 14 days"
 msgstr ""
@@ -656,6 +727,7 @@ msgstr ""
 msgid "Listings"
 msgstr ""
 
+#: crates/app-web/templates/admin.html:187
 #: crates/app-web/templates/auctions.html:26
 msgid "Live"
 msgstr ""
@@ -686,7 +758,7 @@ msgstr ""
 msgid "Longest gap"
 msgstr ""
 
-#: crates/app-web/templates/partials/item.html:288
+#: crates/app-web/templates/partials/item.html:371
 msgid "Low"
 msgstr ""
 
@@ -703,7 +775,7 @@ msgid "Mean latency"
 msgstr ""
 
 #: crates/app-web/templates/macros.html:127
-#: crates/app-web/templates/partials/item.html:288
+#: crates/app-web/templates/partials/item.html:371
 #: crates/app-web/templates/partials/item.html:66
 msgid "Median"
 msgstr ""
@@ -732,12 +804,8 @@ msgstr ""
 msgid "Neck"
 msgstr ""
 
-#: crates/app-web/templates/partials/item.html:268
-msgid "Needs a few observations in every hour before this is meaningful."
-msgstr ""
-
-#: crates/app-web/templates/partials/item.html:277
-msgid "Needs a few observations on every weekday."
+#: crates/app-web/src/i18n.rs
+msgid "No association in this window"
 msgstr ""
 
 #: crates/app-web/templates/wow.html:29
@@ -750,6 +818,10 @@ msgstr ""
 
 #: crates/app-web/templates/partials/item.html:196
 msgid "No depth recorded for this market yet. Ladders are stored from each collection onwards; history gathered before that has none and cannot be given any."
+msgstr ""
+
+#: crates/app-web/templates/admin.html:165
+msgid "No events recorded."
 msgstr ""
 
 #: crates/app-web/templates/partials/events.html:2
@@ -808,7 +880,7 @@ msgstr ""
 msgid "Nodes online"
 msgstr ""
 
-#: crates/app-web/templates/gear_stats.html:137
+#: crates/app-web/templates/gear_stats.html:177
 msgid "None seen in this track."
 msgstr ""
 
@@ -817,12 +889,26 @@ msgid "Not collected. Click to start."
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
+#: crates/app-web/templates/partials/item.html:283
+#: crates/app-web/templates/partials/item.html:305
 #: crates/app-web/templates/partials/item.html:53
 msgid "Not enough history"
 msgstr ""
 
+#: crates/app-web/templates/partials/item.html:346
+msgid "Not enough observations either side to compare ({} before, {} after)"
+msgstr ""
+
 #: crates/app-web/templates/macros.html:136
 msgid "Not listed."
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "Note"
+msgstr ""
+
+#: crates/app-web/templates/admin.html:158
+msgid "Notes"
 msgstr ""
 
 #: crates/app-web/templates/partials/enhancements.html:15
@@ -844,11 +930,11 @@ msgid "Nothing you follow has been unusually cheap today."
 msgstr ""
 
 #: crates/app-web/templates/partials/item.html:227
-#: crates/app-web/templates/partials/item.html:288
+#: crates/app-web/templates/partials/item.html:371
 msgid "Observations"
 msgstr ""
 
-#: crates/app-web/templates/gear_stats.html:142
+#: crates/app-web/templates/gear_stats.html:182
 msgid "On sale now"
 msgstr ""
 
@@ -882,8 +968,12 @@ msgid "Password"
 msgstr ""
 
 #: crates/app-web/templates/admin.html:35
-#: crates/app-web/templates/partials/item.html:288
+#: crates/app-web/templates/partials/item.html:371
 msgid "Patch"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "Patch release"
 msgstr ""
 
 #: crates/app-web/templates/partials/metrics.html:15
@@ -897,6 +987,10 @@ msgstr ""
 #: crates/app-web/src/i18n.rs
 #: crates/app-web/templates/partials/alerts.html:22
 msgid "Price"
+msgstr ""
+
+#: crates/app-web/templates/partials/item.html:297
+msgid "Price and stock"
 msgstr ""
 
 #: crates/app-web/templates/partials/item.html:149
@@ -913,6 +1007,10 @@ msgstr ""
 
 #: crates/app-web/templates/auctions.html:69
 msgid "Prices are region-wide and independent of the language, which is set in the top bar."
+msgstr ""
+
+#: crates/app-web/templates/partials/item.html:362
+msgid "Prices are what was observed after each event, not what it caused. Only events an administrator has validated appear here."
 msgstr ""
 
 #: crates/app-web/templates/partials/gear.html:6
@@ -937,9 +1035,17 @@ msgstr ""
 msgid "Prismatic Socket"
 msgstr ""
 
+#: crates/app-web/src/i18n.rs
+msgid "Profession change"
+msgstr ""
+
 #: crates/app-web/templates/partials/job_detail.html:4
 #: crates/app-web/templates/partials/jobs.html:9
 msgid "Progress"
+msgstr ""
+
+#: crates/app-web/templates/admin.html:199
+msgid "Publish"
 msgstr ""
 
 #: crates/app-web/templates/macros.html:115
@@ -966,6 +1072,10 @@ msgstr ""
 
 #: crates/app-web/templates/consumables.html:9
 msgid "Raid consumables"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "Raid opening"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
@@ -1003,6 +1113,7 @@ msgstr ""
 msgid "Recipes"
 msgstr ""
 
+#: crates/app-web/templates/admin.html:147
 #: crates/app-web/templates/auctions.html:43
 #: crates/app-web/templates/auctions.html:82
 #: crates/app-web/templates/partials/alerts.html:21
@@ -1016,6 +1127,10 @@ msgstr ""
 
 #: crates/app-web/templates/account.html:40
 msgid "Register"
+msgstr ""
+
+#: crates/app-web/templates/admin.html:200
+msgid "Reject"
 msgstr ""
 
 #: crates/app-web/templates/admin.html:22
@@ -1034,6 +1149,10 @@ msgstr ""
 msgid "Result"
 msgstr ""
 
+#: crates/app-web/templates/admin.html:197
+msgid "Retract"
+msgstr ""
+
 #: crates/app-web/templates/enhancements.html:24
 #: crates/app-web/templates/gear.html:72
 #: crates/app-web/templates/reagents.html:27
@@ -1048,11 +1167,15 @@ msgstr ""
 msgid "Search a realm"
 msgstr ""
 
-#: crates/app-web/templates/gear_stats.html:143
+#: crates/app-web/src/i18n.rs
+msgid "Season start"
+msgstr ""
+
+#: crates/app-web/templates/gear_stats.html:183
 msgid "Seen over {} days"
 msgstr ""
 
-#: crates/app-web/templates/gear_stats.html:143
+#: crates/app-web/templates/gear_stats.html:183
 msgid "Share"
 msgstr ""
 
@@ -1119,12 +1242,16 @@ msgstr ""
 msgid "Snapshot"
 msgstr ""
 
-#: crates/app-web/templates/gear_stats.html:135
+#: crates/app-web/templates/gear_stats.html:175
 msgid "Sockets and tertiary stats"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
 msgid "Something went wrong on our side."
+msgstr ""
+
+#: crates/app-web/templates/admin.html:172
+msgid "Source"
 msgstr ""
 
 #: crates/app-web/templates/partials/character.html:16
@@ -1135,6 +1262,7 @@ msgstr ""
 msgid "Speed"
 msgstr ""
 
+#: crates/app-web/templates/admin.html:172
 #: crates/app-web/templates/partials/job_detail.html:14
 #: crates/app-web/templates/partials/job_detail.html:3
 #: crates/app-web/templates/partials/jobs.html:9
@@ -1153,6 +1281,10 @@ msgstr ""
 #: crates/app-web/templates/macros.html:128
 #: crates/app-web/templates/partials/alerts.html:23
 msgid "Stock"
+msgstr ""
+
+#: crates/app-web/templates/partials/item.html:310
+msgid "Stock is what is listed, not what sold — so this is a relationship between price and supply on the shelf. Association is not cause: both can move with a third thing, such as a patch."
 msgstr ""
 
 #: crates/app-web/templates/jobs.html:27
@@ -1197,7 +1329,7 @@ msgstr ""
 msgid "The card shows the track as a range because that is the choice; this is what the range is made of. A higher item level going for less than a lower one is worth knowing."
 msgstr ""
 
-#: crates/app-web/templates/gear_stats.html:125
+#: crates/app-web/templates/gear_stats.html:165
 msgid "The cheapest copy on sale, at each collection. Hover the chart for the exact value at a point in time."
 msgstr ""
 
@@ -1209,7 +1341,7 @@ msgstr ""
 msgid "These are the request-side signals a future autoscaler reads; queue depth, worker load and running jobs come from the cluster snapshot above."
 msgstr ""
 
-#: crates/app-web/templates/gear_stats.html:162
+#: crates/app-web/templates/gear_stats.html:202
 msgid "These do not split the market -- a socketed piece is the same piece. \"Seen\" counts listing observations across {} snapshots, so an auction that sat unsold for six collections counts six times; it measures how common a bonus is, not how many were sold."
 msgstr ""
 
@@ -1235,6 +1367,10 @@ msgstr ""
 
 #: crates/app-web/templates/auctions.html:67
 msgid "This instance only collects one region. Start it with --market-regions eu,us,kr,tw to offer more."
+msgstr ""
+
+#: crates/app-web/templates/partials/item.html:353
+msgid "This window does not reach across the event."
 msgstr ""
 
 #: crates/app-web/templates/admin.html:36
@@ -1264,6 +1400,14 @@ msgstr ""
 
 #: crates/app-web/src/i18n.rs
 msgid "Typical"
+msgstr ""
+
+#: crates/app-web/templates/partials/item.html:278
+msgid "Typical move"
+msgstr ""
+
+#: crates/app-web/templates/gear_stats.html:143
+msgid "Typical realm"
 msgstr ""
 
 #: crates/app-web/templates/alerts.html:45
@@ -1340,6 +1484,10 @@ msgstr ""
 msgid "Weapon stones"
 msgstr ""
 
+#: crates/app-web/src/i18n.rs
+msgid "Weekly reset"
+msgstr ""
+
 #: crates/app-web/templates/alerts.html:13
 msgid "What counts as cheap is measured against the item's own recent history, not a fixed price. Follow an item from its page to add it here."
 msgstr ""
@@ -1348,11 +1496,20 @@ msgstr ""
 msgid "What does it cost to buy what I need?"
 msgstr ""
 
+#: crates/app-web/templates/admin.html:126
+#: crates/app-web/templates/admin.html:140
+msgid "What happened"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "What happened around this market?"
+msgstr ""
+
 #: crates/app-web/src/i18n.rs
 msgid "What has this been worth, and how tightly?"
 msgstr ""
 
-#: crates/app-web/templates/gear_stats.html:123
+#: crates/app-web/templates/gear_stats.html:163
 msgid "What it has cost"
 msgstr ""
 
@@ -1364,9 +1521,15 @@ msgstr ""
 msgid "What this instance follows. Turning something off stops it being collected; nothing already recorded is ever deleted, so switching a market off and on again costs only the gap."
 msgstr ""
 
+#: crates/app-web/templates/admin.html:171
 #: crates/app-web/templates/partials/alerts.html:21
+#: crates/app-web/templates/partials/item.html:322
 #: crates/app-web/templates/partials/job_detail.html:39
 msgid "When"
+msgstr ""
+
+#: crates/app-web/templates/admin.html:144
+msgid "When (UTC)"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
@@ -1403,8 +1566,20 @@ msgstr ""
 msgid "World of Warcraft"
 msgstr ""
 
+#: crates/app-web/templates/partials/item.html:287
+msgid "Worst fall"
+msgstr ""
+
+#: crates/app-web/templates/gear_stats.html:151
+msgid "Worth travelling"
+msgstr ""
+
 #: crates/app-web/src/i18n.rs
 msgid "Wrist"
+msgstr ""
+
+#: crates/app-web/templates/admin.html:161
+msgid "Write it down"
 msgstr ""
 
 #: crates/app-web/templates/alerts.html:23
@@ -1427,6 +1602,10 @@ msgstr ""
 msgid "a region is required"
 msgstr ""
 
+#: crates/app-web/src/i18n.rs
+msgid "administrator"
+msgstr ""
+
 #: crates/app-web/templates/partials/item.html:63
 msgid "against this market's own spread"
 msgstr ""
@@ -1444,6 +1623,10 @@ msgid "assigned"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
+msgid "associated with"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
 msgid "backend"
 msgstr ""
 
@@ -1451,8 +1634,16 @@ msgstr ""
 msgid "between observations, not from the window's edge"
 msgstr ""
 
+#: crates/app-web/templates/partials/item.html:281
+msgid "between observations, over {} of them"
+msgstr ""
+
 #: crates/app-web/templates/partials/character.html:5
 msgid "cached"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "calendar"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
@@ -1461,6 +1652,14 @@ msgstr ""
 
 #: crates/app-web/src/i18n.rs
 msgid "caster"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "catalogue"
+msgstr ""
+
+#: crates/app-web/templates/gear_stats.html:153
+msgid "cheaper than a typical realm"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
@@ -1504,6 +1703,10 @@ msgstr ""
 msgid "each · {} in total · last unit at {}"
 msgstr ""
 
+#: crates/app-web/templates/admin.html:152
+msgid "every region"
+msgstr ""
+
 #: crates/app-web/src/i18n.rs
 msgid "execution_error"
 msgstr ""
@@ -1518,6 +1721,14 @@ msgstr ""
 
 #: crates/app-web/templates/partials/nodes.html:25
 msgid "free {}"
+msgstr ""
+
+#: crates/app-web/templates/partials/item.html:289
+msgid "from its own peak"
+msgstr ""
+
+#: crates/app-web/templates/partials/item.html:294
+msgid "from its own trough"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
@@ -1555,6 +1766,10 @@ msgstr ""
 
 #: crates/app-web/src/i18n.rs
 msgid "injected"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "internal"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
@@ -1665,6 +1880,10 @@ msgstr ""
 msgid "not permitted"
 msgstr ""
 
+#: crates/app-web/templates/partials/item.html:339
+msgid "observed after"
+msgstr ""
+
 #: crates/app-web/templates/partials/item.html:209
 msgid "of {} the window holds"
 msgstr ""
@@ -1693,6 +1912,10 @@ msgstr ""
 msgid "per realm"
 msgstr ""
 
+#: crates/app-web/src/i18n.rs
+msgid "percent"
+msgstr ""
+
 #: crates/app-web/templates/consumables.html:12
 msgid "prices are the 5th-percentile unit price, which ignores a single joke listing while still reflecting what you would actually pay. Consumables are commodities, so these are region-wide prices — every realm in the region sees the same market."
 msgstr ""
@@ -1706,7 +1929,15 @@ msgid "prime bound must be between 2 and {}"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
+msgid "public"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
 msgid "queued"
+msgstr ""
+
+#: crates/app-web/templates/partials/item.html:303
+msgid "rank correlation {} over {} pairs"
 msgstr ""
 
 #: crates/app-web/templates/item.html:30
@@ -1715,6 +1946,10 @@ msgstr ""
 
 #: crates/app-web/templates/item.html:31
 msgid "region {}"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "rejected"
 msgstr ""
 
 #: crates/app-web/templates/partials/nodes.html:52
@@ -1838,6 +2073,10 @@ msgid "unknown role '{}'"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
+msgid "unvalidated"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
 msgid "username already taken"
 msgstr ""
 
@@ -1847,6 +2086,10 @@ msgstr ""
 
 #: crates/app-web/src/i18n.rs
 msgid "username must be {}-{} characters"
+msgstr ""
+
+#: crates/app-web/src/i18n.rs
+msgid "validated"
 msgstr ""
 
 #: crates/app-web/src/i18n.rs
@@ -1965,6 +2208,10 @@ msgstr ""
 
 #: crates/app-web/templates/partials/reagents.html:6
 msgid "{} of {} reagents match."
+msgstr ""
+
+#: crates/app-web/templates/gear_stats.html:126
+msgid "{} of {} realms"
 msgstr ""
 
 #: crates/app-web/templates/partials/reagents.html:4

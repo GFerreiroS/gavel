@@ -21,13 +21,16 @@
 use app_core::Ports;
 use app_core::market::catalog::{Catalog, CatalogStatus};
 use app_core::market::{ItemKind, Realm, RealmId, Region};
-use app_core::repo::{RealmPriceRepository, ReleaseRepository, SettingsRepository, Store};
+use app_core::repo::{
+    MarketEventRepository, RealmPriceRepository, ReleaseRepository, SettingsRepository, Store,
+};
 use askama::Template;
 use axum::Extension;
 use axum::Form;
 use axum::extract::{OriginalUri, State};
 use axum::http::HeaderMap;
 use axum::response::{Html, Redirect};
+use cluster_core::Millis;
 use serde::Deserialize;
 
 use crate::csrf::Csrf;
@@ -65,7 +68,34 @@ pub async fn page_handler<E: Ports>(
     let disabled = env.store().settings().disabled().await?;
     let realms = env.store().realm_prices().realms().await?;
 
+    // Every event, the unchecked and the internal included. There is no public
+    // route to this list; §7's operations gate is the one layer that keeps it
+    // that way, rather than a filter in each handler.
+    let events = env.store().market_events().recent(60).await?;
+
     let admin = AdminView {
+        events: events
+            .iter()
+            .map(|event| crate::views::AdminEvent {
+                id: event.id.clone(),
+                kind: event.kind.as_str(),
+                title: event.title.clone(),
+                when: event.starts_at.to_utc_string(),
+                scope: super::item::scope_text(&event.scope, prefs.locale),
+                provenance: event.provenance.as_str(),
+                validation: event.validation.as_str(),
+                visibility: event.visibility.as_str(),
+                live: event.is_public(),
+                // A catalogue or calendar event comes back at the next start,
+                // so offering to delete it would be offering something that
+                // does not stay done.
+                removable: event.provenance == app_core::market::Provenance::Administrator,
+            })
+            .collect(),
+        event_kinds: app_core::market::EventKind::ALL
+            .into_iter()
+            .map(|kind| (kind.as_str(), kind.label()))
+            .collect(),
         releases: env
             .all_catalogs()
             .into_iter()
@@ -374,5 +404,262 @@ fn parse_switch(raw: &str) -> Option<Switch<'_>> {
             ))
         }
         _ => None,
+    }
+}
+
+// --- market events (Phase 8) -------------------------------------------------
+
+/// What the annotation form submits.
+#[derive(Debug, Deserialize)]
+pub struct AddEvent {
+    csrf_token: String,
+    kind: String,
+    title: String,
+    /// `YYYY-MM-DD`, or `YYYY-MM-DDTHH:MM`. A date without a time is taken as
+    /// midnight UTC -- everything in `market_events` is UTC, because a local
+    /// time in that table would be a different instant depending on who read
+    /// it.
+    starts_at: String,
+    #[serde(default)]
+    notes: String,
+    /// Empty for every region. An event scoped to one region is not evidence
+    /// about another, and the analysis page prints the scope for that reason.
+    #[serde(default)]
+    region: String,
+}
+
+/// `POST /admin/events` -- write down that something happened.
+///
+/// It lands **unvalidated and internal**, always, whoever typed it. That is
+/// not a workflow preference: an annotation is the one event kind whose truth
+/// rests on somebody's word, and a page that marked it on a chart before
+/// anybody checked would be making a claim on the reader's behalf. Publishing
+/// it is a second, deliberate action.
+pub async fn add_event<E: Ports>(
+    State(env): State<E>,
+    Extension(csrf): Extension<Csrf>,
+    Extension(cache): Extension<std::sync::Arc<crate::FragmentCache>>,
+    headers: HeaderMap,
+    Form(form): Form<AddEvent>,
+) -> WebResult<Redirect> {
+    let user = current_user(&env, &headers).await?;
+    let Some(user) = user.filter(|u| u.is_admin) else {
+        return Err(app_core::AppError::NotFound.into());
+    };
+    csrf.verify_request(&headers, Some(&form.csrf_token))?;
+
+    let title = form.title.trim();
+    let Some(kind) = app_core::market::EventKind::parse(&form.kind) else {
+        return Err(app_core::AppError::NotFound.into());
+    };
+    let Some(starts_at) = parse_instant(form.starts_at.trim()) else {
+        return Err(
+            app_core::AppError::Validation(app_core::error::Message::new(
+                app_core::error::text::EVENT_NEEDS_A_DATE,
+            ))
+            .into(),
+        );
+    };
+    if title.is_empty() {
+        return Err(
+            app_core::AppError::Validation(app_core::error::Message::new(
+                app_core::error::text::EVENT_NEEDS_A_TITLE,
+            ))
+            .into(),
+        );
+    }
+
+    let scope = app_core::market::EventScope {
+        regions: app_core::market::Region::parse(form.region.trim())
+            .into_iter()
+            .collect(),
+        ..Default::default()
+    };
+    // Derived from the instant and the title so that submitting the same
+    // annotation twice writes it once -- `record` is `DO NOTHING` on the id,
+    // and a random id would defeat that.
+    let id = format!(
+        "note:{}:{}",
+        starts_at.get(),
+        title
+            .chars()
+            .filter(|c| c.is_alphanumeric())
+            .take(32)
+            .collect::<String>()
+            .to_lowercase()
+    );
+
+    let event = app_core::market::MarketEvent {
+        id,
+        kind,
+        title: title.to_string(),
+        notes: Some(form.notes.trim().to_string()).filter(|n| !n.is_empty()),
+        starts_at,
+        ends_at: None,
+        scope,
+        provenance: app_core::market::Provenance::Administrator,
+        validation: app_core::market::Validation::Unvalidated,
+        visibility: app_core::market::Visibility::Internal,
+    };
+    let written = env.store().market_events().record(&[event]).await?;
+    // The analysis version has not moved, so nothing else would make the
+    // cached fragments miss. See `FragmentCache::events_epoch`.
+    cache.bump_events();
+    tracing::info!(by = %user.username, written, "market event recorded");
+
+    Ok(Redirect::to("/admin"))
+}
+
+/// What the review buttons submit.
+#[derive(Debug, Deserialize)]
+pub struct ReviewEvent {
+    csrf_token: String,
+    id: String,
+    /// `publish`, `reject`, `retract`, or `forget`.
+    action: String,
+}
+
+/// `POST /admin/events/review` -- check an event, or take it back.
+pub async fn review_event<E: Ports>(
+    State(env): State<E>,
+    Extension(csrf): Extension<Csrf>,
+    Extension(cache): Extension<std::sync::Arc<crate::FragmentCache>>,
+    headers: HeaderMap,
+    Form(form): Form<ReviewEvent>,
+) -> WebResult<Redirect> {
+    let user = current_user(&env, &headers).await?;
+    let Some(user) = user.filter(|u| u.is_admin) else {
+        return Err(app_core::AppError::NotFound.into());
+    };
+    csrf.verify_request(&headers, Some(&form.csrf_token))?;
+
+    use app_core::market::{Validation, Visibility};
+    let events = env.store().market_events();
+    let done = match form.action.as_str() {
+        // Validated *and* public together, because they are one decision:
+        // "this is true, and people may see it". Doing the halves separately
+        // would allow published-and-unchecked to exist in between.
+        "publish" => {
+            events
+                .review(&form.id, Validation::Validated, Visibility::Public)
+                .await?
+        }
+        // Checked and found wrong. Kept rather than deleted: that somebody
+        // looked and rejected it is worth more than the row's absence.
+        "reject" => {
+            events
+                .review(&form.id, Validation::Rejected, Visibility::Internal)
+                .await?
+        }
+        // Back to unchecked and internal -- an undo for a publication.
+        "retract" => {
+            events
+                .review(&form.id, Validation::Unvalidated, Visibility::Internal)
+                .await?
+        }
+        "forget" => events.forget(&form.id).await?,
+        _ => return Err(app_core::AppError::NotFound.into()),
+    };
+    cache.bump_events();
+    tracing::info!(by = %user.username, id = %form.id, action = %form.action, done,
+        "market event reviewed");
+
+    Ok(Redirect::to("/admin"))
+}
+
+/// `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, as UTC milliseconds.
+///
+/// Hand-rolled rather than a date crate for the reason the rest of this
+/// codebase gives: `cluster_core` already does civil-date arithmetic, and one
+/// form field is not a dependency.
+fn parse_instant(raw: &str) -> Option<Millis> {
+    let (date, time) = raw.split_once('T').unwrap_or((raw, "00:00"));
+    let mut parts = date.split('-');
+    let year: i64 = parts.next()?.parse().ok()?;
+    let month: i64 = parts.next()?.parse().ok()?;
+    let day: i64 = parts.next()?.parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let mut clock = time.split(':');
+    let hour: i64 = clock.next().unwrap_or("0").parse().unwrap_or(0);
+    let minute: i64 = clock.next().unwrap_or("0").parse().unwrap_or(0);
+    if !(0..24).contains(&hour) || !(0..60).contains(&minute) {
+        return None;
+    }
+
+    // Days since the epoch, by the civil-from-days algorithm (Howard Hinnant's),
+    // which is the same one `cluster_core::time` uses in the other direction.
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    if days < 0 {
+        return None;
+    }
+    Some(Millis(
+        (days as u64) * 86_400_000 + (hour as u64) * 3_600_000 + (minute as u64) * 60_000,
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The date arithmetic, against the inverse this codebase already has.
+    ///
+    /// Hand-rolled civil-date maths is exactly the kind of thing that is
+    /// plausibly wrong for years at a time, so it is checked against
+    /// `Millis::to_utc_string` rather than against another copy of my own
+    /// reasoning: parse a date, print it back, and see the same day.
+    #[test]
+    fn a_typed_date_round_trips_through_the_formatter() {
+        for (typed, expected) in [
+            ("1970-01-01", "1970-01-01 00:00:00"),
+            ("2000-02-29", "2000-02-29 00:00:00"),
+            ("2026-08-30", "2026-08-30 00:00:00"),
+            ("2026-12-31", "2026-12-31 00:00:00"),
+            ("2026-08-30T14:35", "2026-08-30 14:35:00"),
+            // A century that is not a leap year, which is the case a naive
+            // "divisible by four" would get wrong -- 2100-02-29 does not
+            // exist, so the first of March is day 59 of that year and not 60.
+            ("2100-03-01", "2100-03-01 00:00:00"),
+            // And one that is: 2000 was a leap year, hence the 29th above.
+            ("2000-03-01", "2000-03-01 00:00:00"),
+        ] {
+            let at = parse_instant(typed).unwrap_or_else(|| panic!("{typed} did not parse"));
+            assert_eq!(at.to_utc_string(), expected, "for {typed}");
+        }
+    }
+
+    /// Rubbish is refused rather than being taken as the epoch.
+    ///
+    /// A date that silently became 1970 would file an annotation fifty-six
+    /// years before anything this app has ever observed, where no page would
+    /// show it and nobody would find out.
+    #[test]
+    fn an_unparseable_date_is_refused() {
+        for bad in [
+            "",
+            "today",
+            "2026",
+            "2026-08",
+            "2026-13-01",
+            "2026-00-10",
+            "2026-08-32",
+            "2026-08-30T25:00",
+            "2026-08-30T12:61",
+            // Before the epoch. `Millis` is unsigned, so there is no instant
+            // to return -- and an annotation that silently became 1970 would
+            // sit fifty-six years before anything this app has observed, where
+            // no page would show it and nobody would find out.
+            "1969-12-31",
+            "1900-03-01",
+        ] {
+            assert_eq!(parse_instant(bad), None, "{bad:?} should not parse");
+        }
     }
 }

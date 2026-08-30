@@ -117,7 +117,47 @@
   <div class="stat"><span class="label">{{ "Highest seen"|t }}</span><span class="value">{{ stats.highest_ever }}</span></div>
   <div class="stat"><span class="label">{{ "Listings"|t }}</span><span class="value">{{ stats.listings_now }}</span></div>
   <div class="stat"><span class="label">{{ "Snapshot"|t }}</span><span class="value">{{ stats.observed }}</span></div>
+  {% if let Some(listing) = stats.realms_listing %}
+  {# Availability as a fraction. "Listed on 40 realms" means one thing out of
+     45 collected and another out of 184, and without the denominator the
+     numerator is a number the reader has to go and look up. #}
+  <div class="stat">
+    <span class="label">{{ "Available on"|t }}</span>
+    <span class="value">{{ "{} of {} realms"|t|fill(listing)|fill(stats.realms_collected) }}</span>
+  </div>
+  {% endif %}
 </div>
+
+{% if let Some(percent) = stats.spread_percent %}
+{# Dispersion: how far apart the realms are, which is what "is it worth flying
+   somewhere" reduces to. Absent on a single realm, where it would be a
+   summary of one number. #}
+<article>
+  <h2>{{ "How far apart the realms are"|t }}</h2>
+  <div class="stat-grid">
+    <div class="stat">
+      <span class="label">{{ "Cheapest realm"|t }}</span>
+      <span class="value">{% if let Some(price) = stats.spread_cheapest %}{{ price }}{% endif %}</span>
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Typical realm"|t }}</span>
+      <span class="value">{% if let Some(price) = stats.spread_median %}{{ price }}{% endif %}</span>
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Dearest realm"|t }}</span>
+      <span class="value">{% if let Some(price) = stats.spread_dearest %}{{ price }}{% endif %}</span>
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Worth travelling"|t }}</span>
+      <span class="value">{{ percent }}%</span>
+      <span class="when muted">{{ "cheaper than a typical realm"|t }}</span>
+    </div>
+  </div>
+  <p class="hint">
+    {{ "Each realm's own cheapest copy, summarised across realms. Measured against the typical realm rather than the dearest: the dearest is one seller having a bad day, and nobody is choosing to fly there."|t }}
+  </p>
+</article>
+{% endif %}
 
 <article>
   <h2>{{ "What it has cost"|t }}</h2>

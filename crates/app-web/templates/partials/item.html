@@ -257,29 +257,112 @@
 </article>
 
 {# --- when in the week ---------------------------------------------------- #}
-<article class="panel">
+<article class="viz-root panel">
   {% call panel_head(analysis.cycle_panel) %}
-  <div class="two-col">
-    <div class="viz-root">
-      <h3>{{ "By hour (UTC)"|t }}</h3>
-      {% if let Some(best) = analysis.best_hour %}
-      <p class="hint">{{ "Cheapest around"|t }} <strong>{{ best }}</strong>.</p>
+  {% if let Some(cell) = analysis.cheapest_cell %}
+  {# An hour *and* a day, which is what the grid can say and two separate
+     charts could not: a reset happens at one hour on one day. #}
+  <p class="hint">{{ "Cheapest around"|t }} <strong>{{ cell }}</strong>.</p>
+  {% endif %}
+  {{ analysis.heatmap_chart|safe }}
+  <p class="hint">
+    {{ "Darker is cheaper. A dashed cell is an hour of the week nothing has been collected in — not a cheap hour."|t }}
+  </p>
+</article>
+
+{# --- how steady is it, and what moves with it -------------------------- #}
+<article class="panel">
+  {% call panel_head(analysis.movement_panel) %}
+  <div class="verdict-row">
+    <div class="stat">
+      <span class="label">{{ "Typical move"|t }}</span>
+      {% if let Some(move_percent) = analysis.typical_move_percent %}
+      <span class="value">{{ move_percent }}%</span>
+      <span class="when muted">{{ "between observations, over {} of them"|t|fill(analysis.stability_changes) }}</span>
       {% else %}
-      <p class="hint">{{ "Needs a few observations in every hour before this is meaningful."|t }}</p>
+      <span class="value muted">{{ "Not enough history"|t }}</span>
       {% endif %}
-      {{ analysis.hour_chart|safe }}
     </div>
-    <div class="viz-root">
-      <h3>{{ "By weekday"|t }}</h3>
-      {% if let Some(best) = analysis.best_weekday %}
-      <p class="hint">{{ "Cheapest on"|t }} <strong>{{ best }}</strong>.</p>
+    <div class="stat">
+      <span class="label">{{ "Worst fall"|t }}</span>
+      <span class="value">−{{ analysis.drawdown_percent }}%</span>
+      <span class="when muted">{{ "from its own peak"|t }}</span>
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Best rise"|t }}</span>
+      <span class="value">+{{ analysis.rise_percent }}%</span>
+      <span class="when muted">{{ "from its own trough"|t }}</span>
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Price and stock"|t }}</span>
+      {% if let Some(wording) = analysis.association %}
+      {# Worded by the engine, never by this template. §16: the phrasing is
+         "associated with", and one place owning it is what stops a second
+         place drifting into a claim about cause. #}
+      <span class="value assoc assoc-{{ analysis.association_strength }}">{{ wording|t }}</span>
+      <span class="when muted">{{ "rank correlation {} over {} pairs"|t|fill(analysis.association_rho)|fill(analysis.association_pairs) }}</span>
       {% else %}
-      <p class="hint">{{ "Needs a few observations on every weekday."|t }}</p>
+      <span class="value muted">{{ "Not enough history"|t }}</span>
       {% endif %}
-      {{ analysis.weekday_chart|safe }}
     </div>
   </div>
+  <p class="hint">
+    {{ "Stock is what is listed, not what sold — so this is a relationship between price and supply on the shelf. Association is not cause: both can move with a third thing, such as a patch."|t }}
+  </p>
 </article>
+
+{# --- what happened around it ------------------------------------------- #}
+{% if !analysis.events.is_empty() %}
+<article class="panel">
+  {% call panel_head(analysis.events_panel) %}
+  <div class="scroll-x">
+    <table>
+      <thead>
+        <tr>
+          <th>{{ "Event"|t }}</th><th>{{ "When"|t }}</th><th>{{ "Applies to"|t }}</th>
+          <th>{{ "Before"|t }}</th><th>{{ "After"|t }}</th><th>{{ "Change"|t }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for event in analysis.events %}
+        <tr>
+          <td>{{ event.title }} <small class="muted">{{ event.kind|t }}</small></td>
+          <td class="muted">{{ event.when }}</td>
+          {# The scope is the honest limit on what this is evidence about: a
+             hotfix in EU is not evidence about a US market. #}
+          <td class="muted">{{ event.scope }}</td>
+          {% if event.supported %}
+          <td>{% if let Some(before) = event.before %}{{ before }}{% endif %}</td>
+          <td>{% if let Some(after) = event.after %}{{ after }}{% endif %}</td>
+          <td class="{% if event.change_percent < 0 %}good{% else if event.change_percent > 0 %}bad{% endif %}">
+            {% if event.change_percent > 0 %}+{% endif %}{{ event.change_percent }}%
+            <small class="muted">{{ "observed after"|t }}</small>
+          </td>
+          {% else if event.comparable %}
+          {# The event happened and both sides hold something; there is just
+             not enough of it. It says so rather than being drawn smaller -- a
+             reader does not weigh a figure by its font size. #}
+          <td colspan="3" class="muted">
+            {{ "Not enough observations either side to compare ({} before, {} after)"|t|fill(event.before_samples)|fill(event.after_samples) }}
+          </td>
+          {% else %}
+          {# Nothing at all on one side -- usually an event older than the
+             archive. Not "0 observations", which reads as a count somebody
+             took; there is simply no overlap to compare across. #}
+          <td colspan="3" class="muted">
+            {{ "This window does not reach across the event."|t }}
+          </td>
+          {% endif %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="hint">
+    {{ "Prices are what was observed after each event, not what it caused. Only events an administrator has validated appear here."|t }}
+  </p>
+</article>
+{% endif %}
 
 <article class="panel">
   {% call panel_head(analysis.patch_panel) %}

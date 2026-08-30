@@ -19,6 +19,7 @@ use cluster_core::Millis;
 
 use super::analysis::{self, Cycle, Point, Trend};
 use super::catalog::{Catalog, ItemKind};
+use super::correlate::{Association, Heatmap, Stability, Swings};
 use super::depth::{Depth, Ladder, Target};
 use super::engine::{Buckets, Distribution, Gates, Position, Spark, Swing};
 use super::key::MarketKey;
@@ -39,6 +40,16 @@ use super::{Copper, ItemId, PriceSample};
 ///   card sparkline. A row written by 1 has none of those columns filled, so
 ///   the startup backfill treats it as absent rather than as analysis.
 pub const ALGORITHM_VERSION: u32 = 2;
+
+/// Spacing used to give each realm its own bucket when the engine summarises
+/// a *cross-section* rather than a history.
+///
+/// `Buckets` deduplicates by hour, which is exactly right for a time series
+/// and exactly wrong here: forty realms observed at the same instant would
+/// collapse into one. Spacing them an hour apart by realm id makes each its
+/// own bucket, so the summary is over forty realms rather than over one.
+/// The instants are meaningless and never leave this function.
+const BUCKET_APART: u64 = 60 * 60 * 1000;
 
 /// Points kept in a stored chart series.
 ///
@@ -104,6 +115,22 @@ pub struct MarketState {
     /// Swept here rather than per request, and here rather than in storage,
     /// because the target is a catalogue fact and storage has no catalogue.
     pub depth: Option<Depth>,
+
+    // --- how it moves, and what with (Phase 8) ----------------------------
+    /// Median price by hour of the week. Replaces the two separate cycle
+    /// charts: "cheapest at 04:00" and "cheapest on Tuesday" do not compose
+    /// into "cheapest at 04:00 on Tuesday", and a weekly reset happens at one
+    /// hour on one day.
+    pub heatmap: Heatmap,
+    /// Price against *listed stock*, in rank. Not sales volume -- §15 -- and
+    /// never described as causation. `None` below the evidence gate.
+    pub stock_association: Option<Association>,
+    /// The worst fall and the best rise along the path, which the extremes
+    /// alone cannot tell apart.
+    pub swings: Swings,
+    /// How much this market typically moves between observations. `None`
+    /// below the gate.
+    pub stability: Option<Stability>,
 }
 
 impl MarketState {
@@ -140,6 +167,10 @@ impl MarketState {
             series: Vec::new(),
             ladder: Ladder::default(),
             depth: None,
+            heatmap: Heatmap::default(),
+            stock_association: None,
+            swings: Swings::default(),
+            stability: None,
         }
     }
 
@@ -303,6 +334,45 @@ pub fn commodity(
                 .unwrap_or(Target(1)),
         ),
         ladder: ladder.clone(),
+
+        // Over the whole history rather than a window: a weekly rhythm needs
+        // weeks, and an association from one afternoon is a shape in noise.
+        // The gates inside each of these are what refuse when there is not
+        // enough, so this is a reduction that can safely be asked for always.
+        heatmap: Heatmap::of(
+            history
+                .iter()
+                .map(|sample| (sample.observed_at, sample.p05_unit_price)),
+        ),
+        stock_association: {
+            // In time order and paired by position, which is what makes them
+            // pairs at all. `history` arrives in any order, so this sorts.
+            let mut ordered: Vec<&PriceSample> = history.iter().collect();
+            ordered.sort_by_key(|sample| sample.observed_at);
+            let prices: Vec<u64> = ordered.iter().map(|s| s.p05_unit_price.get()).collect();
+            let stock: Vec<u64> = ordered.iter().map(|s| s.quantity).collect();
+            Association::of(&prices, &stock)
+        },
+        swings: {
+            let mut ordered: Vec<&PriceSample> = history.iter().collect();
+            ordered.sort_by_key(|sample| sample.observed_at);
+            Swings::of(
+                &ordered
+                    .iter()
+                    .map(|s| s.p05_unit_price.get())
+                    .collect::<Vec<_>>(),
+            )
+        },
+        stability: {
+            let mut ordered: Vec<&PriceSample> = history.iter().collect();
+            ordered.sort_by_key(|sample| sample.observed_at);
+            Stability::of(
+                &ordered
+                    .iter()
+                    .map(|s| s.p05_unit_price.get())
+                    .collect::<Vec<_>>(),
+            )
+        },
     };
 
     let windows = windows
@@ -590,6 +660,23 @@ pub struct MarketRollup {
     /// there is charging.
     pub cheapest_now: Option<Copper>,
     pub cheapest_realm: Option<RealmId>,
+    /// Connected realms that have *any* observation of this item, which is the
+    /// denominator `realms_listing` is a fraction of.
+    ///
+    /// §16's Phase 8 asks for per-realm availability, and availability is a
+    /// fraction: "listed on 40 realms" means one thing out of 45 collected and
+    /// another out of 184. Without the denominator the numerator is a number
+    /// the reader has to go and look up.
+    pub realms_collected: u32,
+    /// The engine's five-number summary over what each realm's cheapest copy
+    /// costs, right now.
+    ///
+    /// Per-realm **dispersion**: how far apart the realms are, which is the
+    /// question "is it worth flying somewhere" reduces to. Computed by
+    /// `Distribution::of` -- §16 asks for this "without changing the common
+    /// engine", and this is what that means in practice: a new view over the
+    /// same reduction, not a second reduction.
+    pub realm_spread: Option<Distribution>,
     /// The dearest of the realms' cheapest copies.
     pub dearest_realm_now: Option<Copper>,
     pub dearest_realm: Option<RealmId>,
@@ -649,6 +736,8 @@ impl MarketRollup {
             realms_listing: 0,
             cheapest_now: None,
             cheapest_realm: None,
+            realms_collected: 0,
+            realm_spread: None,
             dearest_realm_now: None,
             dearest_realm: None,
             median_realm_now: None,
@@ -850,6 +939,23 @@ fn roll(
             .len() as u32,
         cheapest_now,
         cheapest_realm,
+        // Every realm with an observation of this item, whether or not it has
+        // one listed. The scope decides what "every" means: a realm-scoped
+        // roll-up is one realm out of one.
+        realms_collected: match scope {
+            Scope::Realm(_) => 1,
+            Scope::Region => newest
+                .keys()
+                .filter(|(r, i, _)| *r == region && *i == item)
+                .count() as u32,
+        },
+        // Over the realms' cheapest copies, by the same engine that summarises
+        // a commodity's history -- a different sample, not a different method.
+        realm_spread: Distribution::of(&Buckets::from_observations(
+            per_realm
+                .iter()
+                .map(|(realm, price)| (Millis(realm.get() as u64 * BUCKET_APART), *price)),
+        )),
         dearest_realm_now: across.last().copied(),
         dearest_realm,
         median_realm_now,

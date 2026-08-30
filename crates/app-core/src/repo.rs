@@ -10,6 +10,7 @@ use cluster_core::Millis;
 
 use crate::error::RepoResult;
 use crate::market::catalog::{CatalogStatus, ItemKind, Track};
+use crate::market::event::{Validation, Visibility};
 use crate::market::materialise::{
     MarketRollup, MarketState, MarketSummary, MarketWindow, Materialised, Scope,
 };
@@ -472,6 +473,35 @@ pub trait MarketEventRepository: Send + Sync + 'static {
         until: Millis,
         public_only: bool,
     ) -> impl Future<Output = RepoResult<Vec<MarketEvent>>> + Send;
+
+    /// Every event, newest first. The administrator's list.
+    ///
+    /// No `public_only`: this is the one read that is *meant* to see the
+    /// internal and the unvalidated, because reviewing them is what the
+    /// administrator is there to do. It has no public route, which is what
+    /// keeps that from being a leak (§7's operations gate).
+    fn recent(&self, limit: usize) -> impl Future<Output = RepoResult<Vec<MarketEvent>>> + Send;
+
+    /// Set an event's validation and visibility.
+    ///
+    /// The two together rather than one each, because they are one decision:
+    /// "this is true, and people may see it". Splitting them would allow the
+    /// state that must never exist -- published and unchecked -- to be reached
+    /// by doing the halves in the wrong order.
+    fn review(
+        &self,
+        id: &str,
+        validation: Validation,
+        visibility: Visibility,
+    ) -> impl Future<Output = RepoResult<bool>> + Send;
+
+    /// Remove an event an administrator added.
+    ///
+    /// Only an `administrator` one: a patch release is re-derived from the
+    /// catalogue at every start, so deleting one would delete it until the
+    /// next restart put it back -- a button that appears not to work. Returns
+    /// whether a row went.
+    fn forget(&self, id: &str) -> impl Future<Output = RepoResult<bool>> + Send;
 }
 
 /// A candidate or published recalculation.

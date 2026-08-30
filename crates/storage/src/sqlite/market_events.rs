@@ -144,4 +144,47 @@ impl MarketEventRepository for SqliteMarketEvents {
             .map_err(map_err)?;
         rows.iter().map(event_from_row).collect()
     }
+
+    async fn recent(&self, limit: usize) -> RepoResult<Vec<MarketEvent>> {
+        let rows = sqlx::query("SELECT * FROM market_events ORDER BY starts_at DESC, id LIMIT ?")
+            .bind(limit as i64)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(map_err)?;
+        rows.iter().map(event_from_row).collect()
+    }
+
+    async fn review(
+        &self,
+        id: &str,
+        validation: Validation,
+        visibility: Visibility,
+    ) -> RepoResult<bool> {
+        // Both columns in one statement, because they are one decision: a
+        // separate update per column would allow "published and unchecked" to
+        // exist between them, which is the state that must never be reachable.
+        let result =
+            sqlx::query("UPDATE market_events SET validation = ?, visibility = ? WHERE id = ?")
+                .bind(validation.as_str())
+                .bind(visibility.as_str())
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(map_err)?;
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn forget(&self, id: &str) -> RepoResult<bool> {
+        // The provenance filter is in the statement rather than in a check
+        // before it: a catalogue or calendar event is re-derived at every
+        // start, so deleting one would delete it until the next restart put it
+        // back -- a button that appears not to work.
+        let result =
+            sqlx::query("DELETE FROM market_events WHERE id = ? AND provenance = 'administrator'")
+                .bind(id)
+                .execute(&self.pool)
+                .await
+                .map_err(map_err)?;
+        Ok(result.rows_affected() > 0)
+    }
 }

@@ -15,6 +15,7 @@
 use app_core::error::{RepoError, RepoResult};
 use app_core::market::analysis::{Cycle, Point, Trend};
 use app_core::market::catalog::{ItemKind, Track};
+use app_core::market::correlate::{Association, Heatmap, Stability, Swings};
 use app_core::market::depth::{Depth, Ladder};
 use app_core::market::engine::{
     Anomaly, Distribution, Insufficient, Position, Spark, Swing, Valuation,
@@ -266,6 +267,22 @@ fn rollup_from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<MarketRollup> {
             anomaly: anomaly_from(&row.get::<String, _>("anomaly")),
         }),
         swing: Swing(row.get::<i64, _>("swing") as u32),
+        realms_collected: row.get::<i64, _>("realms_collected") as u32,
+        // Present together or not at all, like every other stored
+        // distribution: half a summary read back is a panel of confident wrong
+        // numbers rather than a panel with nothing to say.
+        realm_spread: row
+            .get::<Option<i64>, _>("spread_median")
+            .map(|median| Distribution {
+                p05: Copper(row.get::<Option<i64>, _>("spread_p05").unwrap_or(0) as u64),
+                p25: Copper(row.get::<Option<i64>, _>("spread_p25").unwrap_or(0) as u64),
+                median: Copper(median as u64),
+                p75: Copper(row.get::<Option<i64>, _>("spread_p75").unwrap_or(0) as u64),
+                p95: Copper(row.get::<Option<i64>, _>("spread_p95").unwrap_or(0) as u64),
+                iqr: Copper(row.get::<Option<i64>, _>("spread_iqr").unwrap_or(0) as u64),
+                mad: Copper(row.get::<Option<i64>, _>("spread_mad").unwrap_or(0) as u64),
+                buckets: row.get::<Option<i64>, _>("spread_realms").unwrap_or(0) as u32,
+            }),
     })
 }
 
@@ -340,6 +357,41 @@ fn state_from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<MarketState> {
             .try_get::<String, _>("depth")
             .ok()
             .and_then(|raw| Depth::decode(&raw)),
+        heatmap: row
+            .try_get::<String, _>("heatmap")
+            .map(|raw| Heatmap::decode(&raw))
+            .unwrap_or_default(),
+        // Present together or not at all: a correlation without its pair count
+        // is a figure with no evidence beside it, which is exactly what §16
+        // forbids.
+        stock_association: match (
+            row.try_get::<Option<i64>, _>("stock_rho").ok().flatten(),
+            row.try_get::<Option<i64>, _>("stock_pairs").ok().flatten(),
+        ) {
+            (Some(rho), Some(pairs)) => Some(Association {
+                rho_percent: rho as i32,
+                pairs: pairs as u32,
+            }),
+            _ => None,
+        },
+        swings: Swings {
+            drawdown_percent: row.try_get::<i64, _>("drawdown_percent").unwrap_or(0) as u32,
+            rise_percent: row.try_get::<i64, _>("rise_percent").unwrap_or(0) as u32,
+        },
+        stability: match (
+            row.try_get::<Option<i64>, _>("typical_move_percent")
+                .ok()
+                .flatten(),
+            row.try_get::<Option<i64>, _>("stability_changes")
+                .ok()
+                .flatten(),
+        ) {
+            (Some(move_percent), Some(changes)) => Some(Stability {
+                typical_move_percent: move_percent as u32,
+                changes: changes as u32,
+            }),
+            _ => None,
+        },
     })
 }
 
@@ -566,9 +618,12 @@ impl ReadModelRepository for SqliteReadModel {
                     observed_at, price, min_price, median_price, quantity, listings,
                     first_seen, samples, mean, median, low, low_at, high, high_at, swing,
                     day_percent, day_known, week_percent, week_known, month_percent, month_known,
-                    best_hour, best_weekday, by_hour, by_weekday, series, ladder, depth)
+                    best_hour, best_weekday, by_hour, by_weekday, series, ladder, depth,
+                    heatmap, stock_rho, stock_pairs, drawdown_percent, rise_percent,
+                    typical_move_percent, stability_changes)
                  VALUES (?, 'staging', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                         ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(market_key, state) DO UPDATE SET
                     version = excluded.version, observed_at = excluded.observed_at,
                     price = excluded.price, min_price = excluded.min_price,
@@ -583,7 +638,12 @@ impl ReadModelRepository for SqliteReadModel {
                     best_hour = excluded.best_hour, best_weekday = excluded.best_weekday,
                     by_hour = excluded.by_hour, by_weekday = excluded.by_weekday,
                     series = excluded.series, ladder = excluded.ladder,
-                    depth = excluded.depth",
+                    depth = excluded.depth, heatmap = excluded.heatmap,
+                    stock_rho = excluded.stock_rho, stock_pairs = excluded.stock_pairs,
+                    drawdown_percent = excluded.drawdown_percent,
+                    rise_percent = excluded.rise_percent,
+                    typical_move_percent = excluded.typical_move_percent,
+                    stability_changes = excluded.stability_changes",
             )
             .bind(key.to_string())
             .bind(version as i64)
@@ -627,6 +687,13 @@ impl ReadModelRepository for SqliteReadModel {
                     .map(|depth| depth.encode())
                     .unwrap_or_default(),
             )
+            .bind(state.heatmap.encode())
+            .bind(state.stock_association.map(|a| a.rho_percent as i64))
+            .bind(state.stock_association.map(|a| a.pairs as i64))
+            .bind(state.swings.drawdown_percent as i64)
+            .bind(state.swings.rise_percent as i64)
+            .bind(state.stability.map(|s| s.typical_move_percent as i64))
+            .bind(state.stability.map(|s| s.changes as i64))
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;
@@ -735,9 +802,12 @@ impl ReadModelRepository for SqliteReadModel {
                     level_range, levels, modifiers, series,
                     p05, p25, median, p75, p95, iqr, mad, buckets, swing,
                     rank, valuation, from_median_percent, anomaly,
-                    insufficient, insufficient_have, insufficient_need)
+                    insufficient, insufficient_have, insufficient_need,
+                    realms_collected, spread_p05, spread_p25, spread_median,
+                    spread_p75, spread_p95, spread_iqr, spread_mad, spread_realms)
                  VALUES (?, ?, ?, ?, 'staging', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                         ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(region, item_id, track, realm_id, state) DO UPDATE SET
                     version = excluded.version, kind = excluded.kind,
                     window = excluded.window, observed_at = excluded.observed_at,
@@ -759,7 +829,12 @@ impl ReadModelRepository for SqliteReadModel {
                     from_median_percent = excluded.from_median_percent,
                     anomaly = excluded.anomaly, insufficient = excluded.insufficient,
                     insufficient_have = excluded.insufficient_have,
-                    insufficient_need = excluded.insufficient_need",
+                    insufficient_need = excluded.insufficient_need,
+                    realms_collected = excluded.realms_collected,
+                    spread_p05 = excluded.spread_p05, spread_p25 = excluded.spread_p25,
+                    spread_median = excluded.spread_median, spread_p75 = excluded.spread_p75,
+                    spread_p95 = excluded.spread_p95, spread_iqr = excluded.spread_iqr,
+                    spread_mad = excluded.spread_mad, spread_realms = excluded.spread_realms",
             )
             .bind(rollup.region.as_str())
             .bind(rollup.item.get() as i64)
@@ -817,6 +892,15 @@ impl ReadModelRepository for SqliteReadModel {
             .bind(insufficient_parts(rollup.position.and_then(|p| p.insufficient)).0)
             .bind(insufficient_parts(rollup.position.and_then(|p| p.insufficient)).1)
             .bind(insufficient_parts(rollup.position.and_then(|p| p.insufficient)).2)
+            .bind(rollup.realms_collected as i64)
+            .bind(rollup.realm_spread.map(|d| d.p05.get() as i64))
+            .bind(rollup.realm_spread.map(|d| d.p25.get() as i64))
+            .bind(rollup.realm_spread.map(|d| d.median.get() as i64))
+            .bind(rollup.realm_spread.map(|d| d.p75.get() as i64))
+            .bind(rollup.realm_spread.map(|d| d.p95.get() as i64))
+            .bind(rollup.realm_spread.map(|d| d.iqr.get() as i64))
+            .bind(rollup.realm_spread.map(|d| d.mad.get() as i64))
+            .bind(rollup.realm_spread.map(|d| d.buckets as i64))
             .execute(&mut *tx)
             .await
             .map_err(map_err)?;

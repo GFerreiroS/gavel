@@ -396,6 +396,21 @@ pub struct GearStatsView {
     pub cheapest_ever: String,
     pub highest_ever: String,
     pub listings_now: u32,
+    /// **Availability**: realms with one listed, out of realms collected
+    /// (§16, Phase 8). A fraction, because "listed on 40 realms" means one
+    /// thing out of 45 and another out of 184 -- and without the denominator
+    /// the numerator is a number the reader has to go and look up. `None` on a
+    /// single realm, where the fraction is one out of one and says nothing.
+    pub realms_listing: Option<u32>,
+    pub realms_collected: u32,
+    /// **Dispersion**: how far apart the realms are on price right now.
+    /// `None` on a single realm, and on a market too thin to summarise.
+    pub spread_cheapest: Option<String>,
+    pub spread_median: Option<String>,
+    pub spread_dearest: Option<String>,
+    /// The gap between the cheapest realm and the median one, as a percentage
+    /// -- what flying somewhere is worth.
+    pub spread_percent: Option<u32>,
     /// Sockets and tertiaries: how many are listed now, and how many listing
     /// observations carried them across the window.
     pub modifiers: Vec<GearModifierStat>,
@@ -452,6 +467,32 @@ pub struct AdminView {
     pub regions: Vec<AdminRegion>,
     pub realms_enabled: usize,
     pub realms_total: usize,
+    /// Every event, including the internal and the unchecked. This is the one
+    /// place they are visible at all -- reviewing them is what the
+    /// administrator is here to do (§16, Phase 8).
+    pub events: Vec<AdminEvent>,
+    /// The kinds an annotation may be filed under, for the form.
+    pub event_kinds: Vec<(&'static str, &'static str)>,
+}
+
+/// One event, as the administrator sees it.
+#[derive(Debug, Clone)]
+pub struct AdminEvent {
+    pub id: String,
+    pub kind: &'static str,
+    pub title: String,
+    pub when: String,
+    pub scope: String,
+    pub provenance: &'static str,
+    pub validation: &'static str,
+    pub visibility: &'static str,
+    /// Whether a reader outside this page can see it: public *and* validated,
+    /// both, which is the check `MarketEvent::is_public` makes.
+    pub live: bool,
+    /// Only an administrator's own annotations can be removed. A patch release
+    /// is re-derived from the catalogue at every start, so a delete button on
+    /// one would appear not to work.
+    pub removable: bool,
 }
 
 /// One catalogue and where it is in its life.
@@ -1111,6 +1152,43 @@ pub struct ItemDetail {
     pub archived: bool,
 }
 
+/// One event, and what the market did around it.
+///
+/// **Never a cause.** §16: the wording is `observed after`, and this struct
+/// carries no field that could be rendered as anything else. A comparison that
+/// does not clear its evidence gate renders as unsupported rather than being
+/// drawn smaller, because a reader does not weigh a figure by its font size.
+#[derive(Debug, Clone)]
+pub struct EventRow {
+    pub kind: &'static str,
+    pub title: String,
+    pub when: String,
+    /// The scope this event claims -- which regions, which patch, which
+    /// category. Shown because §16's gate is that "every correlation exposes
+    /// its scope", and an event that applied to one region is not evidence
+    /// about another.
+    pub scope: String,
+    /// `None` where there is no comparison to make at all: nothing recorded on
+    /// one side of it.
+    pub before: Option<String>,
+    pub after: Option<String>,
+    pub change_percent: i32,
+    pub before_samples: u32,
+    pub after_samples: u32,
+    /// False when either side is too thin. The row still appears -- the event
+    /// happened -- but it says it cannot compare rather than comparing badly.
+    pub supported: bool,
+    /// Whether there was anything at all on *both* sides.
+    ///
+    /// Distinct from `supported`, and the distinction is the difference
+    /// between two honest sentences. An event that predates the whole archive
+    /// has nothing before it -- not "0 observations before", which reads as a
+    /// count somebody took, but no overlap at all. Collapsing the two reported
+    /// "(0 before, 0 after)" for an event with ten observations after it,
+    /// which is a figure that is simply wrong.
+    pub comparable: bool,
+}
+
 /// What buying the target quantity actually costs.
 ///
 /// Every figure here is about *one snapshot*: what is on the shelf now, not
@@ -1236,16 +1314,33 @@ pub struct ItemAnalysis {
     pub trends: Vec<TrendView>,
     pub swing_percent: u32,
 
-    pub best_hour: Option<String>,
-    pub best_weekday: Option<String>,
+    /// The cheapest hour of the week, named as an hour *and* a day -- which is
+    /// what the grid can say and two separate charts could not.
+    pub cheapest_cell: Option<String>,
     pub cycle_panel: PanelHead,
+
+    // --- how it moves, and what with (Phase 8) -----------------------------
+    pub movement_panel: PanelHead,
+    /// Already worded by `correlate::Association::wording`, which is the one
+    /// place that phrasing lives so it cannot drift into a claim of causation.
+    pub association: Option<&'static str>,
+    pub association_rho: i32,
+    pub association_pairs: u32,
+    pub association_strength: &'static str,
+    pub drawdown_percent: u32,
+    pub rise_percent: u32,
+    pub typical_move_percent: Option<u32>,
+    pub stability_changes: u32,
+
+    // --- what happened, and when (Phase 8) ---------------------------------
+    pub events_panel: PanelHead,
+    pub events: Vec<EventRow>,
 
     /// Pre-rendered inline SVG.
     pub price_chart: String,
     pub distribution_chart: String,
     pub stock_chart: String,
-    pub hour_chart: String,
-    pub weekday_chart: String,
+    pub heatmap_chart: String,
     /// Legend entries: the label, and the colour the chart draws that slot in.
     ///
     /// The colour travels with the label rather than being looked up in CSS,

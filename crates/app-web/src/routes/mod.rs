@@ -80,6 +80,11 @@ pub fn router<E: Ports>(env: E, shutdown: crate::Shutdown) -> Router {
         // a switch is reversible and an activation archives the tier it
         // replaced, which is not the same kind of button.
         .route("/admin/release", post(admin::activate::<E>))
+        // Writing down that something happened, and checking it afterwards.
+        // Two routes because they are two decisions: an annotation lands
+        // unvalidated whoever typed it, and publishing it is deliberate.
+        .route("/admin/events", post(admin::add_event::<E>))
+        .route("/admin/events/review", post(admin::review_event::<E>))
         .route("/nodes/{id}/roles", post(cluster::set_role::<E>))
         // The fragments behind those pages, which would otherwise answer the
         // same questions to anyone who asked them directly.

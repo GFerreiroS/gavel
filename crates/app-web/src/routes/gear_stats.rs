@@ -230,6 +230,10 @@ async fn build<E: Ports>(
             .unwrap_or_else(|| "\u{2014}".into())
     };
 
+    // The cross-realm spread, and only across realms: on a single realm it
+    // would be a five-number summary of one number.
+    let spread = selected.is_none().then_some(stats.realm_spread).flatten();
+
     GearStatsView {
         item_id: item.get(),
         name: tooltip
@@ -286,6 +290,23 @@ async fn build<E: Ports>(
         cheapest_ever: gold(stats.cheapest_ever),
         highest_ever: gold(stats.highest_ever),
         listings_now: stats.listings_now,
+        // Only across realms. On one realm the fraction is one out of one and
+        // the spread is a summary of a single number, so both are absent
+        // rather than rendered as a tautology.
+        realms_listing: (selected.is_none()).then_some(stats.realms_listing),
+        realms_collected: stats.realms_collected,
+        spread_cheapest: spread.map(|d| gold(Some(d.p05))),
+        spread_median: spread.map(|d| gold(Some(d.median))),
+        spread_dearest: spread.map(|d| gold(Some(d.p95))),
+        spread_percent: spread.and_then(|d| {
+            // From the cheapest realm up to the median one: what a reader
+            // saves by not simply buying at home. Measured from the median
+            // rather than from the dearest, because the dearest realm is one
+            // seller having a bad day and nobody is choosing to fly there.
+            let (cheap, median) = (d.p05.get(), d.median.get());
+            (median > 0 && cheap > 0 && median > cheap)
+                .then(|| ((median - cheap) * 100 / median) as u32)
+        }),
         modifiers: stats
             .modifiers
             .iter()

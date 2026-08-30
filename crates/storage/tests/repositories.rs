@@ -1331,6 +1331,25 @@ fn materialised(item: u32, price: u64, samples: u32) -> Materialised {
             }],
             ladder,
             depth,
+            // A heatmap with holes in it, a correlation with its pair count,
+            // and a stability figure: the round trip has to keep a `None`
+            // apart from a zero on each, because "not enough evidence" and
+            // "no movement" are opposite readings of the same column.
+            heatmap: app_core::market::Heatmap::of(
+                (0..(24 * 4u64)).map(|h| (Millis(h * 3_600_000), Copper(price + h))),
+            ),
+            stock_association: Some(app_core::market::Association {
+                rho_percent: -42,
+                pairs: 96,
+            }),
+            swings: app_core::market::Swings {
+                drawdown_percent: 17,
+                rise_percent: 33,
+            },
+            stability: Some(app_core::market::Stability {
+                typical_move_percent: 4,
+                changes: 95,
+            }),
         },
         windows: vec![MarketWindow {
             key,
@@ -1647,6 +1666,19 @@ fn rollup(item: u32, price: u64) -> MarketRollup {
             anomaly: app_core::market::engine::Anomaly::Mild,
         }),
         swing: app_core::market::engine::Swing(140),
+        realms_collected: 5,
+        // Three realms listing out of five collected, and the spread across
+        // them: the availability fraction and the dispersion Phase 8 adds.
+        realm_spread: Some(app_core::market::engine::Distribution {
+            p05: Copper(price),
+            p25: Copper(price + 5),
+            median: Copper(price + 20),
+            p75: Copper(price + 60),
+            p95: Copper(price * 2),
+            iqr: Copper(55),
+            mad: Copper(20),
+            buckets: 3,
+        }),
     }
 }
 
@@ -1870,4 +1902,110 @@ async fn a_realm_ladder_is_stored_per_variant() {
             .unwrap()
             .is_empty()
     );
+}
+
+/// The administrator's view sees what a visitor's must not.
+///
+/// Two halves of one guarantee: `recent` is the one read meant to see the
+/// unchecked and the internal, and `between(.., public_only = true)` must
+/// never return either.
+#[tokio::test]
+async fn an_unchecked_event_reaches_the_administrator_and_nobody_else() {
+    let store = store().await;
+    let events = store.market_events();
+
+    let note = MarketEvent {
+        id: "note:1".into(),
+        kind: EventKind::Annotation,
+        title: "Herbalism nerfed".into(),
+        notes: None,
+        starts_at: Millis(10_000),
+        ends_at: None,
+        scope: EventScope::default(),
+        provenance: Provenance::Administrator,
+        validation: Validation::Unvalidated,
+        visibility: Visibility::Internal,
+    };
+    events.record(std::slice::from_ref(&note)).await.unwrap();
+
+    assert_eq!(
+        events.recent(10).await.unwrap().len(),
+        1,
+        "the reviewer sees it"
+    );
+    assert!(
+        events
+            .between(Millis(0), Millis(20_000), true)
+            .await
+            .unwrap()
+            .is_empty(),
+        "and a visitor does not"
+    );
+
+    // Published: validated *and* public, in one call, because they are one
+    // decision and the halves in the wrong order would allow the state that
+    // must never exist.
+    assert!(
+        events
+            .review("note:1", Validation::Validated, Visibility::Public)
+            .await
+            .unwrap()
+    );
+    let public = events
+        .between(Millis(0), Millis(20_000), true)
+        .await
+        .unwrap();
+    assert_eq!(public.len(), 1);
+    assert!(public[0].is_public());
+
+    // Retracted, and gone from the public read again.
+    events
+        .review("note:1", Validation::Unvalidated, Visibility::Internal)
+        .await
+        .unwrap();
+    assert!(
+        events
+            .between(Millis(0), Millis(20_000), true)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// Only an administrator's own note can be forgotten.
+///
+/// A catalogue event is re-derived from `catalogs.json` at every start, so
+/// deleting one would delete it until the next restart put it back -- a button
+/// that appears not to work. The filter is in the statement rather than in a
+/// check before it, so there is no path around it.
+#[tokio::test]
+async fn a_catalogue_event_cannot_be_forgotten() {
+    let store = store().await;
+    let events = store.market_events();
+
+    let shipped = MarketEvent {
+        id: "patch:midnight:12.1".into(),
+        kind: EventKind::PatchRelease,
+        title: "12.1 The Curse".into(),
+        notes: None,
+        starts_at: Millis(1_000),
+        ends_at: None,
+        scope: EventScope::default(),
+        provenance: Provenance::Catalogue,
+        validation: Validation::Validated,
+        visibility: Visibility::Public,
+    };
+    let typed = MarketEvent {
+        id: "note:2".into(),
+        provenance: Provenance::Administrator,
+        ..shipped.clone()
+    };
+    events.record(&[shipped, typed]).await.unwrap();
+
+    assert!(
+        !events.forget("patch:midnight:12.1").await.unwrap(),
+        "the catalogue's own event stays"
+    );
+    assert!(events.forget("note:2").await.unwrap(), "the typed one goes");
+    assert_eq!(events.recent(10).await.unwrap().len(), 1);
 }

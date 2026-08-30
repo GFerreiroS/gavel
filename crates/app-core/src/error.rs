@@ -27,6 +27,10 @@ pub mod text {
     pub const USERNAME_CHARSET: &str = "username may contain letters, digits, '_' and '-' only";
     pub const PASSWORD_LENGTH: &str = "password must be {}-{} characters";
     pub const USERNAME_TAKEN: &str = "username already taken";
+
+    /// A market annotation an administrator is writing down (§16, Phase 8).
+    pub const EVENT_NEEDS_A_TITLE: &str = "an event needs a title";
+    pub const EVENT_NEEDS_A_DATE: &str = "an event needs a date, as YYYY-MM-DD";
     pub const TOO_MANY_SIGN_INS: &str = "too many sign-in attempts; try again in {} minutes";
     pub const TOO_MANY_SIGN_UPS: &str = "too many new accounts just now; try again in {} minutes";
 

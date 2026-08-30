@@ -11,10 +11,11 @@
 
 use std::fmt::Write;
 
+use app_core::market::correlate::Heatmap;
 use app_core::market::depth::Ladder;
 use app_core::market::engine::Spark;
 use app_core::market::series::{ChartPoint, ChartSeries, Histogram};
-use app_core::market::{Copper, Cycle, Point};
+use app_core::market::{Copper, Point};
 use cluster_core::Millis;
 
 /// The categorical palette, in slot order: blue, then orange.
@@ -201,6 +202,13 @@ const CHART_STYLE: &str = concat!(
     // line rather than a measurement over time.
     "svg.chart .band-now{stroke:var(--series-2);stroke-width:1.5;",
     "stroke-dasharray:4 3}",
+    // The weekly grid. One hue at varying opacity rather than a rainbow: the
+    // ordering stays legible without a legend, and it survives being
+    // colour-blind. A hole is an outline, so it cannot be mistaken for the
+    // pale end of the scale.
+    "svg.chart .heat-cell{fill:var(--series-1);stroke:none}",
+    "svg.chart .heat-gap{fill:none;stroke:var(--chart-line);stroke-width:.5;",
+    "stroke-dasharray:2 2}",
     "</style>",
 );
 
@@ -338,85 +346,11 @@ pub fn line_chart(series: &[Series<'_>], unit: Unit, empty_note: &str) -> String
     svg
 }
 
-/// Average price per repeating bucket -- hour of day, day of week.
+/// What a chart says when it has nothing to draw.
 ///
-/// One series, so no legend: the heading names it. Bars are anchored to zero,
-/// which for a bar chart is not negotiable -- the length *is* the value.
-pub fn bar_chart(cycles: &[Cycle], labels: &dyn Fn(u8) -> String, empty_note: &str) -> String {
-    let populated: Vec<&Cycle> = cycles.iter().filter(|c| c.samples > 0).collect();
-    if populated.len() < 2 {
-        return placeholder(empty_note);
-    }
-
-    let max = populated
-        .iter()
-        .map(|c| c.mean.get())
-        .max()
-        .unwrap_or(1)
-        .max(1);
-    let cheapest = populated.iter().map(|c| c.mean.get()).min().unwrap_or(0);
-    let (lo, hi, step) = nice_axis(0, max, 3);
-
-    let slot = (W - PAD_L - PAD_R) / cycles.len() as f64;
-    // A 2px surface gap between adjacent bars, not a border around them.
-    let bar_w = (slot - 2.0).max(1.0);
-
-    let mut svg = String::with_capacity(4 * 1024);
-    open_svg(&mut svg);
-    y_axis(&mut svg, lo, hi, step, Unit::Gold);
-
-    let plot_h = H - PAD_T - PAD_B;
-    for (i, cycle) in cycles.iter().enumerate() {
-        if cycle.samples == 0 {
-            continue;
-        }
-        let h = (cycle.mean.get() as f64 - lo) / (hi - lo) * plot_h;
-        let bx = PAD_L + i as f64 * slot + 1.0;
-        let by = H - PAD_B - h;
-        // The cheapest bucket answers "when do I buy", so it is marked rather
-        // than left for the reader to find.
-        let cls = if cycle.mean.get() == cheapest {
-            "bar best"
-        } else {
-            "bar"
-        };
-        // Rounded data-end only: the baseline end stays square, so the bar
-        // reads as anchored rather than floating.
-        let r = 3f64.min(bar_w / 2.0).min(h);
-        let path = format!(
-            "M{bx:.1} {:.1} L{bx:.1} {:.1} Q{bx:.1} {by:.1} {:.1} {by:.1} L{:.1} {by:.1} Q{:.1} {by:.1} {:.1} {:.1} L{:.1} {:.1} Z",
-            H - PAD_B,
-            by + r,
-            bx + r,
-            bx + bar_w - r,
-            bx + bar_w,
-            bx + bar_w,
-            by + r,
-            bx + bar_w,
-            H - PAD_B
-        );
-        let _ = write!(
-            svg,
-            r#"<path class="{cls}" d="{path}"><title>{}: {} ({} samples)</title></path>"#,
-            escape(&labels(cycle.bucket)),
-            cycle.mean,
-            cycle.samples
-        );
-        // Label every third slot on the 24-hour chart, all of them on 7.
-        if cycles.len() <= 8 || i % 3 == 0 {
-            let _ = write!(
-                svg,
-                r#"<text class="axis" x="{:.1}" y="{:.1}" text-anchor="middle">{}</text>"#,
-                bx + bar_w / 2.0,
-                H - 9.0,
-                escape(&labels(cycle.bucket))
-            );
-        }
-    }
-    svg.push_str("</svg>");
-    svg
-}
-
+/// A sentence rather than an empty box: §2's rule that unavailable data is
+/// rendered unavailable, and a chart is where an empty box is most easily read
+/// as a market at zero.
 fn placeholder(note: &str) -> String {
     format!(r#"<p class="chart-empty muted">{}</p>"#, escape(note))
 }
@@ -709,6 +643,100 @@ pub fn histogram_chart(histogram: &Histogram, current: Option<Copper>, empty_not
             H - 9.0,
             escape(&Unit::Gold.tick(price))
         );
+    }
+    svg.push_str("</svg>");
+    svg
+}
+
+// --- the weekly heatmap --------------------------------------------------
+
+/// Median price by hour of the week: seven rows of twenty-four.
+///
+/// Replaces the two separate cycle bar charts, and the reason is that they
+/// could not answer the question together. "Cheapest at 04:00" and "cheapest
+/// on Tuesday" do not compose into "cheapest at 04:00 on Tuesday" -- the whole
+/// point of a weekly rhythm is that the hour and the day interact, because a
+/// reset happens at one hour on one day.
+///
+/// **A hole is drawn as a hole**, not as the cheapest colour. That is the one
+/// failure mode this panel has: a reader looking at a mostly-empty grid reads
+/// the gaps as cheapness, which is why `Heatmap::is_usable` refuses to draw
+/// one at all below its gate.
+pub fn heatmap_chart(map: &Heatmap, weekdays: &[String], empty_note: &str) -> String {
+    if !map.is_usable() {
+        return placeholder(empty_note);
+    }
+    let Some((lo, hi)) = map.range() else {
+        return placeholder(empty_note);
+    };
+
+    // Its own geometry: seven rows is a short chart, and the row labels need
+    // more room on the left than a numeric axis does.
+    const LABEL_W: f64 = 34.0;
+    const ROW_H: f64 = 22.0;
+    let top = 16.0;
+    let height = top + 7.0 * ROW_H + 20.0;
+    let cell_w = (W - LABEL_W - PAD_R) / 24.0;
+    let span = hi.get().saturating_sub(lo.get()).max(1);
+
+    let mut svg = String::with_capacity(24 * 1024);
+    let _ = write!(
+        svg,
+        r#"<svg class="chart heat" viewBox="0 0 {W} {height:.0}" role="img">"#
+    );
+    svg.push_str(CHART_STYLE);
+
+    for hour in (0..24).step_by(4) {
+        let _ = write!(
+            svg,
+            r#"<text class="axis" x="{:.1}" y="12" text-anchor="middle">{hour:02}</text>"#,
+            LABEL_W + (hour as f64 + 0.5) * cell_w
+        );
+    }
+
+    for (day, label) in weekdays.iter().enumerate().take(7) {
+        let y = top + day as f64 * ROW_H;
+        let _ = write!(
+            svg,
+            r#"<text class="axis" x="{:.1}" y="{:.1}" text-anchor="end">{}</text>"#,
+            LABEL_W - 6.0,
+            y + ROW_H / 2.0 + 3.5,
+            escape(label)
+        );
+        for hour in 0..24 {
+            let x = LABEL_W + hour as f64 * cell_w;
+            match map.cells.get(day * 24 + hour).copied().flatten() {
+                Some(price) => {
+                    // Cheap is dark, dear is pale: one hue at varying opacity
+                    // rather than a rainbow, so the ordering is legible
+                    // without a legend and survives being colour-blind.
+                    let share = (price.get() - lo.get()) as f64 / span as f64;
+                    let opacity = 0.88 - share * 0.72;
+                    let _ = write!(
+                        svg,
+                        r#"<rect class="heat-cell" x="{x:.1}" y="{y:.1}" width="{:.1}" height="{:.1}" opacity="{opacity:.2}"><title>{}</title></rect>"#,
+                        cell_w - 1.0,
+                        ROW_H - 1.0,
+                        escape(&format!(
+                            "{label} {hour:02}:00 UTC\n{}",
+                            Unit::Gold.value(price.get())
+                        ))
+                    );
+                }
+                // A hole: outlined, empty, and hoverable so it can say what it
+                // is. Drawing nothing at all would leave the page background
+                // showing, which reads as one more shade of the scale.
+                None => {
+                    let _ = write!(
+                        svg,
+                        r#"<rect class="heat-gap" x="{x:.1}" y="{y:.1}" width="{:.1}" height="{:.1}"><title>{}</title></rect>"#,
+                        cell_w - 1.0,
+                        ROW_H - 1.0,
+                        escape(&format!("{label} {hour:02}:00 UTC\nnothing collected"))
+                    );
+                }
+            }
+        }
     }
     svg.push_str("</svg>");
     svg
@@ -1169,16 +1197,20 @@ mod tests {
         assert!(!svg.contains("<svg"));
     }
 
+    /// Row labels come from outside this module, so they are escaped.
+    ///
+    /// The heatmap's are translated weekday names, which are catalogue text
+    /// rather than user input -- but the rule is that everything written
+    /// through `|safe` is escaped on the way out, and a label that was safe
+    /// today is a label somebody sources differently tomorrow.
     #[test]
     fn markup_from_labels_is_escaped() {
-        let cycles: Vec<Cycle> = (0..3)
-            .map(|b| Cycle {
-                bucket: b,
-                mean: Copper(1_000 * (b as u64 + 1)),
-                samples: 5,
-            })
-            .collect();
-        let svg = bar_chart(&cycles, &|_| "<script>x</script>".into(), "empty");
+        let map = app_core::market::Heatmap::of(
+            (0..(24 * 8u64)).map(|h| (Millis(h * 3_600_000), Copper(1_000 + h))),
+        );
+        let labels: Vec<String> = (0..7).map(|_| "<script>x</script>".to_string()).collect();
+        let svg = heatmap_chart(&map, &labels, "empty");
+        assert!(svg.contains("<svg"), "the grid was drawn at all");
         assert!(!svg.contains("<script>"), "label was not escaped");
         assert!(svg.contains("&lt;script&gt;"));
     }
@@ -1200,22 +1232,47 @@ mod tests {
         assert!(escaped.contains("&amp;"), "{escaped}");
     }
 
+    /// A bar chart is anchored to zero, because the length *is* the value.
+    ///
+    /// The distribution histogram is the app's bar chart since the two cycle
+    /// charts became a heatmap; the property it inherited is this one, and it
+    /// is not negotiable for a bar.
     #[test]
     fn bars_are_anchored_to_the_baseline() {
-        let cycles: Vec<Cycle> = (0..4)
-            .map(|b| Cycle {
-                bucket: b,
-                mean: Copper(10_000 * (b as u64 + 1)),
-                samples: 5,
-            })
-            .collect();
-        let svg = bar_chart(&cycles, &|b| format!("{b}"), "empty");
-        // A bar chart must start at zero: the length is the value.
-        assert!(svg.contains(r#"<text class="axis" x="56.0""#));
+        let buckets = app_core::market::engine::Buckets::from_observations(
+            (0..80u64).map(|i| (Millis(i * 3_600_000), Copper(1_000 + i * 25))),
+        );
+        let histogram = Histogram::of(&buckets).expect("a populated market");
+        let svg = histogram_chart(&histogram, Some(Copper(1_050)), "empty");
+
+        // Every bar's foot is on the same line, which is the baseline.
+        let feet: Vec<f64> = regex_free_heights(&svg);
+        assert!(!feet.is_empty(), "bars were drawn");
+        for foot in &feet {
+            assert!(
+                (foot - feet[0]).abs() < 0.05,
+                "a bar does not start at the baseline: {feet:?}"
+            );
+        }
         assert!(
             svg.contains("class=\"bar best\""),
-            "cheapest is highlighted"
+            "the current price's bin is marked"
         );
-        assert_eq!(svg.matches("<path class=").count(), 4);
+    }
+
+    /// The y + height of every `rect.bar`, which is where its foot sits.
+    fn regex_free_heights(svg: &str) -> Vec<f64> {
+        let mut feet = Vec::new();
+        for chunk in svg.split("<rect class=\"bar").skip(1) {
+            let field = |name: &str| -> Option<f64> {
+                let start = chunk.find(&format!("{name}=\""))? + name.len() + 2;
+                let end = start + chunk[start..].find('"')?;
+                chunk[start..end].parse().ok()
+            };
+            if let (Some(y), Some(h)) = (field("y"), field("height")) {
+                feet.push(y + h);
+            }
+        }
+        feet
     }
 }

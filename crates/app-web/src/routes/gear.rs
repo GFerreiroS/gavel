@@ -853,6 +853,8 @@ mod tests {
             distribution: None,
             position: None,
             swing: app_core::market::engine::Swing(0),
+            realms_collected: 0,
+            realm_spread: None,
         }
     }
 
