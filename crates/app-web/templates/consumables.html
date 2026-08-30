@@ -32,4 +32,25 @@
     <p><a href="/partials/consumables">{{ "Show the prices"|t }}</a></p>
   </noscript>
 </div>
+
+{# The expansion's price history: 659 rows of every item at every rank, and
+   most visits never scroll this far. It was inside the fragment above until it
+   was measured at 85% of it.
+
+   Outside that fragment on purpose, and not only for the size. The cards
+   re-fetch on a poll or a cluster event; this does not, because it is the
+   expansion's history rather than today's prices, and a reader who had
+   scrolled to it would otherwise have it pulled out from under them and
+   re-fetched every few seconds. #}
+<div id="patches"
+     hx-get="/partials/patches"
+     hx-trigger="revealed"
+     hx-swap="outerHTML">
+  <h2>{{ "Across {}"|t|fill(market.expansion) }}</h2>
+  <p class="hint" aria-busy="true">{{ "Loading the patch history…"|t }}</p>
+  {# A real URL that answers on its own, for a reader with scripting off. #}
+  <noscript>
+    <p><a href="/partials/patches">{{ "Show the patch history"|t }}</a></p>
+  </noscript>
+</div>
 {% endblock %}

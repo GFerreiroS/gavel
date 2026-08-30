@@ -133,6 +133,7 @@ pub fn router<E: Ports>(env: E, shutdown: crate::Shutdown) -> Router {
         .route("/partials/alerts", get(alerts::fragment::<E>))
         .route("/partials/realms", get(realms::fragment::<E>))
         .route("/partials/consumables", get(market::fragment::<E>))
+        .route("/partials/patches", get(market::patches::<E>))
         .route("/partials/reagents", get(reagents::fragment::<E>))
         .route(
             "/partials/enchants",

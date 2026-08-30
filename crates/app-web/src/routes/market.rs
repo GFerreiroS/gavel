@@ -29,7 +29,7 @@ use crate::render::page;
 use crate::session::current_user;
 use crate::views::{
     AuctionCategory, AuctionsView, BaselineOption, CardGroup, CatalogLink, Layout, MarketPicker,
-    MarketView, PatchCell, PatchColumn, PatchRow,
+    MarketView, PatchCell, PatchColumn, PatchRow, PatchesView,
 };
 
 /// The window the "vs usual" figure compares against is a visitor preference,
@@ -190,6 +190,12 @@ pub struct ConsumablesFragment {
     pub market: MarketView,
 }
 
+#[derive(Template)]
+#[template(path = "partials/patches.html")]
+pub struct PatchesFragment {
+    pub patches: PatchesView,
+}
+
 /// What the picker form submits. Both fields are optional so the bare URL
 /// still means "the expansion currently being collected, in my usual region".
 #[derive(Debug, Default, serde::Deserialize)]
@@ -249,6 +255,24 @@ async fn render_page<E: Ports>(
                 csrf.masked(),
             ),
             market,
+        },
+        prefs.locale,
+    )
+}
+
+/// `GET /partials/patches`
+///
+/// Fetched when the reader scrolls to it, and answers on its own for a reader
+/// with scripting off.
+pub async fn patches<E: Ports>(
+    State(env): State<E>,
+    Extension(prefs): Extension<MarketPrefs>,
+    Query(query): Query<ConsumablesQuery>,
+) -> WebResult<Html<String>> {
+    let id = query.expansion.filter(|id| !id.is_empty());
+    page(
+        &PatchesFragment {
+            patches: build_patches(&env, prefs, id.as_deref()).await?,
         },
         prefs.locale,
     )
@@ -346,26 +370,49 @@ async fn build<E: Ports>(
     }
     drop(cards_timing);
 
-    // --- patch-by-patch, plus the whole expansion --------------------------
-    let windows = catalog.patch_windows();
-    let mut columns = Vec::with_capacity(windows.len());
-    let mut per_patch: Vec<BTreeMap<ItemId, MarketWindow>> = Vec::with_capacity(windows.len());
+    Ok(MarketView {
+        expansion: catalog.expansion.clone(),
+        season: catalog.season_label(),
+        archived: !env.catalog_state(catalog).is_collected(),
+        configured: env.commodities().is_configured(),
+        groups,
+        // One snapshot priced every card on the page, so the age is the
+        // page's rather than each card's.
+        observed: observed(
+            prefs,
+            now,
+            env.store().read_model().commodity_summary(region).await?.1,
+        ),
+        baseline_days: prefs.baseline_days,
+    })
+}
+
+/// The expansion's price history, patch by patch.
+///
+/// Its own build and its own request, because it is 659 rows of every item at
+/// every rank -- 85% of what the consumables fragment used to weigh -- and
+/// most visits never scroll to it. One query per patch column plus one for the
+/// expansion; all of them stored windows, none of them a reduction.
+async fn build_patches<E: Ports>(
+    env: &E,
+    prefs: MarketPrefs,
+    id: Option<&str>,
+) -> WebResult<PatchesView> {
+    let Some(catalog) = select(env, id) else {
+        return Err(app_core::AppError::NotFound.into());
+    };
+    let region = prefs.region;
+    let now = env.now();
     let model = env.store().read_model();
-    for (patch, _from, _until) in &windows {
-        // Per-patch history is another query per patch, and it is drawn in the
-        // fragment. The shell has no use for it.
-        if shell {
-            break;
-        }
+
+    let mut columns = Vec::new();
+    let mut per_patch: Vec<BTreeMap<ItemId, MarketWindow>> = Vec::new();
+    for (patch, _from, _until) in catalog.patch_windows() {
         columns.push(PatchColumn {
             patch: patch.patch.clone(),
             label: patch.label(),
             started: patch.started.clone(),
         });
-        // One stored window per patch, keyed by the patch's own name. The
-        // page used to reduce the archive once per patch column, inside the
-        // request, which is exactly what CLAUDE.md §16 forbids a handler
-        // doing.
         per_patch.push(windows_by_item(
             model
                 .commodity_windows(region, &Window::Patch(patch.patch.clone()))
@@ -374,10 +421,14 @@ async fn build<E: Ports>(
     }
     let overall = windows_by_item(model.commodity_windows(region, &Window::Expansion).await?);
 
-    let mut patch_rows = Vec::new();
+    // Names come from the tooltip cache so a reader sees the same word here as
+    // on the card above.
+    let tooltips = super::tooltip::cached_all(env, prefs, catalog, now).await;
+
+    let mut rows = Vec::new();
     for item in &catalog.items {
         for rank in &item.ranks {
-            patch_rows.push(PatchRow {
+            rows.push(PatchRow {
                 name: crate::cards::display_name(&tooltips, item, rank.item_id),
                 audience: item.audience.as_str(),
                 category: item.category.label(),
@@ -389,20 +440,12 @@ async fn build<E: Ports>(
             });
         }
     }
-    patch_rows.sort_by(|a, b| a.category.cmp(b.category).then(a.name.cmp(&b.name)));
+    rows.sort_by(|a, b| a.category.cmp(b.category).then(a.name.cmp(&b.name)));
 
-    Ok(MarketView {
+    Ok(PatchesView {
         expansion: catalog.expansion.clone(),
-        season: catalog.season_label(),
-        archived: !env.catalog_state(catalog).is_collected(),
-        configured: env.commodities().is_configured(),
-        groups,
         patches: columns,
-        patch_rows,
-        // One snapshot priced every card on the page, so the age is the
-        // page's rather than each card's.
-        observed: observed(prefs, now, model.commodity_summary(region).await?.1),
-        baseline_days: prefs.baseline_days,
+        rows,
     })
 }
 

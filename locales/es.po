@@ -51,7 +51,8 @@ msgstr ""
 msgid "Account"
 msgstr "Cuenta"
 
-#: crates/app-web/templates/partials/consumables.html:47
+#: crates/app-web/templates/partials/consumables.html:53
+#: crates/app-web/templates/partials/patches.html:5
 msgid "Across {}"
 msgstr "Durante {}"
 
@@ -80,7 +81,7 @@ msgstr ""
 "página te avisa cuando alguno esté inusualmente barato. Nadie más ve tu "
 "lista."
 
-#: crates/app-web/templates/partials/consumables.html:62
+#: crates/app-web/templates/partials/patches.html:20
 msgid "All patches"
 msgstr "Todos los parches"
 
@@ -135,7 +136,7 @@ msgstr "Media por hora (UTC)"
 msgid "Average by weekday"
 msgstr "Media por día de la semana"
 
-#: crates/app-web/templates/partials/consumables.html:49
+#: crates/app-web/templates/partials/patches.html:7
 msgid ""
 "Average unit price per patch, with the low and high underneath. The last "
 "column is the whole expansion, which is what “what did this cost during {}” "
@@ -579,7 +580,7 @@ msgid "Inscription"
 msgstr "Inscripción"
 
 #: crates/app-web/templates/partials/alerts.html:21
-#: crates/app-web/templates/partials/consumables.html:58
+#: crates/app-web/templates/partials/patches.html:16
 msgid "Item"
 msgstr "Objeto"
 
@@ -693,6 +694,10 @@ msgstr "En directo"
 msgid "Loading prices…"
 msgstr "Cargando precios…"
 
+#: crates/app-web/templates/partials/consumables.html:54
+msgid "Loading the patch history…"
+msgstr "Cargando el histórico por parche…"
+
 #: crates/app-web/templates/gear.html:61
 #: crates/app-web/templates/gear_stats.html:94
 #: crates/app-web/templates/macros.html:52
@@ -802,7 +807,7 @@ msgstr ""
 msgid "No observations yet."
 msgstr "Todavía no hay observaciones."
 
-#: crates/app-web/templates/partials/consumables.html:52
+#: crates/app-web/templates/partials/patches.html:10
 msgid "No patch boundaries recorded for this expansion."
 msgstr "No hay límites de parche registrados para esta expansión."
 
@@ -1086,6 +1091,10 @@ msgstr "Materiales compartidos"
 msgid "Shoulder"
 msgstr "Hombros"
 
+#: crates/app-web/templates/partials/consumables.html:57
+msgid "Show the patch history"
+msgstr "Ver el histórico por parche"
+
 #: crates/app-web/templates/consumables.html:32
 #: crates/app-web/templates/enhancements.html:48
 #: crates/app-web/templates/gear.html:110
@@ -1300,7 +1309,7 @@ msgstr "Objetos seguidos"
 msgid "Two-handed weapon"
 msgstr "Arma a dos manos"
 
-#: crates/app-web/templates/partials/consumables.html:58
+#: crates/app-web/templates/partials/patches.html:16
 msgid "Type"
 msgstr "Tipo"
 
@@ -1935,7 +1944,7 @@ msgstr "{} retirado de {}"
 msgid "{} requeued"
 msgstr "{} reencolada"
 
-#: crates/app-web/templates/partials/consumables.html:81
+#: crates/app-web/templates/partials/patches.html:39
 msgid "{} samples"
 msgstr "{} muestras"
 
@@ -1943,7 +1952,7 @@ msgstr "{} muestras"
 msgid "{} task(s)"
 msgstr "{} tarea(s)"
 
-#: crates/app-web/templates/partials/consumables.html:60
+#: crates/app-web/templates/partials/patches.html:18
 msgid "{} — from {}"
 msgstr "{} — desde {}"
 

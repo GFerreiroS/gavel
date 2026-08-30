@@ -1206,11 +1206,22 @@ pub struct MarketView {
     /// rather than silently showing an empty table.
     pub configured: bool,
     pub groups: Vec<CardGroup>,
-    pub patches: Vec<PatchColumn>,
-    pub patch_rows: Vec<PatchRow>,
     /// Age of the snapshot every card on the page was priced from.
     pub observed: String,
     pub baseline_days: u64,
+}
+
+/// The expansion's price history, patch by patch.
+///
+/// Its own view, and its own request. It is 659 rows of every item at every
+/// rank across the expansion -- 85% of what the consumables fragment used to
+/// weigh -- and most visits never scroll to it. A reader who does scroll gets
+/// exactly the same table; a reader who does not stops paying for it.
+#[derive(Debug, Default)]
+pub struct PatchesView {
+    pub expansion: String,
+    pub patches: Vec<PatchColumn>,
+    pub rows: Vec<PatchRow>,
 }
 
 /// What the visitor is looking at: which expansion, and whose prices.
