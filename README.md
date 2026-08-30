@@ -123,6 +123,7 @@ Every setting is a CLI flag backed by an environment variable, with a default.
 | `--gateway-min` etc. | `APP_GATEWAY_MIN` … | `1,2,2,1,1` | Role minimums |
 | `--debug-controls` | `APP_DEBUG_CONTROLS` | `false` | Mount `/debug/*` (administrator only) |
 | `--secure-cookies` | `APP_SECURE_COOKIES` | `false` | Requires HTTPS |
+| `--server-timing` | `APP_SERVER_TIMING` | `false` | `Server-Timing` on every response: db, cache, analysis, template, statements, rows |
 | `--log` | `APP_LOG` | `info,sqlx=warn` | Tracing filter |
 | `--market-regions` | `APP_MARKET_REGIONS` | `eu,us,kr,tw` | Auction regions to collect and offer in the picker |
 | `--market-interval-min` | `APP_MARKET_INTERVAL_MIN` | `30` | Commodity poll interval |
@@ -267,6 +268,21 @@ Tests live next to what they cover:
 - `crates/storage/tests/repositories.rs` — persistence round-trips
 - `crates/app-core/tests/domain.rs` — validation, hashing, submission limits
 - `crates/app-core/tests/metrics.rs` — counter accounting
+- `crates/app-core/tests/characterization.rs` — what the price, alert and chart
+  reductions answer today, pinned to exact numbers before anything replaces
+  them
+
+### Measuring
+
+```bash
+python3 scripts/bench-fixture.py sanitize      # a real archive with nobody in it
+python3 scripts/bench.py                       # release + release-fast, 7 endpoints
+python3 scripts/bench.py --baseline docs/bench/baseline.json
+python3 scripts/query-plans.py                 # re-record docs/bench/query-plans.md
+```
+
+[`docs/bench/README.md`](docs/bench/README.md) explains what each number is and
+what it does not claim.
 
 ---
 
