@@ -85,6 +85,22 @@ impl PriceRepository for SqlitePrices {
         rows.iter().map(sample_from_row).collect()
     }
 
+    async fn history_in_region(&self, region: Region) -> RepoResult<Vec<PriceSample>> {
+        // Ordered by market and then by time, which is the order the
+        // materialiser wants to group in and the order the index already
+        // holds them in.
+        let rows = sqlx::query(
+            "SELECT * FROM price_samples
+              WHERE region = ?
+              ORDER BY item_id, observed_at",
+        )
+        .bind(region.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(sample_from_row).collect()
+    }
+
     async fn latest(&self, region: Region) -> RepoResult<Vec<PriceSample>> {
         // One row per item: the newest observation we hold.
         let rows = sqlx::query(

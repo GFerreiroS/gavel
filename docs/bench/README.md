@@ -61,6 +61,20 @@ decoded, and response bytes both uncompressed and over the wire.
 connection pool are empty. It does not mean the file is out of the operating
 system's cache, which cannot be arranged without root.
 
+It runs against a **copy** of the fixture, not the fixture. The server migrates
+and materialises on first start, and a benchmark that mutates the archive it is
+measuring has changed the thing under it -- and would break the manifest's
+SHA-256, which is the fixture's whole claim to being reproducible.
+
+**A regression needs both quantiles to move.** At 15 warm samples the
+nearest-rank p95 is the fifteenth of fifteen: the slowest request, not a
+percentile, and one scheduling hiccup moves it by a third. That produced a
+false regression on the Gear page during Phase 2 -- identical statements,
+identical rows, no stage changed, p50 unmoved, and a p95 twenty per cent higher
+that vanished at `--warm 60`. So p50 is the signal and p95 is the budget, and a
+change that only fattens the tail is below this benchmark's resolution at 15
+samples. Raise `--warm` to see one.
+
 ### Two release profiles, and why
 
 `release` is `opt-level = "z"`. It is what ships, so it is what a capacity

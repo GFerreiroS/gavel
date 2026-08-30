@@ -7,6 +7,7 @@ mod jobs;
 mod kv;
 mod market_events;
 mod prices;
+mod read_model;
 mod realm_prices;
 mod releases;
 mod sessions;
@@ -29,6 +30,7 @@ pub use jobs::SqliteJobs;
 pub use kv::SqliteKv;
 pub use market_events::SqliteMarketEvents;
 pub use prices::SqlitePrices;
+pub use read_model::SqliteReadModel;
 pub use realm_prices::SqliteRealmPrices;
 pub use releases::SqliteReleases;
 pub use sessions::SqliteSessions;
@@ -122,6 +124,7 @@ pub struct SqliteStore {
     watches: SqliteWatches,
     releases: SqliteReleases,
     market_events: SqliteMarketEvents,
+    read_model: SqliteReadModel,
 }
 
 impl SqliteStore {
@@ -204,6 +207,7 @@ impl SqliteStore {
             settings: SqliteSettings::new(pool.clone()),
             releases: SqliteReleases::new(pool.clone()),
             market_events: SqliteMarketEvents::new(pool.clone()),
+            read_model: SqliteReadModel::new(pool.clone()),
             watches: SqliteWatches::new(pool.clone()),
             pool,
         })
@@ -292,6 +296,7 @@ impl Store for SqliteStore {
     type Watches = SqliteWatches;
     type Releases = SqliteReleases;
     type MarketEvents = SqliteMarketEvents;
+    type ReadModel = SqliteReadModel;
 
     fn users(&self) -> &Self::Users {
         &self.users
@@ -325,6 +330,9 @@ impl Store for SqliteStore {
     }
     fn market_events(&self) -> &Self::MarketEvents {
         &self.market_events
+    }
+    fn read_model(&self) -> &Self::ReadModel {
+        &self.read_model
     }
     fn settings(&self) -> &Self::Settings {
         &self.settings

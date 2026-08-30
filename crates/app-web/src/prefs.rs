@@ -25,7 +25,6 @@ use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, header};
 use axum::middleware::Next;
 use axum::response::Response;
-use cluster_core::Millis;
 
 use crate::session::cookie_value;
 
@@ -77,18 +76,6 @@ pub struct MarketPrefs {
 pub struct RealmChoice(pub Option<String>);
 
 impl MarketPrefs {
-    /// The start of the baseline window, as a timestamp.
-    ///
-    /// Both market pages need it and neither should be doing the arithmetic:
-    /// two copies of a millisecond conversion is one place for the two pages
-    /// to start disagreeing about what "usual" means.
-    pub fn baseline_since(&self, now: Millis) -> Millis {
-        Millis(
-            now.get()
-                .saturating_sub(self.baseline_days * 24 * 60 * 60 * 1000),
-        )
-    }
-
     fn cookie_value(&self, realm: &RealmChoice) -> String {
         format!(
             "{}|{}|{}|{}",
@@ -329,19 +316,27 @@ mod tests {
         assert_eq!(choice.realm, None, "never chose, rather than chose none");
     }
 
+    /// The reader's comparison window used to be turned into a `since`
+    /// timestamp and reduced during the request. It is now a stored row, which
+    /// means the choice can only ever be one that was materialised -- so the
+    /// list a cookie may hold and the list the materialiser writes have to be
+    /// the same list.
     #[test]
-    fn the_window_starts_a_whole_number_of_days_back() {
-        let prefs = MarketPrefs {
-            region: Region::Eu,
-            locale: Locale::EnGb,
-            baseline_days: 3,
-        };
-        assert_eq!(
-            prefs.baseline_since(Millis(10 * 86_400_000)).get(),
-            7 * 86_400_000
-        );
-        // Never before the epoch, however early the clock claims it is.
-        assert_eq!(prefs.baseline_since(Millis(5)).get(), 0);
+    fn every_window_a_reader_can_choose_is_one_that_was_materialised() {
+        for (days, _) in BASELINE_CHOICES {
+            assert!(
+                app_core::market::window::ROLLING_DAYS.contains(&days),
+                "{days}d is offered but never materialised"
+            );
+        }
+        // And nothing else is accepted from a cookie or a query string.
+        for days in [0, 2, 5, 31, 365] {
+            assert_eq!(
+                parse_baseline(&days.to_string()),
+                None,
+                "{days}d should be refused"
+            );
+        }
     }
 
     #[test]

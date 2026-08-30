@@ -26,7 +26,7 @@ use std::collections::HashSet;
 
 use app_core::market::{ItemId, Region};
 use app_core::model::User;
-use app_core::repo::{PriceRepository, Store, WatchRepository};
+use app_core::repo::{PriceRepository, ReadModelRepository, Store, WatchRepository};
 use app_core::{AppError, Ports};
 use askama::Template;
 use axum::Extension;
@@ -180,8 +180,8 @@ pub async fn page_handler<E: Ports>(
             regions.dedup();
             let mut latest = std::collections::HashMap::new();
             for region in regions {
-                for sample in env.store().prices().latest(region).await? {
-                    latest.insert((sample.item, region), sample.min_unit_price);
+                for market in env.store().read_model().commodities(region).await? {
+                    latest.insert((market.key.item(), region), market.min_price);
                 }
             }
 

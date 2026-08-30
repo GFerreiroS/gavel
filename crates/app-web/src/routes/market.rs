@@ -7,10 +7,10 @@
 use std::collections::BTreeMap;
 
 use app_core::Ports;
-use app_core::market::{
-    ALL_AUDIENCES_LABELS, Catalog, CommodityProvider, ItemId, ItemKind, PriceSample, WindowStats,
-};
-use app_core::repo::{PriceRepository, Store};
+use app_core::market::materialise::MarketWindow;
+use app_core::market::window::Window;
+use app_core::market::{ALL_AUDIENCES_LABELS, Catalog, CommodityProvider, ItemId, ItemKind};
+use app_core::repo::{ReadModelRepository, Store};
 use app_core::timing::{self, Stage};
 use askama::Template;
 use axum::Extension;
@@ -120,11 +120,11 @@ pub async fn index<E: Ports>(
         },
     ];
 
-    // The same three figures the category pages show, for the whole
-    // expansion rather than one category of it.
-    let prices = env.store().prices();
-    let samples_held = prices.latest(region).await?.len();
-    let last_observed = prices.last_observed(region).await?;
+    // The same three figures the category pages show, for the whole expansion
+    // rather than one category of it. One query, from the published version:
+    // the index is a shell and has to paint before anything else arrives.
+    let (markets, last_observed) = env.store().read_model().commodity_summary(region).await?;
+    let samples_held = markets as usize;
     let now = env.now();
 
     let auctions = AuctionsView {
@@ -292,40 +292,21 @@ async fn build<E: Ports>(
     // a single table would be meaningless. Which one is the visitor's choice.
     let region = prefs.region;
 
-    let prices = env.store().prices();
     let now = env.now();
 
     // The shell asks for no prices: the heading, the archived notice and the
     // expansion wording are all that paint first.
     let shell = detail == super::gear::Detail::Shell;
-    let latest: BTreeMap<ItemId, PriceSample> = if shell {
-        BTreeMap::new()
-    } else {
-        prices
-            .latest(region)
-            .await?
-            .into_iter()
-            .map(|s| (s.item, s))
-            .collect()
-    };
 
-    let recent: BTreeMap<ItemId, WindowStats> = if shell {
-        BTreeMap::new()
+    // Three sets of stored rows. Extremes are all-time, not windowed:
+    // "cheapest ever, and when" only means something across the whole history,
+    // and it is a row rather than a scan of one.
+    let page = if shell {
+        Default::default()
     } else {
-        index_stats(
-            prices
-                .window_stats(region, prefs.baseline_since(now), None)
-                .await?,
-        )
+        crate::read_model::commodity_page(env, region, prefs.baseline_days).await?
     };
-
-    // Extremes are all-time, not windowed: "cheapest ever, and when" only
-    // means something across the whole history.
-    let all_time = if shell {
-        BTreeMap::new()
-    } else {
-        index_stats(prices.window_stats(region, Millis::ZERO, None).await?)
-    };
+    let (latest, recent, all_time) = (page.current, page.recent, page.all_time);
 
     // Tooltips that are already cached go straight into the page, so hovering
     // an icon costs no request at all (see `routes::tooltip`).
@@ -368,8 +349,9 @@ async fn build<E: Ports>(
     // --- patch-by-patch, plus the whole expansion --------------------------
     let windows = catalog.patch_windows();
     let mut columns = Vec::with_capacity(windows.len());
-    let mut per_patch: Vec<BTreeMap<ItemId, WindowStats>> = Vec::with_capacity(windows.len());
-    for (patch, from, until) in &windows {
+    let mut per_patch: Vec<BTreeMap<ItemId, MarketWindow>> = Vec::with_capacity(windows.len());
+    let model = env.store().read_model();
+    for (patch, _from, _until) in &windows {
         // Per-patch history is another query per patch, and it is drawn in the
         // fragment. The shell has no use for it.
         if shell {
@@ -380,15 +362,17 @@ async fn build<E: Ports>(
             label: patch.label(),
             started: patch.started.clone(),
         });
-        per_patch.push(index_stats(
-            prices.window_stats(region, *from, *until).await?,
+        // One stored window per patch, keyed by the patch's own name. The
+        // page used to reduce the archive once per patch column, inside the
+        // request, which is exactly what CLAUDE.md §16 forbids a handler
+        // doing.
+        per_patch.push(windows_by_item(
+            model
+                .commodity_windows(region, &Window::Patch(patch.patch.clone()))
+                .await?,
         ));
     }
-    let overall = index_stats(
-        prices
-            .window_stats(region, catalog.span_start(), None)
-            .await?,
-    );
+    let overall = windows_by_item(model.commodity_windows(region, &Window::Expansion).await?);
 
     let mut patch_rows = Vec::new();
     for item in &catalog.items {
@@ -417,7 +401,7 @@ async fn build<E: Ports>(
         patch_rows,
         // One snapshot priced every card on the page, so the age is the
         // page's rather than each card's.
-        observed: observed(prefs, now, prices.last_observed(region).await?),
+        observed: observed(prefs, now, model.commodity_summary(region).await?.1),
         baseline_days: prefs.baseline_days,
     })
 }
@@ -430,11 +414,11 @@ pub(super) fn observed(prefs: MarketPrefs, now: Millis, at: Option<Millis>) -> S
     }
 }
 
-fn index_stats(stats: Vec<WindowStats>) -> BTreeMap<ItemId, WindowStats> {
-    stats.into_iter().map(|w| (w.item, w)).collect()
+fn windows_by_item(windows: Vec<MarketWindow>) -> BTreeMap<ItemId, MarketWindow> {
+    windows.into_iter().map(|w| (w.key.item(), w)).collect()
 }
 
-fn cell(stats: Option<&WindowStats>) -> PatchCell {
+fn cell(stats: Option<&MarketWindow>) -> PatchCell {
     match stats {
         Some(w) if w.samples > 0 => PatchCell {
             low: w.low.to_string(),

@@ -367,6 +367,21 @@ struct FakePrices {
 }
 
 impl PriceRepository for FakePrices {
+    /// The materialiser's read. The fake holds one region's rows, so this is
+    /// the same answer `history` gives without an item filter.
+    async fn history_in_region(&self, region: Region) -> RepoResult<Vec<PriceSample>> {
+        let mut rows: Vec<PriceSample> = self
+            .samples
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|s| s.region == region)
+            .cloned()
+            .collect();
+        rows.sort_by_key(|s| (s.item.get(), s.observed_at.get()));
+        Ok(rows)
+    }
+
     async fn record_samples(&self, samples: &[PriceSample]) -> RepoResult<u64> {
         let mut store = self.samples.lock().unwrap();
         let mut written = 0;

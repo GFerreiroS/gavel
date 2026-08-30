@@ -2152,6 +2152,7 @@ version = "0.1.0"
 dependencies = [
  "app-core",
  "cluster-core",
+ "serde",
  "serde_json",
  "sqlx",
  "storage",

@@ -280,6 +280,19 @@ def run_profile(profile: str, database: Path, warm: int, logs: Path) -> dict:
     port = free_port()
     results: dict[str, dict] = {}
 
+    # Never measure against the fixture itself. The server migrates and
+    # materialises on first start, and a benchmark that mutates the archive it
+    # is measuring has changed the thing under it -- and would break the
+    # manifest's SHA-256, which is the fixture's whole claim to being
+    # reproducible. One working copy per profile, reused across the restarts
+    # below so the read model is built once.
+    working = REPO / "target" / "bench" / f"working-{profile}.db"
+    working.parent.mkdir(parents=True, exist_ok=True)
+    for leftover in (working, Path(f"{working}-wal"), Path(f"{working}-shm")):
+        leftover.unlink(missing_ok=True)
+    shutil.copyfile(database, working)
+    database = working
+
     # Cold first, one fresh process per endpoint. "Cold" here means this
     # process has never answered this endpoint -- SQLite's page cache and the
     # pool are empty. It does not mean the file is out of the operating
@@ -324,7 +337,19 @@ def markdown(report: dict) -> str:
 
 
 def compare(report: dict, baseline: dict, tolerance: float, floor_ms: float) -> int:
-    """Fail on a regression, and name the stage that caused it."""
+    """Fail on a regression, and name the stage that caused it.
+
+    **Both quantiles have to move.** At the default 15 warm samples, the
+    nearest-rank p95 is the fifteenth of fifteen -- it is the slowest request,
+    not a percentile, and one scheduling hiccup is enough to move it a third.
+    That produced a false regression on the Gear page during Phase 2: identical
+    statements, identical rows, no stage changed, p50 unmoved, and a p95 twenty
+    per cent higher that vanished at `--warm 60`.
+
+    So p50 is the signal and p95 is the budget. A real slowdown moves both. The
+    cost of that rule is that a change which only fattens the tail is below
+    this benchmark's resolution at 15 samples; raise `--warm` to see one.
+    """
     regressions = 0
     for profile, endpoints in report["profiles"].items():
         was = baseline.get("profiles", {}).get(profile, {})
@@ -332,8 +357,13 @@ def compare(report: dict, baseline: dict, tolerance: float, floor_ms: float) -> 
             before = was.get(name)
             if not before:
                 continue
-            allowed = before["p95_ms"] * (1 + tolerance)
-            if now["p95_ms"] <= allowed or now["p95_ms"] - before["p95_ms"] < floor_ms:
+            moved = [
+                q
+                for q in ("p50_ms", "p95_ms")
+                if now[q] > before[q] * (1 + tolerance)
+                and now[q] - before[q] >= floor_ms
+            ]
+            if len(moved) < 2:
                 continue
             regressions += 1
             worst = max(
@@ -341,8 +371,9 @@ def compare(report: dict, baseline: dict, tolerance: float, floor_ms: float) -> 
                 key=lambda s: now["stages_ms"].get(s, 0) - before["stages_ms"].get(s, 0),
             )
             print(
-                f"REGRESSION {profile}/{name}: p95 {before['p95_ms']:.1f} ->"
-                f" {now['p95_ms']:.1f} ms."
+                f"REGRESSION {profile}/{name}:"
+                f" p50 {before['p50_ms']:.1f} -> {now['p50_ms']:.1f} ms,"
+                f" p95 {before['p95_ms']:.1f} -> {now['p95_ms']:.1f} ms."
                 f" Largest stage change: {worst}"
                 f" {before['stages_ms'].get(worst, 0):.1f} ->"
                 f" {now['stages_ms'].get(worst, 0):.1f} ms;"

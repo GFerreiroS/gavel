@@ -12,9 +12,11 @@ pub mod catalog;
 pub mod collector;
 pub mod event;
 pub mod key;
+pub mod materialise;
 pub mod realm;
 pub mod release;
 pub mod stats;
+pub mod window;
 
 use std::fmt;
 
@@ -31,10 +33,12 @@ pub use catalog::{
 pub use collector::{AlertSink, Collector, NullSink, Outcome, Report};
 pub use event::{EventKind, EventScope, MarketEvent, Provenance, Validation, Visibility};
 pub use key::{BadMarketKey, MarketKey};
+pub use materialise::{ALGORITHM_VERSION, MarketState, MarketWindow, Materialised};
 pub use realm::{
     GearListing, Realm, RealmAuctionProvider, RealmId, RealmSample, RealmSnapshot, summarise_realm,
 };
 pub use release::ReleaseStates;
+pub use window::Window;
 
 pub use stats::{PriceStats, summarise};
 

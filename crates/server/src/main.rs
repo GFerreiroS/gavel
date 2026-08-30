@@ -7,6 +7,7 @@ mod collector_task;
 mod config;
 mod env_file;
 mod market;
+mod materialise_task;
 mod query_timing;
 mod runtime;
 mod worker;

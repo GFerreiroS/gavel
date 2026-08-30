@@ -6,16 +6,17 @@
 
 use std::collections::BTreeMap;
 
-use app_core::market::{CatalogItem, ItemId, ItemKind, PriceSample, WindowStats};
+use app_core::market::materialise::{MarketSummary, MarketWindow};
+use app_core::market::{CatalogItem, ItemId, ItemKind};
 
 use crate::views::{ItemCard, RankColumn, TooltipView};
 
 /// One consumable as a card, with a column per quality rank.
 pub(crate) fn card(
     entry: &CatalogItem,
-    latest: &BTreeMap<ItemId, PriceSample>,
-    recent: &BTreeMap<ItemId, WindowStats>,
-    all_time: &BTreeMap<ItemId, WindowStats>,
+    latest: &BTreeMap<ItemId, MarketSummary>,
+    recent: &BTreeMap<ItemId, MarketWindow>,
+    all_time: &BTreeMap<ItemId, MarketWindow>,
     tooltips: &BTreeMap<u32, TooltipView>,
 ) -> ItemCard {
     let multi_rank = entry.ranks.len() > 1;
@@ -108,9 +109,9 @@ pub(crate) fn display_name(
 fn column(
     id: ItemId,
     label: String,
-    sample: Option<&PriceSample>,
-    recent: Option<&WindowStats>,
-    all_time: Option<&WindowStats>,
+    sample: Option<&MarketSummary>,
+    recent: Option<&MarketWindow>,
+    all_time: Option<&MarketWindow>,
 ) -> RankColumn {
     let base = RankColumn {
         item_id: id.get(),
@@ -139,7 +140,7 @@ fn column(
     // cheaper at launch.
     let delta = match recent {
         Some(w) if w.samples > 1 && w.mean.get() > 0 => {
-            let current = sample.p05_unit_price.get() as i128;
+            let current = sample.price.get() as i128;
             let mean = w.mean.get() as i128;
             ((current - mean) * 100 / mean) as i32
         }
@@ -149,7 +150,7 @@ fn column(
 
     RankColumn {
         has_data: true,
-        current: sample.p05_unit_price.to_string(),
+        current: sample.price.to_string(),
         mean: dated
             .map(|w| w.mean.to_string())
             .unwrap_or_else(|| base.mean.clone()),

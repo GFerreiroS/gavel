@@ -1,16 +1,17 @@
 //! The single-item page: every statistic we hold, plus charts.
 
+use app_core::market::materialise::MarketState;
+use app_core::market::window::Window;
 use app_core::market::{
     Catalog, CatalogItem, ItemId, ItemKind, analysis, analysis::WEEKDAY_NAMES, downsample,
 };
-use app_core::repo::{PriceRepository, Store, WatchRepository};
+use app_core::repo::{ReadModelRepository, Store, WatchRepository};
 use app_core::{AppError, Ports};
 use askama::Template;
 use axum::Extension;
 use axum::extract::{OriginalUri, Path, State};
 use axum::http::HeaderMap;
 use axum::response::Html;
-use cluster_core::Millis;
 
 use crate::chart::{self, Series, Unit};
 use crate::csrf::Csrf;
@@ -94,24 +95,34 @@ async fn build<E: Ports>(
     item: ItemId,
 ) -> WebResult<ItemDetail> {
     let region = prefs.region;
-    let prices = env.store().prices();
+    let model = env.store().read_model();
     let now = env.now();
 
-    // Everything ever recorded for this market.
-    let history = prices.history(item, region, Millis::ZERO).await?;
-    let stats = analysis::analyse(&history, now);
+    // The published state of this market. Everything below is read from it:
+    // this handler no longer calls `analyse`, and no longer reads a single
+    // observation. CLAUDE.md §16's Phase 2, at the one page that used to
+    // reduce a whole history twice over.
+    let key = catalog.market_of_key(region, item);
+    let stats = model
+        .market(key)
+        .await?
+        .unwrap_or_else(|| MarketState::empty(key));
 
     // Plot every rank of the same consumable together: "is R1 worth it" is the
-    // question the chart should answer at a glance.
+    // question the chart should answer at a glance. Each rank is its own
+    // market, so each is its own stored row and its own stored series.
     let mut all_ranks = Vec::new();
     for rank in &entry.ranks {
-        let samples = if rank.item_id == item {
-            history.clone()
+        let series = if rank.item_id == item {
+            stats.series.clone()
         } else {
-            prices.history(rank.item_id, region, Millis::ZERO).await?
+            model
+                .market(catalog.market_of_key(region, rank.item_id))
+                .await?
+                .map(|s| s.series)
+                .unwrap_or_default()
         };
-        let analysed = analysis::analyse(&samples, now);
-        all_ranks.push((rank.rank, downsample(&analysed.series, CHART_POINTS)));
+        all_ranks.push((rank.rank, series));
     }
     all_ranks.sort_by_key(|(rank, _)| *rank);
 
@@ -176,14 +187,13 @@ async fn build<E: Ports>(
         "Needs a full week of observations.",
     );
 
-    // Per-patch, for this one market.
+    // Per-patch, for this one market: one read of every stored window rather
+    // than one reduction of the archive per patch column.
+    let windows = model.windows_of(key).await?;
     let mut patches = Vec::new();
-    for (patch, from, until) in catalog.patch_windows() {
-        let stats = prices
-            .window_stats(region, from, until)
-            .await?
-            .into_iter()
-            .find(|w| w.item == item);
+    for (patch, _, _) in catalog.patch_windows() {
+        let window = Window::Patch(patch.patch.clone());
+        let stats = windows.iter().find(|w| w.window == window);
         patches.push(match stats {
             Some(w) if w.samples > 0 => PatchStatRow {
                 patch: patch.patch.clone(),
@@ -247,35 +257,20 @@ async fn build<E: Ports>(
         region_code: region.as_str(),
         archived: !env.catalog_state(catalog).is_collected(),
 
-        has_data: stats.samples > 0,
-        current: stats
-            .current
-            .map(|p| p.price.to_string())
-            .unwrap_or_else(|| "—".into()),
+        // A market with no history renders every figure as unavailable rather
+        // than as zero, which is §2's rule and the reason the empty state has
+        // a shape of its own.
+        has_data: stats.has_data(),
+        current: dash(stats.has_data().then(|| stats.price.to_string())),
         mean: stats.mean.to_string(),
         median: stats.median.to_string(),
-        low: stats
-            .low
-            .map(|p| p.price.to_string())
-            .unwrap_or_else(|| "—".into()),
-        low_when: stats
-            .low
-            .map(|p| p.at.to_utc_string())
-            .unwrap_or_else(|| "—".into()),
-        high: stats
-            .high
-            .map(|p| p.price.to_string())
-            .unwrap_or_else(|| "—".into()),
-        high_when: stats
-            .high
-            .map(|p| p.at.to_utc_string())
-            .unwrap_or_else(|| "—".into()),
-        quantity: stats.current.map(|p| p.quantity).unwrap_or(0),
-        samples: stats.samples,
-        first_seen: stats
-            .first_seen
-            .map(|at| at.to_date_string())
-            .unwrap_or_else(|| "—".into()),
+        low: dash(stats.has_data().then(|| stats.low.to_string())),
+        low_when: dash(stats.has_data().then(|| stats.low_at.to_utc_string())),
+        high: dash(stats.has_data().then(|| stats.high.to_string())),
+        high_when: dash(stats.has_data().then(|| stats.high_at.to_utc_string())),
+        quantity: stats.quantity,
+        samples: stats.samples as usize,
+        first_seen: dash(stats.first_seen.map(|at| at.to_date_string())),
         volatility_percent: stats.volatility_percent,
         trends: vec![
             trend("24 hours", stats.day),
@@ -304,4 +299,9 @@ async fn build<E: Ports>(
             .collect(),
         patches,
     })
+}
+
+/// An unavailable figure, spelled the one way the whole app spells it.
+fn dash(value: Option<String>) -> String {
+    value.unwrap_or_else(|| "\u{2014}".into())
 }

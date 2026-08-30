@@ -16,7 +16,9 @@ use app_core::market::{
     Collector, ItemId, ItemKind as ItemKindT, Outcome as CollectOutcome, Realm,
     RealmAuctionProvider, RealmSnapshot, summarise_realm,
 };
-use app_core::repo::{PriceRepository, RealmPriceRepository, SettingsRepository, Store};
+use app_core::repo::{
+    PriceRepository, ReadModelRepository, RealmPriceRepository, SettingsRepository, Store,
+};
 use app_core::service::{Freshness, ItemTooltipService};
 use cluster_core::ClusterControl;
 use cluster_core::Millis;
@@ -48,10 +50,15 @@ async fn run<E: Ports>(env: E) {
     }
 
     name_realms(&env).await;
+    backfill(&env).await;
 
     loop {
         ticker.tick().await;
-        collect_once(&env).await;
+        // Only the regions whose snapshot actually moved. A `NotModified`
+        // does no analysis work, which is CLAUDE.md §16's Phase 2 in one line:
+        // the upstream said nothing changed, so nothing needs recalculating.
+        let collected = collect_once(&env).await;
+        crate::materialise_task::commodities(&env, &collected).await;
         collect_realms(&env).await;
         warm_tooltips(&env).await;
         downsample(&env).await;
@@ -59,11 +66,47 @@ async fn run<E: Ports>(env: E) {
     }
 }
 
-async fn collect_once<E: Ports>(env: &E) {
+/// Materialise the archive that is already here, once.
+///
+/// Without this, the first start after deploying Phase 2 serves empty windows
+/// on every page: the archive is the product, and it would look like it had
+/// been thrown away. It runs only when there is no published version, so it is
+/// a one-off rather than a cost on every boot.
+async fn backfill<E: Ports>(env: &E) {
+    match env.store().read_model().published().await {
+        Ok(Some(version)) => {
+            tracing::info!(
+                version = version.version,
+                markets = version.markets,
+                "serving the published market analysis"
+            );
+            return;
+        }
+        Ok(None) => {}
+        Err(error) => {
+            tracing::warn!(%error, "could not read the published analysis version");
+            return;
+        }
+    }
+
+    let regions = env.market().regions.clone();
+    tracing::info!(
+        regions = ?regions.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
+        "no published analysis yet: materialising the existing archive"
+    );
+    crate::materialise_task::commodities(env, &regions).await;
+}
+
+/// Collect every region's commodity snapshot.
+///
+/// Returns the regions whose snapshot actually changed, which is what the
+/// materialiser needs: recalculating a region the upstream said was unchanged
+/// would be work with a guaranteed identical result.
+async fn collect_once<E: Ports>(env: &E) -> Vec<app_core::market::Region> {
     let market = env.market();
     // Archived expansions are never collected: that is what makes them frozen.
     let Some(catalog) = env.active_catalog() else {
-        return;
+        return Vec::new();
     };
     // Categories an administrator has switched off are not stored. The
     // snapshot is one request for the region either way, so this is about
@@ -82,6 +125,7 @@ async fn collect_once<E: Ports>(env: &E) {
         &skip,
     );
 
+    let mut changed = Vec::new();
     for region in &market.regions {
         match collector.collect(*region, env.now()).await {
             Ok(report) => match report.outcome {
@@ -96,19 +140,23 @@ async fn collect_once<E: Ports>(env: &E) {
                     samples,
                     written,
                     alerts,
-                } => tracing::info!(
-                    region = %region,
-                    samples,
-                    written,
-                    alerts = alerts.len(),
-                    "collected commodity prices"
-                ),
+                } => {
+                    changed.push(*region);
+                    tracing::info!(
+                        region = %region,
+                        samples,
+                        written,
+                        alerts = alerts.len(),
+                        "collected commodity prices"
+                    );
+                }
             },
             // A failed collection must not kill the loop: the next tick will
             // try again, and a transient 429 or 503 is expected.
             Err(e) => tracing::warn!(region = %region, error = %e, "price collection failed"),
         }
     }
+    changed
 }
 
 /// Which categories an administrator has switched off.

@@ -11,6 +11,7 @@ mod headers;
 mod i18n;
 mod metrics;
 mod prefs;
+mod read_model;
 mod render;
 mod routes;
 mod session;

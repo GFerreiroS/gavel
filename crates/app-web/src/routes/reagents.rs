@@ -7,17 +7,14 @@
 //! rather than by raid role, which is why `CatalogItem` carries a profession
 //! instead of the page inferring one from the item's material type.
 
-use std::collections::BTreeMap;
-
 use app_core::Ports;
-use app_core::market::{ALL_PROFESSIONS, ItemId, ItemKind, PriceSample, WindowStats};
+use app_core::market::{ALL_PROFESSIONS, ItemKind};
 use app_core::repo::{PriceRepository, Store};
 use askama::Template;
 use axum::Extension;
 use axum::extract::{OriginalUri, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Html;
-use cluster_core::Millis;
 use serde::Deserialize;
 
 use crate::csrf::Csrf;
@@ -135,34 +132,17 @@ async fn build<E: Ports>(
     // The shell asks for no prices: it is the title, the search box and the
     // expansion note, and none of those need a market.
     let shell = detail == super::gear::Detail::Shell;
-    let latest: BTreeMap<ItemId, PriceSample> = if shell {
-        BTreeMap::new()
+    // The "vs usual" window is the visitor's, chosen once on the Auction House
+    // index and applied to every category under it; the extremes are all-time,
+    // because "cheapest ever, and when" only means anything across the whole
+    // history. Both are stored rows now rather than reductions this request
+    // performs.
+    let page = if shell {
+        Default::default()
     } else {
-        prices
-            .latest(region)
-            .await?
-            .into_iter()
-            .map(|s| (s.item, s))
-            .collect()
+        crate::read_model::commodity_page(env, region, prefs.baseline_days).await?
     };
-    // The "vs usual" window is the visitor's, chosen once on the Auction
-    // House index and applied to every category under it.
-    let recent = if shell {
-        BTreeMap::new()
-    } else {
-        index_stats(
-            prices
-                .window_stats(region, prefs.baseline_since(now), None)
-                .await?,
-        )
-    };
-    // Extremes are all-time, as on the consumables cards: "cheapest ever, and
-    // when" only means anything across the whole history.
-    let all_time = if shell {
-        BTreeMap::new()
-    } else {
-        index_stats(prices.window_stats(region, Millis::ZERO, None).await?)
-    };
+    let (latest, recent, all_time) = (page.current, page.recent, page.all_time);
 
     // Localised names come from the tooltip cache, so a search matches what
     // the visitor can actually see on the page.
@@ -214,10 +194,6 @@ async fn build<E: Ports>(
         baseline_days: prefs.baseline_days,
         groups,
     })
-}
-
-fn index_stats(stats: Vec<WindowStats>) -> BTreeMap<ItemId, WindowStats> {
-    stats.into_iter().map(|w| (w.item, w)).collect()
 }
 
 /// Trim and lower-case the search term, and treat an empty one as absent.

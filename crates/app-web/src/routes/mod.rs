@@ -260,4 +260,46 @@ mod tests {
         let broken = "let c = env.catalogs().by_id(&id);";
         assert!(broken.contains("catalogs().by_id("));
     }
+
+    /// The commodity pages, which Phase 2 moved onto the read model.
+    ///
+    /// Gear and recipes are not here yet: they are the second slice, and
+    /// listing them before they are moved would be a test that fails for a
+    /// reason nobody has got to. Add each as it lands.
+    const MATERIALISED_ROUTES: &[(&str, &str)] = &[
+        ("market.rs", include_str!("market.rs")),
+        ("reagents.rs", include_str!("reagents.rs")),
+        ("enhancements.rs", include_str!("enhancements.rs")),
+        ("item.rs", include_str!("item.rs")),
+        ("alerts.rs", include_str!("alerts.rs")),
+    ];
+
+    /// CLAUDE.md §16, Phase 2: "No handler calls `analysis::analyse`, scans a
+    /// full history, or calculates patch columns."
+    ///
+    /// That is the phase's exit condition rather than a style rule, and it is
+    /// the kind that comes back: the reduction is easy to reach for, reads
+    /// naturally at the call site, and costs nothing anybody notices until the
+    /// archive is four months deep. So it is asserted rather than remembered.
+    #[test]
+    fn no_materialised_route_reduces_a_history() {
+        let forbidden = [
+            // The reduction itself.
+            ("analyse(", "reduce a history during a request"),
+            // Reading one, which is the only way to reduce one.
+            (".history(", "read a full history"),
+            (".history_in_region(", "read a whole region's history"),
+            // The reduction the store used to do, once per patch column.
+            (".window_stats(", "calculate a window during a request"),
+        ];
+        let mut offenders: Vec<String> = Vec::new();
+        for (name, source) in MATERIALISED_ROUTES {
+            for (needle, what) in forbidden {
+                if source.contains(needle) {
+                    offenders.push(format!("{name} may still {what} ({needle})"));
+                }
+            }
+        }
+        assert!(offenders.is_empty(), "{offenders:#?}");
+    }
 }

@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use super::key::MarketKey;
 use super::realm::RealmSample;
-use super::{ItemId, PriceSample};
+use super::{ItemId, PriceSample, Region};
 
 /// Who the consumable is for.
 ///
@@ -1034,6 +1034,20 @@ impl Catalog {
             .and_then(|entry| entry.rank_of(sample.item))
             .unwrap_or(1);
         MarketKey::commodity(sample.region, sample.item, rank)
+    }
+
+    /// The commodity market an item trades in, without an observation in hand.
+    ///
+    /// [`Catalog::market_of`] is the same rule applied to a row; a page that
+    /// is about an item rather than about a sample needs the key before it has
+    /// read anything, and both must agree or the page would look up a market
+    /// the collector never wrote.
+    pub fn market_of_key(&self, region: Region, item: ItemId) -> MarketKey {
+        let rank = self
+            .find(item)
+            .and_then(|entry| entry.rank_of(item))
+            .unwrap_or(1);
+        MarketKey::commodity(region, item, rank)
     }
 
     /// The market a per-realm observation belongs to.

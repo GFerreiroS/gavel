@@ -10,8 +10,11 @@ use cluster_core::Millis;
 
 use crate::error::RepoResult;
 use crate::market::catalog::CatalogStatus;
+use crate::market::materialise::{MarketState, MarketSummary, MarketWindow, Materialised};
+use crate::market::window::Window;
 use crate::market::{
-    Alert, ItemId, MarketEvent, PriceSample, Realm, RealmId, RealmSample, Region, WindowStats,
+    Alert, ItemId, MarketEvent, MarketKey, PriceSample, Realm, RealmId, RealmSample, Region,
+    WindowStats,
 };
 
 // Job and event persistence are cluster concepts, so their ports live in
@@ -140,6 +143,20 @@ pub trait PriceRepository: Send + Sync + 'static {
         since: Millis,
         limit: usize,
     ) -> impl Future<Output = RepoResult<Vec<Alert>>> + Send;
+
+    /// Every observation of every market in a region, oldest first.
+    ///
+    /// One query rather than one per item. It exists for the materialiser,
+    /// which reduces a whole region at a time and would otherwise ask 515
+    /// questions to answer one -- the shape §11b calls an N+1 whether or not
+    /// it touches the database once per row.
+    ///
+    /// Not for a request. A handler that called this would be doing exactly
+    /// what Phase 2 moved to the write path.
+    fn history_in_region(
+        &self,
+        region: Region,
+    ) -> impl Future<Output = RepoResult<Vec<PriceSample>>> + Send;
 
     /// Low/high/mean per item over a half-open window, computed by the store
     /// rather than by pulling every row into memory.
@@ -381,6 +398,146 @@ pub trait MarketEventRepository: Send + Sync + 'static {
     ) -> impl Future<Output = RepoResult<Vec<MarketEvent>>> + Send;
 }
 
+/// A candidate or published recalculation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalysisVersion {
+    pub version: u64,
+    pub state: VersionState,
+    pub algorithm: u32,
+    pub started_at: Millis,
+    pub published_at: Option<Millis>,
+    pub source_from: Option<Millis>,
+    pub source_until: Option<Millis>,
+    pub markets: u64,
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionState {
+    /// Being built. Unreachable from any page, which is the guarantee.
+    Staging,
+    Published,
+    /// Abandoned. Kept rather than deleted so operations can see that a
+    /// recalculation failed and when (CLAUDE.md §15's failure contract, point
+    /// five).
+    Failed,
+}
+
+impl VersionState {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            VersionState::Staging => "staging",
+            VersionState::Published => "published",
+            VersionState::Failed => "failed",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<VersionState> {
+        [
+            VersionState::Staging,
+            VersionState::Published,
+            VersionState::Failed,
+        ]
+        .into_iter()
+        .find(|s| s.as_str() == raw)
+    }
+}
+
+/// What a page reads instead of reducing a history.
+///
+/// CLAUDE.md §15's performance rule, as a port: collection and calculation are
+/// the write path, HTTP is a read path. Every method below is either "stage
+/// this candidate", "publish it", or "read the published one" -- there is
+/// deliberately no method that reduces anything, because a handler that could
+/// ask for one eventually would.
+pub trait ReadModelRepository: Send + Sync + 'static {
+    // --- the write path -----------------------------------------------------
+
+    /// Open a candidate version and return its number.
+    ///
+    /// Also clears any staging rows left by an earlier candidate: a materialiser
+    /// that died halfway leaves rows nobody will ever publish, and they must
+    /// not be mistaken for this attempt's.
+    fn begin(&self, algorithm: u32, now: Millis) -> impl Future<Output = RepoResult<u64>> + Send;
+
+    /// Write part of a candidate. Called many times per version -- once per
+    /// batch of markets -- so that a large rebuild does not hold one
+    /// transaction open across the whole archive.
+    fn stage(
+        &self,
+        version: u64,
+        markets: &[Materialised],
+    ) -> impl Future<Output = RepoResult<u64>> + Send;
+
+    /// Make the candidate the published version, in one transaction.
+    ///
+    /// Markets this version did not recalculate keep the rows they had: a
+    /// realm that failed to fetch contributes nothing rather than blanking
+    /// itself, and its previous figures are still true observations with a
+    /// real timestamp beside them.
+    fn publish(
+        &self,
+        version: u64,
+        source: (Option<Millis>, Option<Millis>),
+        now: Millis,
+    ) -> impl Future<Output = RepoResult<()>> + Send;
+
+    /// Abandon a candidate, recording why. The published version is untouched.
+    fn abandon(&self, version: u64, note: &str) -> impl Future<Output = RepoResult<()>> + Send;
+
+    // --- the read path ------------------------------------------------------
+
+    /// The version every page is currently serving, if there is one.
+    fn published(&self) -> impl Future<Output = RepoResult<Option<AnalysisVersion>>> + Send;
+
+    /// Recent versions, newest first. For the operations page.
+    fn versions(
+        &self,
+        limit: usize,
+    ) -> impl Future<Output = RepoResult<Vec<AnalysisVersion>>> + Send;
+
+    /// How many published commodity markets a region holds, and when the
+    /// newest of them was observed.
+    ///
+    /// One indexed query for the two figures an index page shows above the
+    /// fold. It exists so that the shell -- which paints before any card
+    /// arrives -- does not have to read every market to count them.
+    fn commodity_summary(
+        &self,
+        region: Region,
+    ) -> impl Future<Output = RepoResult<(u64, Option<Millis>)>> + Send;
+
+    /// Every published commodity market in a region, ordered by item, as much
+    /// of each as a card needs.
+    ///
+    /// Deliberately not [`MarketState`]: that carries the stored chart series,
+    /// and a page drawing 515 cards and no charts would read megabytes of JSON
+    /// to render a price and a quantity.
+    fn commodities(
+        &self,
+        region: Region,
+    ) -> impl Future<Output = RepoResult<Vec<MarketSummary>>> + Send;
+
+    /// One published market.
+    fn market(
+        &self,
+        key: MarketKey,
+    ) -> impl Future<Output = RepoResult<Option<MarketState>>> + Send;
+
+    /// Every published commodity market in a region over one window.
+    fn commodity_windows(
+        &self,
+        region: Region,
+        window: &Window,
+    ) -> impl Future<Output = RepoResult<Vec<MarketWindow>>> + Send;
+
+    /// Every window of one market, for its analysis page.
+    fn windows_of(
+        &self,
+        key: MarketKey,
+    ) -> impl Future<Output = RepoResult<Vec<MarketWindow>>> + Send;
+}
+
 pub trait Store: Send + Sync + 'static {
     type Users: UserRepository;
     type Sessions: SessionRepository;
@@ -394,6 +551,7 @@ pub trait Store: Send + Sync + 'static {
     type Watches: WatchRepository;
     type Releases: ReleaseRepository;
     type MarketEvents: MarketEventRepository;
+    type ReadModel: ReadModelRepository;
 
     fn users(&self) -> &Self::Users;
     fn sessions(&self) -> &Self::Sessions;
@@ -412,4 +570,6 @@ pub trait Store: Send + Sync + 'static {
     fn releases(&self) -> &Self::Releases;
     /// What happened in the game, and when.
     fn market_events(&self) -> &Self::MarketEvents;
+    /// What a page reads instead of reducing a history.
+    fn read_model(&self) -> &Self::ReadModel;
 }

@@ -11,19 +11,14 @@
 //! not divide at all -- there are sixteen and a heading per stat would be
 //! taller than the list beneath it.
 
-use std::collections::BTreeMap;
-
 use app_core::Ports;
-use app_core::market::{
-    ALL_SLOTS, Catalog, CatalogItem, ItemId, ItemKind, PriceSample, WindowStats,
-};
+use app_core::market::{ALL_SLOTS, Catalog, CatalogItem, ItemKind};
 use app_core::repo::{PriceRepository, Store};
 use askama::Template;
 use axum::Extension;
 use axum::extract::{OriginalUri, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Html;
-use cluster_core::Millis;
 
 use crate::csrf::Csrf;
 use crate::error::WebResult;
@@ -173,30 +168,15 @@ async fn build<E: Ports>(
     // The shell asks for no prices: it is the title, the slot links and the
     // search box, and none of those need a market.
     let shell = detail == super::gear::Detail::Shell;
-    let latest: BTreeMap<ItemId, PriceSample> = if shell {
-        BTreeMap::new()
+    // Three sets of already-reduced rows, or nothing at all for the shell.
+    // Before Phase 2 this was three reductions over the region's archive,
+    // inside the request that was trying to paint.
+    let page = if shell {
+        Default::default()
     } else {
-        prices
-            .latest(region)
-            .await?
-            .into_iter()
-            .map(|s| (s.item, s))
-            .collect()
+        crate::read_model::commodity_page(env, region, prefs.baseline_days).await?
     };
-    let recent = if shell {
-        BTreeMap::new()
-    } else {
-        index_stats(
-            prices
-                .window_stats(region, prefs.baseline_since(now), None)
-                .await?,
-        )
-    };
-    let all_time = if shell {
-        BTreeMap::new()
-    } else {
-        index_stats(prices.window_stats(region, Millis::ZERO, None).await?)
-    };
+    let (latest, recent, all_time) = (page.current, page.recent, page.all_time);
     let tooltips = if shell {
         Default::default()
     } else {
@@ -324,8 +304,4 @@ impl Text {
             _ => Text::ENCHANTS,
         }
     }
-}
-
-fn index_stats(stats: Vec<WindowStats>) -> BTreeMap<ItemId, WindowStats> {
-    stats.into_iter().map(|w| (w.item, w)).collect()
 }

@@ -4,13 +4,16 @@
 //! through the port as the same domain value. They deliberately never touch a
 //! SQL string, because callers never do either.
 
+use app_core::market::analysis::{Cycle, Point, Trend};
 use app_core::market::catalog::CatalogStatus;
 use app_core::market::event::{EventKind, EventScope, Provenance, Validation, Visibility};
+use app_core::market::materialise::{MarketState, MarketWindow, Materialised};
+use app_core::market::window::Window;
 use app_core::market::{MarketEvent, MarketKey};
 use app_core::model::Session;
 use app_core::repo::{
     CacheStore, EventRepository, JobRepository, KeyValueStore, MarketEventRepository,
-    ReleaseRepository, SessionRepository, Store, UserRepository,
+    ReadModelRepository, ReleaseRepository, SessionRepository, Store, UserRepository, VersionState,
 };
 use cluster_core::{
     ClusterEvent, ClusterStore, EventRecord, FailureReason, JobSpec, JobState, Millis, NodeId,
@@ -1265,4 +1268,228 @@ async fn a_window_holds_what_happened_and_what_was_still_happening() {
         ["running", "inside"],
         "oldest first: the one still going on, and the one that started inside"
     );
+}
+
+// --- the read model, and the version that publishes it -----------------------
+
+fn materialised(item: u32, price: u64, samples: u32) -> Materialised {
+    let key = MarketKey::commodity(Region::Eu, ItemId(item), 1);
+    Materialised {
+        state: MarketState {
+            key,
+            observed_at: Some(Millis(1_000)),
+            price: Copper(price),
+            min_price: Copper(price),
+            median_price: Copper(price),
+            quantity: 100,
+            listings: 3,
+            first_seen: Some(Millis(0)),
+            samples,
+            mean: Copper(price),
+            median: Copper(price),
+            low: Copper(price),
+            low_at: Millis(0),
+            high: Copper(price),
+            high_at: Millis(1_000),
+            volatility_percent: 0,
+            day: Trend::UNKNOWN,
+            week: Trend::UNKNOWN,
+            month: Trend::UNKNOWN,
+            by_hour: vec![Cycle {
+                bucket: 3,
+                mean: Copper(price),
+                samples: 1,
+            }],
+            by_weekday: Vec::new(),
+            best_hour: Some(3),
+            best_weekday: None,
+            series: vec![Point {
+                at: Millis(1_000),
+                price: Copper(price),
+                quantity: 100,
+            }],
+        },
+        windows: vec![MarketWindow {
+            key,
+            window: Window::Days(7),
+            low: Copper(price),
+            low_at: Millis(0),
+            high: Copper(price),
+            high_at: Millis(1_000),
+            mean: Copper(price),
+            median: Copper(price),
+            samples,
+            first_at: Millis(0),
+            last_at: Millis(1_000),
+            expected_buckets: Some(168),
+            observed_buckets: samples,
+            largest_gap_ms: 3_600_000,
+        }],
+    }
+}
+
+/// Everything a market carries has to come back the way it went in, JSON
+/// columns included: the chart is drawn from them.
+#[tokio::test]
+async fn a_materialised_market_round_trips() {
+    let store = store().await;
+    let model = store.read_model();
+    let version = model.begin(1, Millis(10)).await.unwrap();
+    let original = materialised(10, 5_000, 42);
+
+    model
+        .stage(version, std::slice::from_ref(&original))
+        .await
+        .unwrap();
+    model
+        .publish(version, (Some(Millis(0)), Some(Millis(1_000))), Millis(20))
+        .await
+        .unwrap();
+
+    let back = model.market(original.state.key).await.unwrap().unwrap();
+    assert_eq!(back, original.state);
+
+    let windows = model.windows_of(original.state.key).await.unwrap();
+    assert_eq!(windows, original.windows);
+}
+
+/// The guarantee, in one test: while a version is being built, nothing about
+/// it is reachable, and when it lands every page moves at once.
+#[tokio::test]
+async fn a_candidate_is_unreachable_until_it_is_published() {
+    let store = store().await;
+    let model = store.read_model();
+
+    let first = model.begin(1, Millis(10)).await.unwrap();
+    model
+        .stage(first, &[materialised(10, 100, 1), materialised(11, 200, 1)])
+        .await
+        .unwrap();
+
+    assert!(
+        model.commodities(Region::Eu).await.unwrap().is_empty(),
+        "a staged candidate is not a published version"
+    );
+    assert!(model.published().await.unwrap().is_none());
+
+    model
+        .publish(first, (None, None), Millis(20))
+        .await
+        .unwrap();
+    let published = model.commodities(Region::Eu).await.unwrap();
+    assert_eq!(published.len(), 2);
+    assert_eq!(published[0].price, Copper(100));
+
+    // A second candidate, staged but not published, changes nothing anybody
+    // can see.
+    let second = model.begin(1, Millis(30)).await.unwrap();
+    model
+        .stage(second, &[materialised(10, 999, 5)])
+        .await
+        .unwrap();
+    assert_eq!(
+        model.commodities(Region::Eu).await.unwrap()[0].price,
+        Copper(100),
+        "the previous version is still what is served"
+    );
+
+    model
+        .publish(second, (None, None), Millis(40))
+        .await
+        .unwrap();
+    let now = model.commodities(Region::Eu).await.unwrap();
+    assert_eq!(now[0].price, Copper(999), "and now it is the new one");
+    assert_eq!(
+        now[1].price,
+        Copper(200),
+        "a market the new version did not recalculate keeps what it had"
+    );
+    assert_eq!(now.len(), 2);
+}
+
+/// The failure contract: a candidate that dies leaves the published version
+/// exactly where it was, and says so where operations can see it.
+#[tokio::test]
+async fn abandoning_a_candidate_leaves_the_published_version_alone() {
+    let store = store().await;
+    let model = store.read_model();
+
+    let good = model.begin(1, Millis(10)).await.unwrap();
+    model
+        .stage(good, &[materialised(10, 100, 1)])
+        .await
+        .unwrap();
+    model.publish(good, (None, None), Millis(20)).await.unwrap();
+
+    let doomed = model.begin(1, Millis(30)).await.unwrap();
+    model
+        .stage(doomed, &[materialised(10, 999, 9)])
+        .await
+        .unwrap();
+    model.abandon(doomed, "eu: upstream said no").await.unwrap();
+
+    assert_eq!(
+        model.commodities(Region::Eu).await.unwrap()[0].price,
+        Copper(100)
+    );
+    assert_eq!(model.published().await.unwrap().unwrap().version, good);
+
+    // The failure is visible rather than merely absent (CLAUDE.md §14.7).
+    let versions = model.versions(10).await.unwrap();
+    let failed = versions.iter().find(|v| v.version == doomed).unwrap();
+    assert_eq!(failed.state, VersionState::Failed);
+    assert_eq!(failed.note.as_deref(), Some("eu: upstream said no"));
+}
+
+/// A materialiser killed halfway leaves staging rows nobody will publish. The
+/// next run must not mistake them for its own -- that would publish half of
+/// somebody else's work as if it were whole.
+#[tokio::test]
+async fn a_new_candidate_clears_what_a_dead_one_left() {
+    let store = store().await;
+    let model = store.read_model();
+
+    let dead = model.begin(1, Millis(10)).await.unwrap();
+    model
+        .stage(dead, &[materialised(10, 100, 1)])
+        .await
+        .unwrap();
+    // No publish, no abandon: the process died.
+
+    let fresh = model.begin(1, Millis(20)).await.unwrap();
+    assert_ne!(fresh, dead);
+
+    let versions = model.versions(10).await.unwrap();
+    let old = versions.iter().find(|v| v.version == dead).unwrap();
+    assert_eq!(old.state, VersionState::Failed);
+    assert!(old.note.as_deref().unwrap().contains("abandoned"));
+
+    // Publishing the fresh candidate, which staged nothing, publishes nothing.
+    model
+        .publish(fresh, (None, None), Millis(30))
+        .await
+        .unwrap();
+    assert!(model.commodities(Region::Eu).await.unwrap().is_empty());
+}
+
+/// Publishing something that is not a live candidate is a mistake worth
+/// refusing rather than absorbing.
+#[tokio::test]
+async fn only_a_live_candidate_can_be_published() {
+    let store = store().await;
+    let model = store.read_model();
+    assert!(matches!(
+        model.publish(999, (None, None), Millis(1)).await,
+        Err(app_core::error::RepoError::NotFound)
+    ));
+
+    let version = model.begin(1, Millis(10)).await.unwrap();
+    model
+        .publish(version, (None, None), Millis(20))
+        .await
+        .unwrap();
+    assert!(matches!(
+        model.publish(version, (None, None), Millis(30)).await,
+        Err(app_core::error::RepoError::Conflict(_))
+    ));
 }
