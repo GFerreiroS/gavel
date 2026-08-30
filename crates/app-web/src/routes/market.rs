@@ -407,7 +407,7 @@ async fn build<E: Ports>(
 
     Ok(MarketView {
         expansion: catalog.expansion.clone(),
-        season: catalog.season.clone(),
+        season: catalog.season_label(),
         archived: !catalog.is_active(),
         configured: env.commodities().is_configured(),
         groups,

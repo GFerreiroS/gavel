@@ -23,14 +23,22 @@
     "time, at several item levels under one item id. They live in their own",
     "table (realm_price_samples) and are filtered with realm_tracked_ids().",
     "Recipes are per-realm like BoEs. Their profession is Blizzard's own item",
-    "subclass, so unlike reagents they are generated rather than curated."
+    "subclass, so unlike reagents they are generated rather than curated.",
+    "Patch and raid tier are separate keys. 12.0.5 opened no raid; the",
+    "Venomous Abyss opened 2026-08-18, a week after 12.1 shipped, and that",
+    "week is one the market moved in for a reason the patch date cannot",
+    "explain. Season 1's raid is deliberately not recorded: nobody has",
+    "checked its name and open date, and an invented tier is worse than a",
+    "missing one. Add it when somebody does.",
+    "The season string that used to sit here is now derived from",
+    "expansion + latest patch + current tier. Do not add it back."
   ],
   "catalogs": [
     {
       "id": "midnight",
       "expansion": "Midnight",
-      "season": "Midnight 12.1 — Season 2 (The Venomous Abyss)",
       "status": "active",
+      "catalog_version": 1,
       "patches": [
         {
           "patch": "12.0",
@@ -46,6 +54,15 @@
           "patch": "12.1",
           "name": "The Curse of Ula'tek",
           "started": "2026-08-11"
+        }
+      ],
+      "raid_tiers": [
+        {
+          "id": "venomous-abyss",
+          "name": "The Venomous Abyss",
+          "patch": "12.1",
+          "opened": "2026-08-18",
+          "season": 2
         }
       ],
       "items": [

@@ -38,7 +38,7 @@ async fn run<E: Ports>(env: E) {
             every_minutes = market.collect_interval_ms / 60_000,
             items = catalog.tracked_ids().len(),
             expansion = %catalog.expansion,
-            season = %catalog.season,
+            season = %catalog.season_label(),
             archived = env.catalogs().catalogs.len() - 1,
             "auction house tracker started"
         ),

@@ -159,7 +159,7 @@ fn stale_history_falls_out_of_the_baseline_window() {
 fn the_shipped_catalog_parses_and_is_coherent() {
     let catalogs = CatalogSet::embedded();
     let catalog = catalogs.active().expect("one expansion must be active");
-    assert!(!catalog.season.is_empty());
+    assert!(!catalog.season_label().is_empty());
     assert!(catalog.items.len() >= 20, "got {}", catalog.items.len());
 
     let ids = catalog.tracked_ids();
@@ -778,4 +778,121 @@ fn tracked_ids_cover_both_kinds_without_duplicates() {
         ids.len() > 300,
         "every kind is collected, not just consumables"
     );
+}
+
+// --- release identity: expansion, patch and raid tier are separate keys -----
+
+/// §8: patch and raid/tier are stored separately even where the content maps
+/// one to one, and that relationship must not be baked into a key.
+#[test]
+fn a_patch_and_a_tier_are_different_facts() {
+    let catalog = Catalog::from_json(
+        r#"{"id":"t","expansion":"Midnight","catalog_version":4,
+            "patches":[
+              {"patch":"12.0","name":"Launch","started":"2026-03-02"},
+              {"patch":"12.0.5","name":"Patch 12.0.5","started":"2026-04-21"},
+              {"patch":"12.1","name":"The Curse","started":"2026-08-11"}],
+            "raid_tiers":[
+              {"id":"abyss","name":"The Venomous Abyss","patch":"12.1",
+               "opened":"2026-08-18","season":2}],
+            "items":[]}"#,
+    )
+    .unwrap();
+
+    assert_eq!(catalog.catalog_version, 4);
+    assert_eq!(catalog.patches.len(), 3);
+    assert_eq!(catalog.raid_tiers.len(), 1);
+
+    // A patch that opened no raid is normal and says so by having no tier.
+    assert_eq!(catalog.tiers_of_patch("12.0.5").count(), 0);
+    assert_eq!(catalog.tiers_of_patch("12.1").count(), 1);
+
+    // A tier opens on its own day, not on its patch's. That week is one the
+    // market moved in for a reason the patch date cannot explain.
+    let tier = catalog.current_tier().expect("a current tier");
+    let patch = catalog.patches.last().unwrap();
+    assert!(tier.opened_at() > patch.started_at());
+}
+
+/// The label that used to be typed by hand, now built from the three fields it
+/// was summarising.
+#[test]
+fn the_season_label_is_derived_from_what_it_names() {
+    let mut catalog = Catalog::from_json(
+        r#"{"id":"t","expansion":"Midnight",
+            "patches":[{"patch":"12.1","name":"The Curse","started":"2026-08-11"}],
+            "raid_tiers":[{"id":"abyss","name":"The Venomous Abyss","patch":"12.1",
+                           "opened":"2026-08-18","season":2}],
+            "items":[]}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        catalog.season_label(),
+        "Midnight 12.1 \u{2014} Season 2 (The Venomous Abyss)"
+    );
+
+    // A tier the game gives no season number still names itself.
+    catalog.raid_tiers[0].season = None;
+    assert_eq!(
+        catalog.season_label(),
+        "Midnight 12.1 \u{2014} The Venomous Abyss"
+    );
+
+    // And a catalogue whose tiers were never recorded says what it knows
+    // rather than inventing the rest.
+    catalog.raid_tiers.clear();
+    assert_eq!(catalog.season_label(), "Midnight 12.1");
+}
+
+/// The ways release identity can stop being coherent are all data mistakes,
+/// so they are caught by reading the data rather than by hoping.
+#[test]
+fn an_incoherent_release_is_reported_rather_than_rendered() {
+    let orphan = Catalog::from_json(
+        r#"{"id":"t","expansion":"E",
+            "patches":[{"patch":"12.1","name":"P","started":"2026-08-11"}],
+            "raid_tiers":[{"id":"a","name":"A","patch":"12.2","opened":"2026-08-18"}],
+            "items":[]}"#,
+    )
+    .unwrap();
+    let problems = orphan.problems();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].contains("12.2"), "{problems:?}");
+
+    let early = Catalog::from_json(
+        r#"{"id":"t","expansion":"E",
+            "patches":[{"patch":"12.1","name":"P","started":"2026-08-11"}],
+            "raid_tiers":[{"id":"a","name":"A","patch":"12.1","opened":"2026-08-01"}],
+            "items":[]}"#,
+    )
+    .unwrap();
+    assert!(
+        early.problems()[0].contains("before its patch"),
+        "{:?}",
+        early.problems()
+    );
+
+    let duplicated = Catalog::from_json(
+        r#"{"id":"t","expansion":"E",
+            "patches":[{"patch":"12.1","name":"P","started":"2026-08-11"}],
+            "raid_tiers":[
+              {"id":"a","name":"A","patch":"12.1","opened":"2026-08-18"},
+              {"id":"a","name":"B","patch":"12.1","opened":"2026-08-19"}],
+            "items":[]}"#,
+    )
+    .unwrap();
+    assert!(
+        duplicated.problems()[0].contains("declared 2 times"),
+        "{:?}",
+        duplicated.problems()
+    );
+}
+
+/// The shipped file is data somebody edits by hand, so it gets the same check.
+#[test]
+fn the_shipped_catalogues_are_coherent() {
+    for catalog in CatalogSet::embedded().catalogs {
+        let problems = catalog.problems();
+        assert!(problems.is_empty(), "{}: {problems:?}", catalog.id);
+    }
 }

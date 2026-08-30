@@ -481,6 +481,10 @@ fn default_stat() -> Stat {
     Stat::None
 }
 
+fn default_catalog_version() -> u32 {
+    1
+}
+
 impl CatalogItem {
     /// Full icon URL at the given square size. Blizzard serves 56px icons;
     /// larger requests fall back to the same asset, so 56 is what we ask for.
@@ -634,6 +638,37 @@ impl Patch {
     }
 }
 
+/// A raid tier: the content a season of gear is dropped by.
+///
+/// Stored separately from [`Patch`] even though the current expansion maps one
+/// to one, because that relationship is content design and not a law
+/// (`docs/market-analysis.md` §8). A patch can open no tier -- 12.0.5 did not
+/// -- and a tier need not open on the day its patch shipped: 12.1 shipped on
+/// 2026-08-11 and the Venomous Abyss opened a week later, which is a week in
+/// which the market moved for a reason the patch date alone cannot explain.
+///
+/// BoE catalogues follow tiers, so this is what a tier rollover activates and
+/// archives.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RaidTier {
+    /// Stable slug. Goes in the archive's URLs and never changes once shipped.
+    pub id: String,
+    pub name: String,
+    /// The patch this tier opened in, by its `patch` string.
+    pub patch: String,
+    /// `YYYY-MM-DD`, the day the raid opened -- not the day the patch shipped.
+    pub opened: String,
+    /// The season number the game gives it, when it has one.
+    #[serde(default)]
+    pub season: Option<u8>,
+}
+
+impl RaidTier {
+    pub fn opened_at(&self) -> Millis {
+        parse_date(&self.opened).unwrap_or(Millis::ZERO)
+    }
+}
+
 /// `YYYY-MM-DD` to an instant. Returns `None` on anything malformed rather
 /// than silently landing at the epoch.
 fn parse_date(value: &str) -> Option<Millis> {
@@ -652,14 +687,22 @@ pub struct Catalog {
     /// Stable slug, used in URLs: `/wow/consumables/midnight`.
     pub id: String,
     pub expansion: String,
-    /// Which content this catalog is for, shown in the UI so a stale catalog
-    /// is visible rather than silently wrong.
-    pub season: String,
     #[serde(default)]
     pub status: CatalogStatus,
+    /// Bumped whenever the reviewed content of this catalogue changes -- items
+    /// added, a bonus id corrected, a tier appended. It is part of a market's
+    /// release identity: a statistic materialised under version 3 was
+    /// calculated from a different definition of the market than one
+    /// materialised under version 4, and Phase 2 has to be able to say so.
+    #[serde(default = "default_catalog_version")]
+    pub catalog_version: u32,
     /// Patch boundaries, oldest first.
     #[serde(default)]
     pub patches: Vec<Patch>,
+    /// Raid tiers, oldest first. Independent of `patches` on purpose; see
+    /// [`RaidTier`].
+    #[serde(default)]
+    pub raid_tiers: Vec<RaidTier>,
     pub items: Vec<CatalogItem>,
     /// Upgrade bonus id -> what it means. One entry per item level that
     /// actually trades: an item level nobody is selling gets no page, which
@@ -688,6 +731,99 @@ impl Catalog {
 
     pub fn is_active(&self) -> bool {
         self.status.is_active()
+    }
+
+    /// The tier this catalogue is currently about: the latest one that has
+    /// opened. `None` for a catalogue whose tiers were never recorded, which
+    /// is a gap in the data rather than a claim that there were none.
+    pub fn current_tier(&self) -> Option<&RaidTier> {
+        self.raid_tiers.iter().max_by_key(|t| t.opened_at())
+    }
+
+    /// The tiers a patch opened. Usually none or one; the type does not
+    /// promise either, because §8 keeps the relationship out of the keys.
+    pub fn tiers_of_patch(&self, patch: &str) -> impl Iterator<Item = &RaidTier> {
+        self.raid_tiers.iter().filter(move |t| t.patch == patch)
+    }
+
+    /// What the page calls this catalogue: "Midnight 12.1 — Season 2 (The
+    /// Venomous Abyss)".
+    ///
+    /// Derived rather than written down, because it used to be a hand-typed
+    /// string that conflated the expansion, the patch and the raid tier, and a
+    /// hand-typed summary of three facts is three chances to disagree with
+    /// them. Every piece it names is now a field somebody can key by.
+    pub fn season_label(&self) -> String {
+        let mut label = self.expansion.clone();
+        if let Some(patch) = self.patches.iter().max_by_key(|p| p.started_at()) {
+            label.push(' ');
+            label.push_str(&patch.patch);
+        }
+        let Some(tier) = self.current_tier() else {
+            return label;
+        };
+        match tier.season {
+            Some(season) => label.push_str(&format!(" \u{2014} Season {season} ({})", tier.name)),
+            None => label.push_str(&format!(" \u{2014} {}", tier.name)),
+        }
+        label
+    }
+
+    /// What is wrong with this catalogue, as sentences.
+    ///
+    /// Release identity is only worth having if it is coherent, and the ways
+    /// it can stop being coherent are all data mistakes rather than code ones:
+    /// a tier naming a patch that was removed, a raid opening before the patch
+    /// that contains it, two tiers claiming one slug. A test runs this over
+    /// the shipped file, and `/admin` runs it over a catalogue before it may
+    /// be activated -- §8's "an administrator explicitly activates after
+    /// reviewing it" needs something to have been reviewed.
+    pub fn problems(&self) -> Vec<String> {
+        let mut problems = Vec::new();
+
+        for patch in &self.patches {
+            if parse_date(&patch.started).is_none() {
+                problems.push(format!(
+                    "patch {} has an unparseable start date {:?}",
+                    patch.patch, patch.started
+                ));
+            }
+        }
+
+        let mut ids: BTreeMap<&str, u32> = BTreeMap::new();
+        for tier in &self.raid_tiers {
+            *ids.entry(tier.id.as_str()).or_default() += 1;
+        }
+        for (id, count) in ids {
+            if count > 1 {
+                problems.push(format!("raid tier {id:?} is declared {count} times"));
+            }
+        }
+
+        for tier in &self.raid_tiers {
+            if parse_date(&tier.opened).is_none() {
+                problems.push(format!(
+                    "raid tier {:?} has an unparseable open date {:?}",
+                    tier.id, tier.opened
+                ));
+                continue;
+            }
+            let Some(patch) = self.patches.iter().find(|p| p.patch == tier.patch) else {
+                problems.push(format!(
+                    "raid tier {:?} names patch {:?}, which this catalogue does not have",
+                    tier.id, tier.patch
+                ));
+                continue;
+            };
+            if tier.opened_at() < patch.started_at() {
+                problems.push(format!(
+                    "raid tier {:?} opened on {}, before its patch {} shipped on {}",
+                    tier.id, tier.opened, patch.patch, patch.started
+                ));
+            }
+        }
+
+        problems
     }
 
     /// Patch windows as `(patch, from, until)`, the last one open-ended.
