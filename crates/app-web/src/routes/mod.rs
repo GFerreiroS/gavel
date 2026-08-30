@@ -171,6 +171,10 @@ pub fn router<E: Ports>(env: E, shutdown: crate::Shutdown) -> Router {
         // How fast passwords may be guessed, and how fast accounts may be
         // asked about. One instance each for the process, because a limit
         // every request builds for itself is not a limit.
+        // One bounded cache of rendered card fragments, shared by every
+        // request. Like the throttles above: a cache each request builds for
+        // itself is not a cache.
+        .layer(Extension(Arc::new(crate::FragmentCache::new())))
         .layer(Extension(Arc::new(LoginThrottle::new())))
         .layer(Extension(Arc::new(SignUpThrottle::new())))
         // Held by the handlers that keep a connection open, so they can let go

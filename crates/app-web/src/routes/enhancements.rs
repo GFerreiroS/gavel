@@ -13,7 +13,7 @@
 
 use app_core::Ports;
 use app_core::market::{ALL_SLOTS, Catalog, CatalogItem, ItemKind};
-use app_core::repo::{PriceRepository, Store};
+use app_core::repo::{PriceRepository, ReadModelRepository, Store};
 use askama::Template;
 use axum::Extension;
 use axum::extract::{OriginalUri, Query, State};
@@ -71,18 +71,22 @@ pub async fn gems_page<E: Ports>(
 pub async fn enchants_fragment<E: Ports>(
     state: State<E>,
     prefs: Extension<MarketPrefs>,
+    cache: Extension<std::sync::Arc<crate::FragmentCache>>,
     params: Query<SearchParams>,
-) -> WebResult<Html<String>> {
-    fragment(ItemKind::Enchant, state, prefs, params).await
+    headers: HeaderMap,
+) -> WebResult<axum::response::Response> {
+    fragment(ItemKind::Enchant, state, prefs, cache, params, headers).await
 }
 
 /// `GET /partials/gems`
 pub async fn gems_fragment<E: Ports>(
     state: State<E>,
     prefs: Extension<MarketPrefs>,
+    cache: Extension<std::sync::Arc<crate::FragmentCache>>,
     params: Query<SearchParams>,
-) -> WebResult<Html<String>> {
-    fragment(ItemKind::Gem, state, prefs, params).await
+    headers: HeaderMap,
+) -> WebResult<axum::response::Response> {
+    fragment(ItemKind::Gem, state, prefs, cache, params, headers).await
 }
 
 async fn render<E: Ports>(
@@ -125,10 +129,44 @@ async fn fragment<E: Ports>(
     kind: ItemKind,
     State(env): State<E>,
     Extension(prefs): Extension<MarketPrefs>,
+    Extension(cache): Extension<std::sync::Arc<crate::FragmentCache>>,
     Query(params): Query<SearchParams>,
+    headers: HeaderMap,
+) -> WebResult<axum::response::Response> {
+    if params.q.as_deref().is_some_and(|q| !q.trim().is_empty()) {
+        return Ok(axum::response::IntoResponse::into_response(
+            render_fragment(kind, &env, prefs, &params).await?,
+        ));
+    }
+
+    let key = crate::fragment_cache::FragmentKey::new(
+        Text::of(kind).fragment_path,
+        env.store()
+            .read_model()
+            .published()
+            .await?
+            .map(|v| v.version),
+        params.expansion.as_deref().unwrap_or(""),
+        prefs.region.as_str(),
+        prefs.baseline_days,
+        "",
+        prefs.locale.code(),
+        params.group.as_deref(),
+    );
+    crate::fragment_cache::respond(&cache, &headers, key, async {
+        Ok(render_fragment(kind, &env, prefs, &params).await?.0)
+    })
+    .await
+}
+
+async fn render_fragment<E: Ports>(
+    kind: ItemKind,
+    env: &E,
+    prefs: MarketPrefs,
+    params: &SearchParams,
 ) -> WebResult<Html<String>> {
     let view = build(
-        &env,
+        env,
         kind,
         prefs,
         params.q.as_deref(),

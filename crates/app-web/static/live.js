@@ -1,9 +1,9 @@
 // Live cluster updates.
 //
 // One SSE connection replaces per-element polling: the server says *that*
-// something changed, the page re-fetches only the fragments that care. The
-// fragments keep a slow `every Nms` trigger as a fallback, so if the stream is
-// unavailable the UI still converges -- just less promptly.
+// something changed, the page re-fetches only the fragments that care. A slow
+// poll takes over while the stream is down, so the UI still converges -- just
+// less promptly -- and stops again the moment it comes back.
 //
 // Deliberately dependency-free: the htmx SSE extension would be another file to
 // ship, and this is nine lines.
@@ -24,6 +24,34 @@
   var RETRY_MS = 5000;
   var DEBOUNCE_MS = 200;
   var MAX_STALENESS_MS = 1000;
+
+  // The fallback poll lives here rather than as an `every Nms` on every live
+  // fragment, and that is the point: a trigger in the markup cannot be turned
+  // off when the stream comes up, so the page was polling *and* listening --
+  // the same work twice, and on a market page a refetch of every card.
+  //
+  // Now it is a fallback in the sense the word means: it runs only while the
+  // stream is not open. `docs/market-analysis.md` §15: "Periodic HTMX polling
+  // is a fallback only while SSE is disconnected; it does not run alongside a
+  // healthy stream."
+  var pollMs = parseInt(document.body.getAttribute("data-poll-ms"), 10);
+  var poll = null;
+
+  function startPolling() {
+    if (poll || !pollMs) return;
+    poll = setInterval(function () {
+      document.body.dispatchEvent(new CustomEvent("cluster-changed"));
+    }, pollMs);
+  }
+
+  function stopPolling() {
+    if (!poll) return;
+    clearInterval(poll);
+    poll = null;
+  }
+
+  // Until the first connection opens there is no stream, so there is a poll.
+  startPolling();
 
   function connect() {
     var source = new EventSource("/events/stream");
@@ -51,8 +79,12 @@
 
     source.addEventListener("cluster", scheduleRefresh);
 
+    source.onopen = stopPolling;
+
     source.onerror = function () {
       source.close();
+      // Back to asking, until there is something listening again.
+      startPolling();
       setTimeout(connect, RETRY_MS);
     };
   }

@@ -267,27 +267,69 @@ async fn render_page<E: Ports>(
 pub async fn patches<E: Ports>(
     State(env): State<E>,
     Extension(prefs): Extension<MarketPrefs>,
+    Extension(cache): Extension<std::sync::Arc<crate::FragmentCache>>,
     Query(query): Query<ConsumablesQuery>,
-) -> WebResult<Html<String>> {
+    headers: HeaderMap,
+) -> WebResult<axum::response::Response> {
     let id = query.expansion.filter(|id| !id.is_empty());
-    page(
-        &PatchesFragment {
-            patches: build_patches(&env, prefs, id.as_deref()).await?,
-        },
-        prefs.locale,
-    )
+    let key = crate::fragment_cache::FragmentKey::new(
+        "patches",
+        env.store()
+            .read_model()
+            .published()
+            .await?
+            .map(|v| v.version),
+        id.as_deref().unwrap_or(""),
+        prefs.region.as_str(),
+        // The patch table is not measured against a comparison window, so the
+        // window is not part of what it says and must not split its cache.
+        0,
+        "",
+        prefs.locale.code(),
+        None,
+    );
+    crate::fragment_cache::respond(&cache, &headers, key, async {
+        Ok(page(
+            &PatchesFragment {
+                patches: build_patches(&env, prefs, id.as_deref()).await?,
+            },
+            prefs.locale,
+        )?
+        .0)
+    })
+    .await
 }
 
 pub async fn fragment<E: Ports>(
     State(env): State<E>,
     Extension(prefs): Extension<MarketPrefs>,
-) -> WebResult<Html<String>> {
-    page(
-        &ConsumablesFragment {
-            market: build(&env, prefs, None, super::gear::Detail::Full).await?,
-        },
-        prefs.locale,
-    )
+    Extension(cache): Extension<std::sync::Arc<crate::FragmentCache>>,
+    headers: HeaderMap,
+) -> WebResult<axum::response::Response> {
+    let key = crate::fragment_cache::FragmentKey::new(
+        "consumables",
+        env.store()
+            .read_model()
+            .published()
+            .await?
+            .map(|v| v.version),
+        "",
+        prefs.region.as_str(),
+        prefs.baseline_days,
+        "",
+        prefs.locale.code(),
+        None,
+    );
+    crate::fragment_cache::respond(&cache, &headers, key, async {
+        Ok(page(
+            &ConsumablesFragment {
+                market: build(&env, prefs, None, super::gear::Detail::Full).await?,
+            },
+            prefs.locale,
+        )?
+        .0)
+    })
+    .await
 }
 
 /// Resolve which catalog the page is about: an explicit id, else the active

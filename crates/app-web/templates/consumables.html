@@ -21,7 +21,7 @@
      {% if market.archived %}
      hx-trigger="load"
      {% else %}
-     hx-trigger="load, cluster-changed from:body, every {{ layout.fallback_poll_ms }}ms"
+     hx-trigger="load, cluster-changed from:body"
      {% endif %}
      hx-swap="innerHTML">
   <p class="hint page-meta" aria-busy="true">{{ "Loading prices…"|t }}</p>

@@ -178,9 +178,11 @@ pub async fn fragment<E: Ports>(
     state: State<E>,
     prefs: Extension<MarketPrefs>,
     chosen: Extension<RealmChoice>,
+    cache: Extension<std::sync::Arc<crate::FragmentCache>>,
     params: Query<SearchParams>,
-) -> WebResult<Html<String>> {
-    fragment_of(ItemKind::Boe, state, prefs, chosen, params).await
+    headers: HeaderMap,
+) -> WebResult<axum::response::Response> {
+    fragment_of(ItemKind::Boe, state, prefs, chosen, cache, params, headers).await
 }
 
 /// `GET /partials/recipes`
@@ -188,23 +190,77 @@ pub async fn recipes_fragment<E: Ports>(
     state: State<E>,
     prefs: Extension<MarketPrefs>,
     chosen: Extension<RealmChoice>,
+    cache: Extension<std::sync::Arc<crate::FragmentCache>>,
     params: Query<SearchParams>,
-) -> WebResult<Html<String>> {
-    fragment_of(ItemKind::Recipe, state, prefs, chosen, params).await
+    headers: HeaderMap,
+) -> WebResult<axum::response::Response> {
+    fragment_of(
+        ItemKind::Recipe,
+        state,
+        prefs,
+        chosen,
+        cache,
+        params,
+        headers,
+    )
+    .await
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn fragment_of<E: Ports>(
     kind: ItemKind,
     State(env): State<E>,
     Extension(prefs): Extension<MarketPrefs>,
     Extension(chosen): Extension<RealmChoice>,
+    Extension(cache): Extension<std::sync::Arc<crate::FragmentCache>>,
     Query(params): Query<SearchParams>,
+    headers: HeaderMap,
+) -> WebResult<axum::response::Response> {
+    if params.q.as_deref().is_some_and(|q| !q.trim().is_empty()) {
+        return Ok(axum::response::IntoResponse::into_response(
+            render_fragment(kind, &env, prefs, &chosen, &params).await?,
+        ));
+    }
+
+    let key = crate::fragment_cache::FragmentKey::new(
+        match kind {
+            ItemKind::Recipe => "recipes",
+            _ => "gear",
+        },
+        env.store()
+            .read_model()
+            .published()
+            .await?
+            .map(|v| v.version),
+        params.expansion.as_deref().unwrap_or(""),
+        prefs.region.as_str(),
+        prefs.baseline_days,
+        // The realm is part of what a per-realm fragment says, so it is part
+        // of what it is filed under.
+        chosen.0.as_deref().unwrap_or(""),
+        prefs.locale.code(),
+        params.group.as_deref(),
+    );
+    crate::fragment_cache::respond(&cache, &headers, key, async {
+        Ok(render_fragment(kind, &env, prefs, &chosen, &params)
+            .await?
+            .0)
+    })
+    .await
+}
+
+async fn render_fragment<E: Ports>(
+    kind: ItemKind,
+    env: &E,
+    prefs: MarketPrefs,
+    chosen: &RealmChoice,
+    params: &SearchParams,
 ) -> WebResult<Html<String>> {
     let gear = build(
-        &env,
+        env,
         kind,
         prefs,
-        &chosen,
+        chosen,
         params.expansion.as_deref(),
         params.q.as_deref(),
         Detail::Full,

@@ -58,11 +58,16 @@ class Endpoint:
 
 
 ENDPOINTS = [
-    Endpoint("gear shell", "/wow/auctions/gear", "paints immediately; one small query"),
-    Endpoint("gear cards", "/partials/gear", "EU, all realms: nine cards from ~18k markets"),
-    Endpoint("consumable cards", "/partials/consumables", "curated commodity list"),
-    Endpoint("reagent cards", "/partials/reagents", "every reagent of the expansion: 223 cards"),
-    Endpoint("enchant cards", "/partials/enchants", "generated from the catalogue"),
+    Endpoint(
+        "gear page",
+        "/wow/auctions/gear",
+        "the whole page in one response: shell and nine cards, no second trip",
+    ),
+    Endpoint("gear cards", "/partials/gear", "the fragment the search box swaps in"),
+    Endpoint("consumable cards", "/partials/consumables", "curated commodity list; the patch table is its own fragment"),
+    Endpoint("reagent cards", "/partials/reagents", "223 reagents: a first group inline, the rest on reveal"),
+    Endpoint("enchant cards", "/partials/enchants", "57 enchants, grouped by slot"),
+    Endpoint("patch table", "/partials/patches", "659 rows; fetched only when scrolled to"),
     Endpoint("commodity analysis", "/wow/item/237367", "one market's whole history, reduced per request"),
     Endpoint("BoE analysis", "/wow/gear/271441/hero", "one track on every realm of a region"),
 ]
@@ -245,6 +250,12 @@ def quantile(values: list[float], fraction: float) -> float:
 
 
 def measure(port: int, endpoint: Endpoint, warm: int) -> dict:
+    # One request that is not timed. Since the fragment cache exists, the first
+    # request to a key builds it and every later one serves it -- so timing the
+    # first alongside the rest made "warm p95" the cost of a *cold* build
+    # wearing a warm label. The build has its own column: `cold_ms`, taken on a
+    # fresh process, which is exactly what it is.
+    fetch(port, endpoint.path)
     warmed = [fetch(port, endpoint.path) for _ in range(warm)]
     bad = [reply for reply in warmed if reply.status != 200]
     if bad:
@@ -304,6 +315,10 @@ def run_profile(profile: str, database: Path, warm: int, logs: Path) -> dict:
     # pool are empty. It does not mean the file is out of the operating
     # system's cache, which cannot be arranged without root, and the number is
     # reported as what it is.
+    # Cold is the build: a process that has never answered this endpoint has an
+    # empty fragment cache and an empty SQLite page cache, so this is what the
+    # first reader after a publication pays and every reader after them does
+    # not.
     for endpoint in ENDPOINTS:
         with Server(binary, database, port, logs / f"{profile}-cold.log"):
             first = fetch(port, endpoint.path)

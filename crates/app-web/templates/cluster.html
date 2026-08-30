@@ -2,7 +2,7 @@
 {% block content %}
 <h1>{{ "Cluster"|t }}</h1>
 
-<div id="stats" hx-get="/partials/stats" hx-trigger="cluster-changed from:body, every {{ layout.fallback_poll_ms }}ms" hx-swap="innerHTML">
+<div id="stats" hx-get="/partials/stats" hx-trigger="cluster-changed from:body" hx-swap="innerHTML">
   {% include "partials/stats.html" %}
 </div>
 
@@ -14,7 +14,7 @@
 
 <article>
   <h2>{{ "Events"|t }}</h2>
-  <div id="events" hx-get="/partials/events" hx-trigger="cluster-changed from:body, every {{ layout.fallback_poll_ms }}ms" hx-swap="innerHTML">
+  <div id="events" hx-get="/partials/events" hx-trigger="cluster-changed from:body" hx-swap="innerHTML">
     {% include "partials/events.html" %}
   </div>
 </article>

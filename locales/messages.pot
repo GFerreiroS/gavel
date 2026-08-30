@@ -5,7 +5,7 @@
 # renders as English rather than as a missing key.
 msgid ""
 msgstr ""
-"Project-Id-Version: wow-auction-tracker 272a5a5-dirty\n"
+"Project-Id-Version: wow-auction-tracker 7590db5-dirty\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -1001,7 +1001,7 @@ msgstr ""
 #: crates/app-web/templates/account.html:29
 #: crates/app-web/templates/account.html:35
 #: crates/app-web/templates/alerts.html:9
-#: crates/app-web/templates/base.html:57
+#: crates/app-web/templates/base.html:62
 msgid "Sign in"
 msgstr ""
 
@@ -1329,7 +1329,7 @@ msgstr ""
 msgid "crit"
 msgstr ""
 
-#: crates/app-web/templates/base.html:68
+#: crates/app-web/templates/base.html:73
 msgid "debug controls enabled"
 msgstr ""
 
@@ -1390,7 +1390,7 @@ msgstr ""
 msgid "invalid username or password"
 msgstr ""
 
-#: crates/app-web/templates/base.html:46
+#: crates/app-web/templates/base.html:51
 msgid "item text only"
 msgstr ""
 
@@ -1791,6 +1791,6 @@ msgstr ""
 msgid "{} — from {}"
 msgstr ""
 
-#: crates/app-web/templates/base.html:45
+#: crates/app-web/templates/base.html:50
 msgid "{}% translated"
 msgstr ""

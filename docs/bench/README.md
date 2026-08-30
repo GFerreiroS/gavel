@@ -78,6 +78,13 @@ and materialises on first start, and a benchmark that mutates the archive it is
 measuring has changed the thing under it -- and would break the manifest's
 SHA-256, which is the fixture's whole claim to being reproducible.
 
+**Warm means the fragment cache is warm.** A priming request is made and not
+timed. Since the cache exists, the first request to a key builds it and every
+later one serves it, so timing the first alongside the rest reported a cold
+build as a warm p95. What the build costs is the cold column, on a fresh
+process -- which is what the first reader after each publication pays and every
+reader after them does not.
+
 **A regression needs both quantiles to move.** At 15 warm samples the
 nearest-rank p95 is the fifteenth of fifteen: the slowest request, not a
 percentile, and one scheduling hiccup moves it by a third. That produced a

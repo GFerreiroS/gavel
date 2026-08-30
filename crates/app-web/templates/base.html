@@ -12,7 +12,12 @@
   <script src="/static/htmx.min.js?v={{ layout.htmx_version }}" defer></script>
   <script src="/static/live.js?v={{ layout.live_version }}" defer></script>
 </head>
-<body hx-headers='{"X-CSRF-Token": "{{ layout.csrf }}"}'>
+{# `data-poll-ms` is the fallback interval `live.js` uses while the live
+   stream is down. It is not an `hx-trigger`: polling alongside a healthy
+   stream is the same work twice, and every fragment carrying its own `every
+   Nms` meant there was no way to stop it when the stream came up. #}
+<body hx-headers='{"X-CSRF-Token": "{{ layout.csrf }}"}'
+      data-poll-ms="{{ layout.fallback_poll_ms }}">
   {# Pico's own nav: two lists in one <nav>, brand on the left, everything
      else on the right. It spaces and aligns them itself -- the hand-rolled
      flexbox this replaced collided with the brand at narrow widths. #}

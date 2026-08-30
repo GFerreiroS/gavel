@@ -5,7 +5,7 @@
 
 <div id="job-detail"
      hx-get="/partials/jobs/{{ detail.job.raw_id }}"
-     {% if !detail.job.finished %}hx-trigger="cluster-changed from:body, every {{ layout.fallback_poll_ms }}ms"{% endif %}
+     {% if !detail.job.finished %}hx-trigger="cluster-changed from:body"{% endif %}
      hx-swap="innerHTML">
   {% include "partials/job_detail.html" %}
 </div>

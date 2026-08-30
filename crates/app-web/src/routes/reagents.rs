@@ -9,7 +9,7 @@
 
 use app_core::Ports;
 use app_core::market::{ALL_PROFESSIONS, ItemKind};
-use app_core::repo::{PriceRepository, Store};
+use app_core::repo::{PriceRepository, ReadModelRepository, Store};
 use askama::Template;
 use axum::Extension;
 use axum::extract::{OriginalUri, Query, State};
@@ -94,10 +94,47 @@ pub async fn page_handler<E: Ports>(
 pub async fn fragment<E: Ports>(
     State(env): State<E>,
     Extension(prefs): Extension<MarketPrefs>,
+    Extension(cache): Extension<std::sync::Arc<crate::FragmentCache>>,
     Query(params): Query<SearchParams>,
+    headers: HeaderMap,
+) -> WebResult<axum::response::Response> {
+    // A search is the reader's own question and rarely asked twice, so it is
+    // built and not cached: caching it would fill the bound with one visitor's
+    // keystrokes.
+    if params.q.as_deref().is_some_and(|q| !q.trim().is_empty()) {
+        return Ok(axum::response::IntoResponse::into_response(
+            render_fragment(&env, prefs, &params).await?,
+        ));
+    }
+
+    let key = crate::fragment_cache::FragmentKey::new(
+        "reagents",
+        env.store()
+            .read_model()
+            .published()
+            .await?
+            .map(|v| v.version),
+        params.expansion.as_deref().unwrap_or(""),
+        prefs.region.as_str(),
+        prefs.baseline_days,
+        "",
+        prefs.locale.code(),
+        params.group.as_deref(),
+    );
+    crate::fragment_cache::respond(&cache, &headers, key, async {
+        Ok(render_fragment(&env, prefs, &params).await?.0)
+    })
+    .await
+}
+
+/// Build this fragment's HTML, whichever way it was asked for.
+async fn render_fragment<E: Ports>(
+    env: &E,
+    prefs: MarketPrefs,
+    params: &SearchParams,
 ) -> WebResult<Html<String>> {
     let view = build(
-        &env,
+        env,
         prefs,
         params.q.as_deref(),
         params.expansion.as_deref(),
