@@ -4,7 +4,7 @@
 //! longer than a screen belongs in `app-core` or in the cluster runtime.
 
 mod account;
-mod admin;
+pub(crate) mod admin;
 mod alerts;
 mod cluster;
 mod debug;
@@ -73,6 +73,10 @@ pub fn router<E: Ports>(env: E, shutdown: crate::Shutdown) -> Router {
             "/admin",
             get(admin::page_handler::<E>).post(admin::toggle::<E>),
         )
+        // Its own route rather than another `switch` value on the one above:
+        // a switch is reversible and an activation archives the tier it
+        // replaced, which is not the same kind of button.
+        .route("/admin/release", post(admin::activate::<E>))
         .route("/nodes/{id}/roles", post(cluster::set_role::<E>))
         // The fragments behind those pages, which would otherwise answer the
         // same questions to anyone who asked them directly.
@@ -200,4 +204,60 @@ async fn healthz() -> StatusCode {
 
 async fn not_found() -> Response {
     crate::error::WebError(app_core::AppError::NotFound).into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    /// Every route module that serves the product, and the source of each.
+    ///
+    /// `include_str!` rather than reading the directory: the paths are checked
+    /// at compile time, so a module that is renamed breaks the build instead
+    /// of quietly dropping out of the check.
+    const PUBLIC_ROUTES: &[(&str, &str)] = &[
+        ("market.rs", include_str!("market.rs")),
+        ("gear.rs", include_str!("gear.rs")),
+        ("gear_stats.rs", include_str!("gear_stats.rs")),
+        ("reagents.rs", include_str!("reagents.rs")),
+        ("enhancements.rs", include_str!("enhancements.rs")),
+        ("item.rs", include_str!("item.rs")),
+        ("tooltip.rs", include_str!("tooltip.rs")),
+        ("alerts.rs", include_str!("alerts.rs")),
+        ("realms.rs", include_str!("realms.rs")),
+        ("wow.rs", include_str!("wow.rs")),
+        ("pages.rs", include_str!("pages.rs")),
+    ];
+
+    /// A `draft_ptr` catalogue is administrator-only
+    /// (`docs/market-analysis.md` §8), and the gate is one function --
+    /// `Ports::public_catalog` -- rather than a check every handler
+    /// remembers. `CatalogSet::by_id` is the state-blind lookup underneath it,
+    /// and a public route reaching past the gate to call it directly would
+    /// serve a PTR catalogue to anybody who guessed its id.
+    ///
+    /// The same shape of rule as §7's operations gate, and the same reason for
+    /// testing it structurally: eleven handlers each remembering to ask is
+    /// eleven chances to forget, and the one that forgets is the one that
+    /// leaks.
+    #[test]
+    fn no_public_route_reaches_past_the_catalogue_gate() {
+        let mut offenders: Vec<&str> = Vec::new();
+        for (name, source) in PUBLIC_ROUTES {
+            if source.contains("catalogs().by_id(") || source.contains("catalogs.by_id(") {
+                offenders.push(name);
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "these call the state-blind lookup instead of `Ports::public_catalog`, \
+             which would serve a PTR catalogue to anybody who guessed its id: {offenders:?}"
+        );
+    }
+
+    /// And the check above is only worth having if the string it looks for is
+    /// one that really appears when the rule is broken.
+    #[test]
+    fn the_gate_check_can_fail() {
+        let broken = "let c = env.catalogs().by_id(&id);";
+        assert!(broken.contains("catalogs().by_id("));
+    }
 }

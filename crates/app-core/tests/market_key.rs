@@ -257,7 +257,11 @@ fn a_boe_groups_on_the_track_bonus_not_on_the_rank() {
 #[test]
 fn the_shipped_catalogue_produces_decodable_keys() {
     let catalogs = app_core::market::CatalogSet::embedded();
-    let catalog = catalogs.ordered().first().copied().expect("a catalogue");
+    let catalog = catalogs
+        .ordered_by(|c| c.shipped_status())
+        .first()
+        .copied()
+        .expect("a catalogue");
 
     let mut seen = 0;
     for item in catalog.tracked_ids() {

@@ -12,6 +12,7 @@ pub mod catalog;
 pub mod collector;
 pub mod key;
 pub mod realm;
+pub mod release;
 pub mod stats;
 
 use std::fmt;
@@ -31,6 +32,7 @@ pub use key::{BadMarketKey, MarketKey};
 pub use realm::{
     GearListing, Realm, RealmAuctionProvider, RealmId, RealmSample, RealmSnapshot, summarise_realm,
 };
+pub use release::ReleaseStates;
 
 pub use stats::{PriceStats, summarise};
 

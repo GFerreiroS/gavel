@@ -245,7 +245,7 @@ async fn build<E: Ports>(
         expansion_href: format!("/wow/auctions?expansion={}", catalog.id),
         region: region.to_string().to_uppercase(),
         region_code: region.as_str(),
-        archived: !catalog.is_active(),
+        archived: !env.catalog_state(catalog).is_collected(),
 
         has_data: stats.samples > 0,
         current: stats

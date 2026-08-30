@@ -158,7 +158,9 @@ fn stale_history_falls_out_of_the_baseline_window() {
 #[test]
 fn the_shipped_catalog_parses_and_is_coherent() {
     let catalogs = CatalogSet::embedded();
-    let catalog = catalogs.active().expect("one expansion must be active");
+    let catalog = catalogs
+        .shipped_active()
+        .expect("one expansion must be active");
     assert!(!catalog.season_label().is_empty());
     assert!(catalog.items.len() >= 20, "got {}", catalog.items.len());
 
@@ -194,7 +196,7 @@ fn the_shipped_catalog_parses_and_is_coherent() {
 #[test]
 fn catalog_lookups_resolve_ranks() {
     let catalogs = CatalogSet::embedded();
-    let catalog = catalogs.active().unwrap();
+    let catalog = catalogs.shipped_active().unwrap();
 
     let flask = catalog.find(ItemId(241324)).expect("flask is tracked");
     assert_eq!(flask.audience, Audience::Common);
@@ -246,7 +248,7 @@ fn exactly_one_expansion_is_collected() {
     let active: Vec<&str> = catalogs
         .catalogs
         .iter()
-        .filter(|c| c.is_active())
+        .filter(|c| c.shipped_status().is_active())
         .map(|c| c.id.as_str())
         .collect();
     assert_eq!(
@@ -266,7 +268,7 @@ fn exactly_one_expansion_is_collected() {
 #[test]
 fn patch_windows_are_contiguous_and_end_open() {
     let catalogs = CatalogSet::embedded();
-    let catalog = catalogs.active().unwrap();
+    let catalog = catalogs.shipped_active().unwrap();
     let windows = catalog.patch_windows();
     assert!(windows.len() >= 2, "need patches to segment history");
 
@@ -301,12 +303,16 @@ fn archived_catalogs_are_selectable_but_not_active() {
     )
     .unwrap();
 
-    assert_eq!(set.active().unwrap().id, "new");
+    assert_eq!(set.shipped_active().unwrap().id, "new");
     assert!(set.by_id("old").is_some(), "archives stay addressable");
-    assert!(!set.by_id("old").unwrap().is_active());
+    assert!(!set.by_id("old").unwrap().shipped_status().is_active());
 
     // Display order puts the live one first, then newest archive.
-    let order: Vec<&str> = set.ordered().iter().map(|c| c.id.as_str()).collect();
+    let order: Vec<&str> = set
+        .ordered_by(|c| c.shipped_status())
+        .iter()
+        .map(|c| c.id.as_str())
+        .collect();
     assert_eq!(order, vec!["new", "old"]);
 
     // The cross-expansion index still resolves an archived item, which is what
@@ -323,8 +329,12 @@ fn an_expansion_with_nothing_active_still_reads() {
              "patches":[],"items":[]}]}"#,
     )
     .unwrap();
-    assert!(set.active().is_none(), "nothing to collect");
-    assert_eq!(set.ordered().len(), 1, "but still browsable");
+    assert!(set.shipped_active().is_none(), "nothing to collect");
+    assert_eq!(
+        set.ordered_by(|c| c.shipped_status()).len(),
+        1,
+        "but still browsable"
+    );
 }
 
 // --- a full collection pass ----------------------------------------------
@@ -607,7 +617,7 @@ fn the_embedded_catalog_carries_every_kind() {
     use app_core::market::ItemKind;
 
     let set = CatalogSet::embedded();
-    let active = set.active().expect("an active catalog");
+    let active = set.shipped_active().expect("an active catalog");
 
     let mut total = 0;
     for kind in ItemKind::ALL {
@@ -628,7 +638,7 @@ fn reagents_do_not_leak_onto_the_consumables_page() {
     use app_core::market::{Audience, ItemKind};
 
     let set = CatalogSet::embedded();
-    let active = set.active().expect("an active catalog");
+    let active = set.shipped_active().expect("an active catalog");
     // Reagents, enchants and gems are all `common` audience, so an audience
     // filter alone would show them next to the flasks.
     for item in active.by_audience(Audience::Common) {
@@ -650,7 +660,7 @@ fn only_reagents_carry_a_profession_and_only_enchants_carry_a_slot() {
     use app_core::market::ItemKind;
 
     let set = CatalogSet::embedded();
-    let active = set.active().expect("an active catalog");
+    let active = set.shipped_active().expect("an active catalog");
     for item in &active.items {
         let (profession, slot) = (item.profession.is_some(), item.slot.is_some());
         let (wants_profession, wants_slot) = match item.kind {
@@ -684,7 +694,7 @@ fn professions_partition_the_recipes() {
     use app_core::market::{ALL_PROFESSIONS, ItemKind};
 
     let set = CatalogSet::embedded();
-    let active = set.active().expect("an active catalog");
+    let active = set.shipped_active().expect("an active catalog");
     let grouped: usize = ALL_PROFESSIONS
         .into_iter()
         .map(|p| active.recipes_for(p).count())
@@ -701,7 +711,7 @@ fn slots_partition_the_enchants() {
     use app_core::market::{ALL_SLOTS, ItemKind};
 
     let set = CatalogSet::embedded();
-    let active = set.active().expect("an active catalog");
+    let active = set.shipped_active().expect("an active catalog");
     let grouped: usize = ALL_SLOTS
         .into_iter()
         .map(|s| active.by_slot(s).count())
@@ -718,7 +728,7 @@ fn professions_partition_the_reagents() {
     use app_core::market::{ALL_PROFESSIONS, ItemKind};
 
     let set = CatalogSet::embedded();
-    let active = set.active().expect("an active catalog");
+    let active = set.shipped_active().expect("an active catalog");
     let grouped: usize = ALL_PROFESSIONS
         .into_iter()
         .map(|p| active.by_profession(p).count())
@@ -738,7 +748,7 @@ fn per_realm_items_stay_out_of_the_commodity_filter() {
     use app_core::market::ItemKind;
 
     let set = CatalogSet::embedded();
-    let active = set.active().expect("an active catalog");
+    let active = set.shipped_active().expect("an active catalog");
     let commodities = active.tracked_ids();
     let realm = active.realm_tracked_ids();
 
@@ -768,7 +778,7 @@ fn per_realm_items_stay_out_of_the_commodity_filter() {
 #[test]
 fn tracked_ids_cover_both_kinds_without_duplicates() {
     let set = CatalogSet::embedded();
-    let active = set.active().expect("an active catalog");
+    let active = set.shipped_active().expect("an active catalog");
     let ids = active.tracked_ids();
     let mut sorted = ids.clone();
     sorted.sort();

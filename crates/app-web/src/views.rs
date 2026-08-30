@@ -437,10 +437,40 @@ pub struct GearModifierStat {
 /// The collection settings page.
 #[derive(Debug, Clone)]
 pub struct AdminView {
+    pub releases: Vec<AdminRelease>,
     pub categories: Vec<AdminCategory>,
     pub regions: Vec<AdminRegion>,
     pub realms_enabled: usize,
     pub realms_total: usize,
+}
+
+/// One catalogue and where it is in its life.
+///
+/// The only place a `draft_ptr` catalogue is visible at all: it is
+/// administrator-only, it has no prices, and it is here so that somebody can
+/// review it and decide (`docs/market-analysis.md` §8).
+#[derive(Debug, Clone)]
+pub struct AdminRelease {
+    pub id: String,
+    pub expansion: String,
+    /// "Midnight 12.1 — Season 2 (The Venomous Abyss)". Derived, not typed.
+    pub season: String,
+    /// `draft_ptr`, `active`, `archived`. The machine word, for the form.
+    pub state: &'static str,
+    /// The word a person reads.
+    pub state_label: &'static str,
+    pub patch: String,
+    pub tier: String,
+    pub items: usize,
+    pub catalog_version: u32,
+    /// Whether the Activate button is offered. False for the catalogue that
+    /// is already active, and false for one whose data does not hold
+    /// together -- §8 activates a catalogue *after reviewing it*, and a
+    /// review that cannot fail is not one.
+    pub activatable: bool,
+    /// What is wrong with it, in the reader's own words. Empty is the normal
+    /// case and renders nothing.
+    pub problems: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

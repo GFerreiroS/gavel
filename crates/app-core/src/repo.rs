@@ -9,6 +9,7 @@ use std::future::Future;
 use cluster_core::Millis;
 
 use crate::error::RepoResult;
+use crate::market::catalog::CatalogStatus;
 use crate::market::{Alert, ItemId, PriceSample, Realm, RealmId, RealmSample, Region, WindowStats};
 
 // Job and event persistence are cluster concepts, so their ports live in
@@ -289,6 +290,64 @@ pub trait WatchRepository: Send + Sync + 'static {
     ) -> impl Future<Output = RepoResult<()>> + Send;
 }
 
+/// One catalogue's place in its life, as the database has it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Release {
+    pub catalog: String,
+    pub state: CatalogStatus,
+    pub changed_at: Millis,
+    /// When it became active, if it ever did. Kept apart from `changed_at` so
+    /// an archived tier can still say when it was the current one.
+    pub activated_at: Option<Millis>,
+    pub archived_at: Option<Millis>,
+}
+
+/// What one activation did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Activation {
+    pub activated: String,
+    /// The catalogue this activation archived, if there was one. §8: a new
+    /// tier archives its predecessor, and the two happen together or not at
+    /// all.
+    pub archived: Option<String>,
+}
+
+/// The lifecycle of the shipped catalogues.
+///
+/// The catalogue's *content* -- items, tracks, bonus ids -- stays in
+/// `catalogs.json`, reviewed in version control, which is where
+/// `scripts/catalog-sync.py` writes it and where a patch's diff can be read.
+/// Only the state lives here, because that is the part a person changes on a
+/// running instance. It is the same split `SettingsRepository` already makes:
+/// what exists is reviewed code, what is switched on is a runtime decision.
+pub trait ReleaseRepository: Send + Sync + 'static {
+    /// Every catalogue the database has a state for.
+    fn releases(&self) -> impl Future<Output = RepoResult<Vec<Release>>> + Send;
+
+    /// Record a starting state for catalogues the database has never seen.
+    ///
+    /// Never overwrites one: a state a person set outranks the one the binary
+    /// shipped with, or upgrading would silently undo an activation. Returns
+    /// how many rows were new.
+    fn seed(
+        &self,
+        defaults: &[(String, CatalogStatus)],
+        now: Millis,
+    ) -> impl Future<Output = RepoResult<u64>> + Send;
+
+    /// Make one catalogue active and archive whatever was.
+    ///
+    /// One transaction, because §8 says so and because the alternative states
+    /// -- none active, or two -- are both worse than the change not happening.
+    /// Activating the already-active catalogue is not an error and archives
+    /// nothing; the button that does this is one a person may press twice.
+    fn activate(
+        &self,
+        catalog: &str,
+        now: Millis,
+    ) -> impl Future<Output = RepoResult<Activation>> + Send;
+}
+
 pub trait Store: Send + Sync + 'static {
     type Users: UserRepository;
     type Sessions: SessionRepository;
@@ -300,6 +359,7 @@ pub trait Store: Send + Sync + 'static {
     type RealmPrices: RealmPriceRepository;
     type Settings: SettingsRepository;
     type Watches: WatchRepository;
+    type Releases: ReleaseRepository;
 
     fn users(&self) -> &Self::Users;
     fn sessions(&self) -> &Self::Sessions;
@@ -314,4 +374,6 @@ pub trait Store: Send + Sync + 'static {
     fn settings(&self) -> &Self::Settings;
     /// Which items each person asked to be told about.
     fn watches(&self) -> &Self::Watches;
+    /// Where each catalogue is in its life.
+    fn releases(&self) -> &Self::Releases;
 }

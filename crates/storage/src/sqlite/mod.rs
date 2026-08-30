@@ -7,6 +7,7 @@ mod jobs;
 mod kv;
 mod prices;
 mod realm_prices;
+mod releases;
 mod sessions;
 mod settings;
 mod users;
@@ -27,6 +28,7 @@ pub use jobs::SqliteJobs;
 pub use kv::SqliteKv;
 pub use prices::SqlitePrices;
 pub use realm_prices::SqliteRealmPrices;
+pub use releases::SqliteReleases;
 pub use sessions::SqliteSessions;
 pub use settings::SqliteSettings;
 pub use users::SqliteUsers;
@@ -116,6 +118,7 @@ pub struct SqliteStore {
     realm_prices: SqliteRealmPrices,
     settings: SqliteSettings,
     watches: SqliteWatches,
+    releases: SqliteReleases,
 }
 
 impl SqliteStore {
@@ -196,6 +199,7 @@ impl SqliteStore {
             prices: SqlitePrices::new(pool.clone()),
             realm_prices: SqliteRealmPrices::new(pool.clone()),
             settings: SqliteSettings::new(pool.clone()),
+            releases: SqliteReleases::new(pool.clone()),
             watches: SqliteWatches::new(pool.clone()),
             pool,
         })
@@ -282,6 +286,7 @@ impl Store for SqliteStore {
     type RealmPrices = SqliteRealmPrices;
     type Settings = SqliteSettings;
     type Watches = SqliteWatches;
+    type Releases = SqliteReleases;
 
     fn users(&self) -> &Self::Users {
         &self.users
@@ -309,6 +314,9 @@ impl Store for SqliteStore {
     }
     fn realm_prices(&self) -> &Self::RealmPrices {
         &self.realm_prices
+    }
+    fn releases(&self) -> &Self::Releases {
+        &self.releases
     }
     fn settings(&self) -> &Self::Settings {
         &self.settings

@@ -61,7 +61,7 @@ pub async fn index<E: Ports>(
     let region = prefs.region;
 
     let count = |kind: ItemKind| catalog.of_kind(kind).count();
-    let live = catalog.is_active();
+    let live = env.catalog_state(catalog).is_collected();
 
     // Carry the choice into the category pages, so picking here once is the
     // whole of the choice. Region rides along in the cookie the prefs
@@ -130,20 +130,21 @@ pub async fn index<E: Ports>(
     let auctions = AuctionsView {
         picker: MarketPicker::new("/wow/auctions".to_string(), &env.market().regions, region)
             .with_expansions(
-                env.catalogs()
-                    .ordered()
+                // Public order, so a `draft_ptr` catalogue is not in the
+                // picker. §8: administrator-only, and it lists no prices.
+                env.public_catalogs()
                     .into_iter()
                     .map(|c| CatalogLink {
                         id: c.id.clone(),
                         label: c.expansion.clone(),
-                        collecting: c.is_active(),
+                        collecting: env.catalog_state(c).is_collected(),
                         selected: c.id == catalog.id,
                     })
                     .collect(),
             ),
         expansion: catalog.expansion.clone(),
         region: region.to_string().to_uppercase(),
-        archived: !catalog.is_active(),
+        archived: !env.catalog_state(catalog).is_collected(),
         tracked_items: catalog.tracked_ids().len(),
         samples_held,
         last_observed: observed(prefs, now, last_observed),
@@ -218,7 +219,7 @@ pub async fn archived_page<E: Ports>(
     State(env): State<E>,
     Path(id): Path<String>,
 ) -> WebResult<Redirect> {
-    if env.catalogs().by_id(&id).is_none() {
+    if env.public_catalog(&id).is_none() {
         return Err(app_core::AppError::NotFound.into());
     }
     Ok(Redirect::permanent(&format!(
@@ -268,12 +269,13 @@ pub async fn fragment<E: Ports>(
 /// Resolve which catalog the page is about: an explicit id, else the active
 /// one, else the most recent archive so the page is never blank.
 fn select<'a, E: Ports>(env: &'a E, id: Option<&str>) -> Option<&'a Catalog> {
-    let catalogs = env.catalogs();
     match id {
-        Some(id) => catalogs.by_id(id),
-        None => catalogs
-            .active()
-            .or_else(|| catalogs.ordered().first().copied()),
+        // `public_catalog`, so a bookmarked or guessed PTR id is a 404 rather
+        // than a page. A visitor must not be able to learn one exists.
+        Some(id) => env.public_catalog(id),
+        None => env
+            .active_catalog()
+            .or_else(|| env.public_catalogs().first().copied()),
     }
 }
 
@@ -408,7 +410,7 @@ async fn build<E: Ports>(
     Ok(MarketView {
         expansion: catalog.expansion.clone(),
         season: catalog.season_label(),
-        archived: !catalog.is_active(),
+        archived: !env.catalog_state(catalog).is_collected(),
         configured: env.commodities().is_configured(),
         groups,
         patches: columns,

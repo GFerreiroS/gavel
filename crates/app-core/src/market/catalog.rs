@@ -594,26 +594,70 @@ pub struct ItemLevel {
     pub upgrade: String,
 }
 
-/// Whether a catalog is still being collected.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+/// Where a catalogue is in its life.
+///
+/// `docs/market-analysis.md` §8:
+///
+/// ```text
+/// draft_ptr -> active -> archived
+/// ```
+///
+/// The shipped `catalogs.json` carries a *default* state, which is what a
+/// database that has never seen the catalogue is seeded with. After that the
+/// database is authoritative, because activation is something an administrator
+/// does to a running instance after reviewing it -- a PTR schedule slips, and
+/// a state compiled into the binary would mean a redeploy to follow it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CatalogStatus {
-    /// The current expansion. Collected every cycle.
+    /// Administrator-only. Metadata, candidate items, track mappings and
+    /// validation state, prepared against a PTR. **Never collected, never
+    /// public, and it lists no prices** -- there are none to list, because
+    /// nothing has been collected for it.
+    DraftPtr,
+    /// The current expansion. Collected every cycle, and there is at most one.
     #[default]
     Active,
-    /// A finished expansion. Readable, never written to again.
+    /// Finished. Public, frozen, never collected again; its last analysis
+    /// stays browsable.
     Archived,
 }
 
 impl CatalogStatus {
+    pub const ALL: [CatalogStatus; 3] = [
+        CatalogStatus::DraftPtr,
+        CatalogStatus::Active,
+        CatalogStatus::Archived,
+    ];
+
     pub const fn as_str(self) -> &'static str {
         match self {
+            CatalogStatus::DraftPtr => "draft_ptr",
             CatalogStatus::Active => "active",
             CatalogStatus::Archived => "archived",
         }
     }
 
+    pub fn parse(raw: &str) -> Option<CatalogStatus> {
+        CatalogStatus::ALL.into_iter().find(|s| s.as_str() == raw)
+    }
+
     pub const fn is_active(self) -> bool {
+        matches!(self, CatalogStatus::Active)
+    }
+
+    /// Whether anybody who is not an administrator may see this catalogue
+    /// exists.
+    ///
+    /// The one question every public route has to ask, in one place, because
+    /// §8 makes a `draft_ptr` catalogue administrator-only and "each route
+    /// remembering to check" is how one of them forgets.
+    pub const fn is_public(self) -> bool {
+        matches!(self, CatalogStatus::Active | CatalogStatus::Archived)
+    }
+
+    /// Whether the collector may write prices for it.
+    pub const fn is_collected(self) -> bool {
         matches!(self, CatalogStatus::Active)
     }
 }
@@ -729,8 +773,14 @@ impl Catalog {
         serde_json::from_str(json).map_err(|e| format!("catalog: {e}"))
     }
 
-    pub fn is_active(&self) -> bool {
-        self.status.is_active()
+    /// The state this catalogue *ships* with, which is only the seed for a
+    /// database that has never seen it.
+    ///
+    /// Named so that nobody reads it believing they read the deployment's
+    /// state. Ask [`crate::Ports::catalog_state`] for that -- the whole point
+    /// of Phase 1 is that a person, not a build, decides what is active.
+    pub fn shipped_status(&self) -> CatalogStatus {
+        self.status
     }
 
     /// The tier this catalogue is currently about: the latest one that has
@@ -1037,23 +1087,48 @@ impl CatalogSet {
     /// Exactly one catalog should be active. If several are, the first wins
     /// and the rest are effectively archived -- a validation test guards it so
     /// that cannot happen by accident.
-    pub fn active(&self) -> Option<&Catalog> {
-        self.catalogs.iter().find(|c| c.is_active())
+    /// The catalogue the shipped file marks active.
+    ///
+    /// Renamed from `active` for the reason above: this is the file's opinion,
+    /// and the deployment's is in the database. It survives as the seed and
+    /// for tests that are about the file itself.
+    pub fn shipped_active(&self) -> Option<&Catalog> {
+        self.catalogs.iter().find(|c| c.status.is_active())
     }
 
-    pub fn by_id(&self, id: &str) -> Option<&Catalog> {
-        self.catalogs.iter().find(|c| c.id == id)
+    /// Every catalogue and the state it ships with, for seeding a database
+    /// that has never seen them.
+    pub fn shipped_states(&self) -> Vec<(String, CatalogStatus)> {
+        self.catalogs
+            .iter()
+            .map(|c| (c.id.clone(), c.status))
+            .collect()
     }
 
-    /// Newest first, active before archived -- display order.
-    pub fn ordered(&self) -> Vec<&Catalog> {
+    /// Display order under a given state lookup: active first, then the rest
+    /// newest first.
+    ///
+    /// Takes the lookup rather than reading `status`, because after Phase 1
+    /// the state is the deployment's and this type does not have it.
+    pub fn ordered_by(&self, state_of: impl Fn(&Catalog) -> CatalogStatus) -> Vec<&Catalog> {
         let mut all: Vec<&Catalog> = self.catalogs.iter().collect();
         all.sort_by(|a, b| {
-            b.is_active()
-                .cmp(&a.is_active())
-                .then(b.span_start().cmp(&a.span_start()))
+            state_of(b)
+                .is_active()
+                .cmp(&state_of(a).is_active())
+                .then_with(|| b.span_start().cmp(&a.span_start()))
+                .then_with(|| a.id.cmp(&b.id))
         });
         all
+    }
+
+    /// A catalogue by id, whatever state it is in.
+    ///
+    /// **Not what a public route wants.** A `draft_ptr` catalogue is
+    /// administrator-only (§8), and this lookup does not know or care. Public
+    /// routes call [`crate::Ports::public_catalog`], which refuses one.
+    pub fn by_id(&self, id: &str) -> Option<&Catalog> {
+        self.catalogs.iter().find(|c| c.id == id)
     }
 
     /// Ids of every item across every catalog, for reverse lookups over

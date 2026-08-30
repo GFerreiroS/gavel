@@ -31,7 +31,7 @@ msgstr "5xx"
 msgid "7d"
 msgstr "7 d"
 
-#: crates/app-web/templates/admin.html:24
+#: crates/app-web/templates/admin.html:64
 msgid ""
 "A commodity category is one request per region per cycle. A per-realm one is "
 "a request per realm, so it is the expensive kind."
@@ -54,6 +54,10 @@ msgstr "Cuenta"
 #: crates/app-web/templates/partials/consumables.html:47
 msgid "Across {}"
 msgstr "Durante {}"
+
+#: crates/app-web/templates/admin.html:53
+msgid "Activate"
+msgstr "Activar"
 
 #: crates/app-web/templates/macros.html:97
 msgid "Against the average of the last {} days"
@@ -92,7 +96,7 @@ msgstr "Todos los reinos"
 msgid "Apply"
 msgstr "Aplicar"
 
-#: crates/app-web/templates/auctions.html:33
+#: crates/app-web/src/i18n.rs crates/app-web/templates/auctions.html:33
 msgid "Archived"
 msgstr "Archivadas"
 
@@ -207,7 +211,7 @@ msgstr ""
 msgid "Caster — caster DPS and healers"
 msgstr "Lanzadores — DPS a distancia y sanadores"
 
-#: crates/app-web/templates/admin.html:22
+#: crates/app-web/templates/admin.html:62
 msgid "Categories"
 msgstr "Categorías"
 
@@ -263,9 +267,13 @@ msgstr "Capa"
 msgid "Cluster"
 msgstr "Clúster"
 
-#: crates/app-web/templates/admin.html:72
+#: crates/app-web/templates/admin.html:112
 msgid "Collected. Click to stop."
 msgstr "Se recoge. Pulsa para detenerlo."
+
+#: crates/app-web/src/i18n.rs
+msgid "Collecting"
+msgstr "En recogida"
 
 #: crates/app-web/templates/admin.html:3
 msgid "Collection"
@@ -820,7 +828,7 @@ msgstr "Nodos en línea"
 msgid "None seen in this track."
 msgstr "Ninguno visto en esta vía."
 
-#: crates/app-web/templates/admin.html:72
+#: crates/app-web/templates/admin.html:112
 msgid "Not collected. Click to start."
 msgstr "No se recoge. Pulsa para empezar."
 
@@ -854,6 +862,18 @@ msgstr "Observaciones"
 msgid "On sale now"
 msgstr "A la venta ahora"
 
+#: crates/app-web/templates/admin.html:24
+msgid ""
+"One catalogue collects at a time. Activating another archives it in the same "
+"step, so there is never a moment with two or none. A PTR draft is visible "
+"here and nowhere else: it has no prices, because nothing has been collected "
+"for it."
+msgstr ""
+"Un catálogo recolecta a la vez. Activar otro lo archiva en el mismo paso, "
+"así que nunca hay un momento con dos ni con ninguno. Un borrador de PTR se "
+"ve aquí y en ningún otro sitio: no tiene precios, porque no se ha "
+"recolectado nada para él."
+
 #: crates/app-web/templates/wow.html:5
 msgid ""
 "One vertical slice: look up a character, normalise the upstream response "
@@ -866,11 +886,16 @@ msgstr ""
 msgid "Open"
 msgstr "Abrir"
 
+#: crates/app-web/src/i18n.rs
+msgid "PTR draft"
+msgstr "Borrador de PTR"
+
 #: crates/app-web/templates/account.html:34
 #: crates/app-web/templates/account.html:45
 msgid "Password"
 msgstr "Contraseña"
 
+#: crates/app-web/templates/admin.html:35
 #: crates/app-web/templates/item.html:148
 msgid "Patch"
 msgstr "Parche"
@@ -1015,6 +1040,10 @@ msgstr "Mercado de toda la región"
 #: crates/app-web/templates/account.html:40
 msgid "Register"
 msgstr "Registrarse"
+
+#: crates/app-web/templates/admin.html:22
+msgid "Releases"
+msgstr "Versiones"
 
 #: crates/app-web/templates/dashboard.html:10
 msgid "Request metrics"
@@ -1242,7 +1271,7 @@ msgstr ""
 msgid "These values are generated, not measured"
 msgstr "Estos valores están generados, no medidos"
 
-#: crates/app-web/templates/admin.html:72
+#: crates/app-web/templates/admin.html:112
 msgid "These {} realms share one auction house."
 msgstr "Estos {} reinos comparten una casa de subastas."
 
@@ -1253,6 +1282,10 @@ msgid ""
 msgstr ""
 "Esta instancia solo recoge una región. Arráncala con --market-regions "
 "eu,us,kr,tw para ofrecer más."
+
+#: crates/app-web/templates/admin.html:36
+msgid "Tier"
+msgstr "Tier"
 
 #: crates/app-web/templates/partials/alerts.html:10
 msgid "Today's alerts"
@@ -1616,7 +1649,7 @@ msgstr "la contraseña debe tener entre {} y {} caracteres"
 msgid "pause heartbeat"
 msgstr "pausar latido"
 
-#: crates/app-web/templates/admin.html:36
+#: crates/app-web/templates/admin.html:76
 msgid "per realm"
 msgstr "por reino"
 
@@ -1850,6 +1883,10 @@ msgstr "latido de {} perdido"
 msgid "{} is archived."
 msgstr "{} está archivada."
 
+#: crates/app-web/templates/admin.html:39
+msgid "{} items · catalogue version {}"
+msgstr "{} objetos · versión de catálogo {}"
+
 #: crates/app-web/src/i18n.rs
 msgid "{} joined"
 msgstr "{} se ha incorporado"
@@ -1862,7 +1899,7 @@ msgstr "{} se ha ido"
 msgid "{} lost coordinator role"
 msgstr "{} ha perdido el rol de coordinador"
 
-#: crates/app-web/templates/admin.html:47
+#: crates/app-web/templates/admin.html:87
 msgid "{} of {} collected"
 msgstr "{} de {} recogidos"
 
@@ -1874,7 +1911,7 @@ msgstr "{} de {} encantamientos coinciden."
 msgid "{} of {} gems match."
 msgstr "{} de {} gemas coinciden."
 
-#: crates/app-web/templates/admin.html:56
+#: crates/app-web/templates/admin.html:96
 msgid "{} of {} markets"
 msgstr "{} de {} mercados"
 

@@ -122,7 +122,7 @@ async fn build<E: Ports>(
     // An empty value is what a select with no choice submits and means the
     // latter, not "a catalog with an empty id".
     let catalog = match expansion.filter(|id| !id.is_empty()) {
-        Some(id) => env.catalogs().by_id(id),
+        Some(id) => env.public_catalog(id),
         None => env.active_catalog(),
     };
     let Some(catalog) = catalog else {
@@ -206,7 +206,7 @@ async fn build<E: Ports>(
         ),
         expansion: catalog.expansion.clone(),
         expansion_id: catalog.id.clone(),
-        archived: !catalog.is_active(),
+        archived: !env.catalog_state(catalog).is_collected(),
         query: needle.clone().unwrap_or_default(),
         total,
         matched,

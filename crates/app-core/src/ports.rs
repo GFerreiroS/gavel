@@ -7,8 +7,10 @@ use cluster_core::{Clock, ClusterControl, Millis};
 
 use crate::auth::{PasswordHasher, TokenSource};
 use crate::item::ItemDetailProvider;
+use crate::market::catalog::CatalogStatus;
 use crate::market::{
     AlertSink, Catalog, CatalogSet, CommodityProvider, MarketConfig, RealmAuctionProvider,
+    ReleaseStates, release,
 };
 use crate::metrics::Metrics;
 use crate::repo::Store;
@@ -79,8 +81,15 @@ pub trait Ports: Clone + Send + Sync + 'static {
     /// Static item data, for tooltips.
     fn items(&self) -> &Self::Items;
     fn alert_sink(&self) -> &Self::Alerts;
-    /// Every expansion's catalog: one active, the rest archived.
+    /// Every catalogue this build ships, in whatever state.
+    ///
+    /// The *content*. Where each one is in its life is [`Self::releases`], and
+    /// the two are separate because content is reviewed code and state is a
+    /// runtime decision (`market::release`).
     fn catalogs(&self) -> &CatalogSet;
+
+    /// Where each catalogue is in its life, as the database last said.
+    fn releases(&self) -> &ReleaseStates;
     fn market(&self) -> &MarketConfig;
     fn hasher(&self) -> &Self::Hasher;
     fn tokens(&self) -> &Self::Tokens;
@@ -94,8 +103,42 @@ pub trait Ports: Clone + Send + Sync + 'static {
         self.clock().now()
     }
 
+    /// Where one catalogue is in its life.
+    ///
+    /// The deployment's answer, not the file's. `Catalog::shipped_status` is
+    /// the file's, and it is only ever the seed.
+    fn catalog_state(&self, catalog: &Catalog) -> CatalogStatus {
+        release::state_of(self.releases(), catalog)
+    }
+
     /// The expansion currently being collected, if any.
+    ///
+    /// `None` is a legal answer and not a broken instance: an expansion that
+    /// has ended while its successor is still a `draft_ptr` has nothing
+    /// active, and the pages say "archived" rather than falling over.
     fn active_catalog(&self) -> Option<&Catalog> {
-        self.catalogs().active()
+        release::active(self.catalogs(), self.releases())
+    }
+
+    /// A catalogue by id, for anybody.
+    ///
+    /// `None` for a `draft_ptr` one, which is what keeps §8's
+    /// "administrator-only, and lists no prices" true without eleven handlers
+    /// each remembering to ask -- the same reasoning §7 applies to the
+    /// operations pages, and for the same reason: the handler that forgets is
+    /// the one that leaks.
+    fn public_catalog(&self, id: &str) -> Option<&Catalog> {
+        release::public(self.catalogs(), self.releases(), id)
+    }
+
+    /// Every catalogue a visitor may see, in display order.
+    fn public_catalogs(&self) -> Vec<&Catalog> {
+        release::public_all(self.catalogs(), self.releases())
+    }
+
+    /// Every catalogue, in display order. For `/admin`, which is the one place
+    /// a `draft_ptr` catalogue is visible.
+    fn all_catalogs(&self) -> Vec<&Catalog> {
+        release::all(self.catalogs(), self.releases())
     }
 }

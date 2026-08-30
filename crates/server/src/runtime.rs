@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use app_core::auth::{Argon2Hasher, OsTokens};
-use app_core::market::{CatalogSet, MarketConfig};
+use app_core::market::{CatalogSet, MarketConfig, ReleaseStates};
 use app_core::{Metrics, Ports, WebConfig};
 use app_integrations::RaiderIoClient;
 use cluster_local::{LocalCluster, SystemClock};
@@ -23,6 +23,10 @@ pub struct Inner {
     pub items: Items,
     pub alerts: Alerts,
     pub catalogs: CatalogSet,
+    /// Where each catalogue is in its life. Loaded at startup and replaced
+    /// when an administrator activates one, so a page reads a map rather than
+    /// the database.
+    pub releases: ReleaseStates,
     pub market: MarketConfig,
     pub hasher: Argon2Hasher,
     pub tokens: OsTokens,
@@ -81,6 +85,10 @@ impl Ports for Runtime {
     }
     fn catalogs(&self) -> &CatalogSet {
         &self.0.catalogs
+    }
+
+    fn releases(&self) -> &ReleaseStates {
+        &self.0.releases
     }
     fn market(&self) -> &MarketConfig {
         &self.0.market

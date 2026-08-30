@@ -17,8 +17,8 @@ use std::time::Duration;
 use anyhow::Context;
 use app_core::Metrics;
 use app_core::auth::{Argon2Hasher, OsTokens};
-use app_core::market::CatalogSet;
-use app_core::repo::{CacheStore, KeyValueStore, SessionRepository, Store};
+use app_core::market::{CatalogSet, ReleaseStates};
+use app_core::repo::{CacheStore, KeyValueStore, ReleaseRepository, SessionRepository, Store};
 use app_integrations::{
     BlizzardAuctions, BlizzardConfig, BlizzardCredentials, BlizzardItems, DiscordWebhook,
     RaiderIoClient, RaiderIoConfig,
@@ -146,6 +146,34 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
     };
 
     let catalogs = CatalogSet::embedded();
+
+    // Seed the lifecycle for catalogues this database has never seen, then
+    // read back what it actually holds. `seed` never overwrites: a state an
+    // administrator set outranks the one this binary shipped with, or an
+    // upgrade would silently undo an activation.
+    let releases = ReleaseStates::new();
+    let seeded = store
+        .releases()
+        .seed(&catalogs.shipped_states(), clock.now())
+        .await
+        .context("seeding catalogue release states")?;
+    let known = store
+        .releases()
+        .releases()
+        .await
+        .context("reading catalogue release states")?;
+    tracing::info!(
+        seeded,
+        known = known.len(),
+        active = known
+            .iter()
+            .find(|r| r.state.is_active())
+            .map(|r| r.catalog.as_str())
+            .unwrap_or("none"),
+        "catalogue releases"
+    );
+    releases.replace(known.into_iter().map(|r| (r.catalog, r.state)));
+
     let market_config = market::config(
         cli.regions(),
         cli.realms(),
@@ -163,6 +191,7 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
         items,
         alerts,
         catalogs,
+        releases,
         market: market_config,
         hasher: Argon2Hasher::new(),
         tokens: OsTokens,

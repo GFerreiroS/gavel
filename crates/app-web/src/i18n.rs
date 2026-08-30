@@ -108,6 +108,12 @@ pub const EXTERNAL_STRINGS: &[&str] = &[
     "{} of {} enchants match.",
     "{} gems tracked.",
     "{} of {} gems match.",
+    // Catalogue release states (routes::admin::state_label). The `/admin`
+    // panel shows the word, not the machine state: `draft_ptr` goes in the
+    // form, "PTR draft" goes to the reader.
+    "PTR draft",
+    "Collecting",
+    "Archived",
     // Gear modifiers. These reach a template from the catalog's `modifiers`
     // map, which the sync script fills from a rendered English tooltip, so
     // they are listed here to be translatable like any other label.
@@ -462,6 +468,12 @@ mod tests {
                 missing.push(label.to_string());
             }
         };
+
+        // Every catalogue state the `/admin` panel can show. A fourth one
+        // added to the lifecycle has to be translatable before it ships.
+        for state in app_core::market::catalog::CatalogStatus::ALL {
+            check(crate::routes::admin::state_label(state));
+        }
 
         for role in ALL_ROLES {
             check(role.as_str());

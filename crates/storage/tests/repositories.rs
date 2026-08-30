@@ -4,10 +4,11 @@
 //! through the port as the same domain value. They deliberately never touch a
 //! SQL string, because callers never do either.
 
+use app_core::market::catalog::CatalogStatus;
 use app_core::model::Session;
 use app_core::repo::{
-    CacheStore, EventRepository, JobRepository, KeyValueStore, SessionRepository, Store,
-    UserRepository,
+    CacheStore, EventRepository, JobRepository, KeyValueStore, ReleaseRepository,
+    SessionRepository, Store, UserRepository,
 };
 use cluster_core::{
     ClusterEvent, ClusterStore, EventRecord, FailureReason, JobSpec, JobState, Millis, NodeId,
@@ -949,4 +950,162 @@ async fn alerts_since_is_a_window_not_the_whole_table() {
             .len(),
         2
     );
+}
+
+// --- catalogue releases ------------------------------------------------------
+
+fn draft(id: &str) -> (String, CatalogStatus) {
+    (id.to_string(), CatalogStatus::DraftPtr)
+}
+
+/// §8: "Activating the new tier and archiving the old one is one transaction,
+/// so there is never zero or two unintentionally active BoE tiers."
+#[tokio::test]
+async fn activating_a_tier_archives_the_one_it_replaces() {
+    let store = store().await;
+    let releases = store.releases();
+    let now = Millis(1_767_225_600_000);
+
+    let seeded = releases
+        .seed(
+            &[("old".to_string(), CatalogStatus::Active), draft("new")],
+            now,
+        )
+        .await
+        .expect("seed");
+    assert_eq!(seeded, 2);
+
+    let later = Millis(now.get() + 1000);
+    let done = releases.activate("new", later).await.expect("activate");
+    assert_eq!(done.activated, "new");
+    assert_eq!(
+        done.archived.as_deref(),
+        Some("old"),
+        "the tier it replaced is archived by the same call"
+    );
+
+    let states = releases.releases().await.unwrap();
+    let active: Vec<&str> = states
+        .iter()
+        .filter(|r| r.state.is_active())
+        .map(|r| r.catalog.as_str())
+        .collect();
+    assert_eq!(active, ["new"], "exactly one active, never two");
+
+    let old = states.iter().find(|r| r.catalog == "old").unwrap();
+    assert_eq!(old.state, CatalogStatus::Archived);
+    assert_eq!(old.archived_at, Some(later));
+    assert_eq!(
+        old.activated_at,
+        Some(now),
+        "an archived tier still says when it was the current one"
+    );
+
+    let new = states.iter().find(|r| r.catalog == "new").unwrap();
+    assert_eq!(new.activated_at, Some(later));
+    assert_eq!(new.archived_at, None);
+}
+
+/// The button that does this is one a person may press twice, and the second
+/// press must not archive the catalogue the first one activated.
+#[tokio::test]
+async fn activating_the_active_catalogue_changes_nothing() {
+    let store = store().await;
+    let releases = store.releases();
+    let now = Millis(1_000);
+    releases
+        .seed(&[("only".to_string(), CatalogStatus::Active)], now)
+        .await
+        .unwrap();
+
+    let done = releases.activate("only", Millis(2_000)).await.unwrap();
+    assert_eq!(done.archived, None);
+
+    let states = releases.releases().await.unwrap();
+    assert_eq!(states.len(), 1);
+    assert_eq!(states[0].state, CatalogStatus::Active);
+    assert_eq!(
+        states[0].activated_at,
+        Some(now),
+        "it did not become active again; it never stopped"
+    );
+}
+
+/// An upgrade must not silently undo an activation. The binary's opinion is
+/// the seed and nothing more.
+#[tokio::test]
+async fn seeding_never_overwrites_a_state_somebody_set() {
+    let store = store().await;
+    let releases = store.releases();
+    releases
+        .seed(
+            &[("a".to_string(), CatalogStatus::Active), draft("b")],
+            Millis(1),
+        )
+        .await
+        .unwrap();
+    releases.activate("b", Millis(2)).await.unwrap();
+
+    // The next release ships with the same defaults it always had, plus one
+    // new catalogue.
+    let added = releases
+        .seed(
+            &[
+                ("a".to_string(), CatalogStatus::Active),
+                draft("b"),
+                draft("c"),
+            ],
+            Millis(3),
+        )
+        .await
+        .unwrap();
+    assert_eq!(added, 1, "only the catalogue the database had never seen");
+
+    let states = releases.releases().await.unwrap();
+    let by_id = |id: &str| states.iter().find(|r| r.catalog == id).unwrap().state;
+    assert_eq!(by_id("a"), CatalogStatus::Archived);
+    assert_eq!(by_id("b"), CatalogStatus::Active, "the activation survived");
+    assert_eq!(by_id("c"), CatalogStatus::DraftPtr);
+}
+
+/// Activating something this instance has no catalogue for would leave a state
+/// with no content behind it.
+#[tokio::test]
+async fn an_unknown_catalogue_cannot_be_activated() {
+    let store = store().await;
+    assert!(matches!(
+        store.releases().activate("nothing", Millis(1)).await,
+        Err(app_core::error::RepoError::NotFound)
+    ));
+}
+
+/// The database, not a template and not the transaction's good behaviour, is
+/// what makes two active catalogues impossible. This writes past the port to
+/// prove the constraint is really there.
+#[tokio::test]
+async fn the_schema_refuses_a_second_active_catalogue() {
+    let store = store().await;
+    store
+        .releases()
+        .seed(
+            &[("a".to_string(), CatalogStatus::Active), draft("b")],
+            Millis(1),
+        )
+        .await
+        .unwrap();
+
+    let forced = sqlx::query("UPDATE catalog_releases SET state = 'active' WHERE catalog_id = 'b'")
+        .execute(store.pool())
+        .await;
+    assert!(
+        forced.is_err(),
+        "the partial unique index has to refuse this, or 'exactly one active' is only a habit"
+    );
+
+    // Zero active, on the other hand, is a legal state: an expansion that has
+    // ended while its successor is still on the PTR.
+    sqlx::query("UPDATE catalog_releases SET state = 'archived' WHERE catalog_id = 'a'")
+        .execute(store.pool())
+        .await
+        .expect("nothing active is allowed");
 }

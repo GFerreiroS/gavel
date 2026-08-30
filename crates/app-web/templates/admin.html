@@ -19,6 +19,46 @@
 </div>
 
 <article>
+  <h2>{{ "Releases"|t }}</h2>
+  <p class="hint">
+    {{ "One catalogue collects at a time. Activating another archives it in the same step, so there is never a moment with two or none. A PTR draft is visible here and nowhere else: it has no prices, because nothing has been collected for it."|t }}
+  </p>
+  <div class="roles">
+    {% for release in admin.releases %}
+    <section class="admin-release release-{{ release.state }}">
+      <span class="rank-label">{{ release.expansion }}
+        <span class="muted">· {{ release.state_label|t }}</span></span>
+      <p class="muted">{{ release.season }}</p>
+      {# Patch and tier separately, because they are separate keys: a patch can
+         open no raid, and a raid can open a week after its patch shipped. #}
+      <p class="muted">
+        {{ "Patch"|t }} {{ release.patch }}{% if !release.tier.is_empty() %} ·
+        {{ "Tier"|t }} {{ release.tier }}{% endif %}
+      </p>
+      <p class="muted">
+        {{ "{} items · catalogue version {}"|t|fill(release.items)|fill(release.catalog_version) }}
+      </p>
+      {% if !release.problems.is_empty() %}
+      {# Shown rather than hidden behind a failed click: the button is not
+         offered while any of these stands, so the reader needs to know what
+         to fix. #}
+      <ul class="alert">
+        {% for problem in release.problems %}<li>{{ problem }}</li>{% endfor %}
+      </ul>
+      {% endif %}
+      {% if release.activatable %}
+      <form method="post" action="/admin/release" class="switch">
+        <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
+        <input type="hidden" name="catalog" value="{{ release.id }}">
+        <button type="submit" class="chip outline">{{ "Activate"|t }}</button>
+      </form>
+      {% endif %}
+    </section>
+    {% endfor %}
+  </div>
+</article>
+
+<article>
   <h2>{{ "Categories"|t }}</h2>
   <p class="hint">
     {{ "A commodity category is one request per region per cycle. A per-realm one is a request per realm, so it is the expensive kind."|t }}

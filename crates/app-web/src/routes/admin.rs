@@ -19,8 +19,9 @@
 //! turning one off a safe thing to try.
 
 use app_core::Ports;
+use app_core::market::catalog::{Catalog, CatalogStatus};
 use app_core::market::{ItemKind, Realm, RealmId, Region};
-use app_core::repo::{RealmPriceRepository, SettingsRepository, Store};
+use app_core::repo::{RealmPriceRepository, ReleaseRepository, SettingsRepository, Store};
 use askama::Template;
 use axum::Extension;
 use axum::Form;
@@ -35,7 +36,9 @@ use crate::i18n::filters;
 use crate::prefs::MarketPrefs;
 use crate::render::page;
 use crate::session::current_user;
-use crate::views::{AdminCategory, AdminLanguage, AdminMarket, AdminRegion, AdminView, Layout};
+use crate::views::{
+    AdminCategory, AdminLanguage, AdminMarket, AdminRegion, AdminRelease, AdminView, Layout,
+};
 
 #[derive(Template)]
 #[template(path = "admin.html")]
@@ -63,6 +66,11 @@ pub async fn page_handler<E: Ports>(
     let realms = env.store().realm_prices().realms().await?;
 
     let admin = AdminView {
+        releases: env
+            .all_catalogs()
+            .into_iter()
+            .map(|catalog| release_view(&env, catalog))
+            .collect(),
         categories: ItemKind::ALL
             .into_iter()
             .map(|kind| AdminCategory {
@@ -92,6 +100,111 @@ pub async fn page_handler<E: Ports>(
         },
         prefs.locale,
     )
+}
+
+/// One catalogue as the administrator sees it.
+///
+/// Everything here is either the catalogue's own data or the deployment's
+/// state for it. Nothing is a price: a `draft_ptr` catalogue has none, and the
+/// point of this panel is to review what a catalogue *says* before it is
+/// allowed to start collecting.
+fn release_view<E: Ports>(env: &E, catalog: &Catalog) -> AdminRelease {
+    let state = env.catalog_state(catalog);
+    let problems = catalog.problems();
+    AdminRelease {
+        id: catalog.id.clone(),
+        expansion: catalog.expansion.clone(),
+        season: catalog.season_label(),
+        state: state.as_str(),
+        state_label: state_label(state),
+        patch: catalog
+            .patches
+            .iter()
+            .max_by_key(|p| p.started_at())
+            .map(|p| p.patch.clone())
+            .unwrap_or_default(),
+        tier: catalog
+            .current_tier()
+            .map(|t| t.name.clone())
+            .unwrap_or_default(),
+        items: catalog.items.len(),
+        catalog_version: catalog.catalog_version,
+        activatable: !state.is_active() && problems.is_empty(),
+        problems,
+    }
+}
+
+/// The word a person reads for a state.
+///
+/// Source strings, translated by the template's `|t`. "PTR draft" rather than
+/// `draft_ptr`: the machine word goes in the form, the reader gets English.
+pub(crate) const fn state_label(state: CatalogStatus) -> &'static str {
+    match state {
+        CatalogStatus::DraftPtr => "PTR draft",
+        CatalogStatus::Active => "Collecting",
+        CatalogStatus::Archived => "Archived",
+    }
+}
+
+/// `POST /admin/release`
+///
+/// Activating a catalogue archives whatever was active, in one transaction
+/// (§8). Refused for a catalogue whose data does not hold together, because
+/// "an administrator explicitly activates it after reviewing it" is only worth
+/// anything if the review can say no.
+pub async fn activate<E: Ports>(
+    State(env): State<E>,
+    Extension(csrf): Extension<Csrf>,
+    headers: HeaderMap,
+    Form(form): Form<Activate>,
+) -> WebResult<Redirect> {
+    let user = current_user(&env, &headers).await?;
+    let Some(_) = user.filter(|u| u.is_admin) else {
+        return Err(app_core::AppError::NotFound.into());
+    };
+    csrf.verify_request(&headers, Some(&form.csrf_token))?;
+
+    // `by_id`, not `public_catalog`: this is the one place a `draft_ptr`
+    // catalogue is addressable, which is the whole point of the panel.
+    let Some(catalog) = env.catalogs().by_id(&form.catalog) else {
+        return Err(app_core::AppError::NotFound.into());
+    };
+    let problems = catalog.problems();
+    if !problems.is_empty() {
+        tracing::warn!(
+            catalog = %catalog.id,
+            problems = ?problems,
+            "refused to activate an incoherent catalogue"
+        );
+        return Err(app_core::AppError::NotFound.into());
+    }
+
+    let done = env
+        .store()
+        .releases()
+        .activate(&catalog.id, env.now())
+        .await?;
+    tracing::info!(
+        activated = %done.activated,
+        archived = done.archived.as_deref().unwrap_or("none"),
+        "catalogue activated"
+    );
+
+    // Read the whole picture back rather than patching the two rows we know
+    // about: the database is what enforces "at most one active", so it is also
+    // what should say what happened.
+    let states = env.store().releases().releases().await?;
+    env.releases()
+        .replace(states.into_iter().map(|r| (r.catalog, r.state)));
+
+    Ok(Redirect::to("/admin"))
+}
+
+/// What the activation form submits.
+#[derive(Debug, Deserialize)]
+pub struct Activate {
+    csrf_token: String,
+    catalog: String,
 }
 
 /// Realms by region, and within a region by the language they are played in.

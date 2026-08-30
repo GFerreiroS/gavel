@@ -160,7 +160,7 @@ async fn build<E: Ports>(
     detail: super::gear::Detail,
 ) -> WebResult<EnhancementsView> {
     let catalog = match expansion.filter(|id| !id.is_empty()) {
-        Some(id) => env.catalogs().by_id(id),
+        Some(id) => env.public_catalog(id),
         None => env.active_catalog(),
     };
     let Some(catalog) = catalog else {
@@ -257,7 +257,7 @@ async fn build<E: Ports>(
         grouped: matches!(kind, ItemKind::Enchant),
         expansion: catalog.expansion.clone(),
         expansion_id: catalog.id.clone(),
-        archived: !catalog.is_active(),
+        archived: !env.catalog_state(catalog).is_collected(),
         query: needle.unwrap_or_default(),
         total,
         matched,
