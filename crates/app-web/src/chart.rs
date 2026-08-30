@@ -12,6 +12,7 @@
 use std::fmt::Write;
 
 use app_core::market::engine::Spark;
+use app_core::market::series::{ChartPoint, ChartSeries, Histogram};
 use app_core::market::{Copper, Cycle, Point};
 use cluster_core::Millis;
 
@@ -185,6 +186,20 @@ const CHART_STYLE: &str = concat!(
     // somewhere to land for the native <title> tooltip.
     "svg.chart .hit{fill:transparent}",
     "svg.chart .hit:hover{fill:var(--chart-line);fill-opacity:.35}",
+    // The price band. The fill is the same hue as the median line at low
+    // opacity, so the two read as one statement about one market rather than
+    // as two series -- which is what they are.
+    "svg.chart .band-fill{fill:var(--series-1);fill-opacity:.16;stroke:none}",
+    "svg.chart .band-median{fill:none;stroke:var(--series-1);stroke-width:2;",
+    "stroke-linejoin:round;stroke-linecap:round}",
+    // The raw observation is thin and faint: it is what the median is a
+    // summary *of*, and drawn at equal weight it would compete with it.
+    "svg.chart .band-raw{fill:none;stroke:var(--series-1);stroke-opacity:.45;",
+    "stroke-width:1;stroke-linejoin:round}",
+    // Today, as a rule across the plot. Dashed, because it is a reference
+    // line rather than a measurement over time.
+    "svg.chart .band-now{stroke:var(--series-2);stroke-width:1.5;",
+    "stroke-dasharray:4 3}",
     "</style>",
 );
 
@@ -403,6 +418,299 @@ pub fn bar_chart(cycles: &[Cycle], labels: &dyn Fn(u8) -> String, empty_note: &s
 
 fn placeholder(note: &str) -> String {
     format!(r#"<p class="chart-empty muted">{}</p>"#, escape(note))
+}
+
+// --- the analysis page's price band --------------------------------------
+
+/// Price over time as a rolling median inside a P25--P75 band, with the raw
+/// observation drawn through it and gaps left as gaps.
+///
+/// `docs/market-analysis.md` §6 asks for exactly this rather than a line
+/// through every observation, and the reason is what the two marks are for. A
+/// raw line answers "what was the price at 03:00 on Tuesday", which is a
+/// question about one hour. The band answers "what has this been worth, and
+/// how tightly" -- and the two together are what make a spike *legible as a
+/// spike* instead of as the market having moved.
+///
+/// **A gap is drawn as a gap.** A slot nothing was collected in breaks the
+/// line and the band; §15's rule that unavailable data is never invented
+/// applies most sharply to a chart, which will happily draw a confident
+/// straight line across a week nobody looked at.
+pub fn band_chart(series: &ChartSeries, current: Option<Copper>, empty_note: &str) -> String {
+    let observed: Vec<&ChartPoint> = series.points.iter().filter(|p| p.observed).collect();
+    if observed.len() < 2 {
+        return placeholder(empty_note);
+    }
+
+    let (min_t, max_t) = (
+        series.from.get(),
+        series.until.get().max(series.from.get() + 1),
+    );
+    let raw_min = observed
+        .iter()
+        .map(|p| p.price.get().min(p.p25.get()))
+        .min()
+        .expect("not empty");
+    let raw_max = observed
+        .iter()
+        .map(|p| p.price.get().max(p.p75.get()))
+        .max()
+        .expect("not empty");
+
+    // Same rule as `line_chart`: a price chart may sit off zero, and the axis
+    // is labelled so the truncation is visible.
+    let floor = if raw_min < (raw_max as f64 * 0.25) as u64 {
+        0
+    } else {
+        raw_min
+    };
+    let (lo, hi, step) = nice_axis(floor, raw_max, 4);
+    let span_t = (max_t - min_t).max(1);
+    let x = |t: u64| PAD_L + (t.saturating_sub(min_t)) as f64 / span_t as f64 * (W - PAD_L - PAD_R);
+    let y = |p: u64| H - PAD_B - (p as f64 - lo) / (hi - lo) * (H - PAD_T - PAD_B);
+
+    let mut svg = String::with_capacity(16 * 1024);
+    open_svg(&mut svg);
+    y_axis(&mut svg, lo, hi, step, unit_gold());
+
+    // One band and one line per *run* of observed slots. A run is what a break
+    // in the data leaves behind, and drawing runs rather than the whole series
+    // is what makes the break visible instead of bridged.
+    for run in runs(&series.points) {
+        if run.len() < 2 {
+            continue;
+        }
+        // The band is a closed shape: P75 forward, P25 back.
+        let mut band = String::with_capacity(run.len() * 24);
+        for (i, p) in run.iter().enumerate() {
+            let _ = write!(
+                band,
+                "{}{:.1} {:.1}",
+                if i == 0 { "M" } else { "L" },
+                x(p.at.get()),
+                y(p.p75.get())
+            );
+            band.push(' ');
+        }
+        for p in run.iter().rev() {
+            let _ = write!(band, "L{:.1} {:.1} ", x(p.at.get()), y(p.p25.get()));
+        }
+        band.push('Z');
+        let _ = write!(svg, r#"<path class="band-fill" d="{}"/>"#, band.trim());
+
+        let line = |pick: &dyn Fn(&ChartPoint) -> u64| -> String {
+            run.iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    format!(
+                        "{}{:.1} {:.1}",
+                        if i == 0 { "M" } else { "L" },
+                        x(p.at.get()),
+                        y(pick(p))
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+        // The observation under the median, so the median reads as the summary
+        // of it rather than as a second series competing with it.
+        let _ = write!(
+            svg,
+            r#"<path class="band-raw" d="{}"/>"#,
+            line(&|p| p.price.get())
+        );
+        let _ = write!(
+            svg,
+            r#"<path class="band-median" d="{}"/>"#,
+            line(&|p| p.median.get())
+        );
+    }
+
+    // Where the market is now, as a rule across the plot. §6 asks for the
+    // current value on this panel: without it the reader has to find the right
+    // edge of a line that may end in a gap.
+    if let Some(price) = current
+        && price.get() >= lo as u64
+        && price.get() <= hi as u64
+    {
+        let cy = y(price.get());
+        let _ = write!(
+            svg,
+            r#"<line class="band-now" x1="{PAD_L}" y1="{cy:.1}" x2="{:.1}" y2="{cy:.1}"><title>{}</title></line>"#,
+            W - PAD_R,
+            escape(&format!("now: {}", unit_gold().value(price.get())))
+        );
+    }
+
+    // Hover strips, as on every other chart: a native tooltip, no script. A
+    // gap gets one too, and says so -- "nothing collected" is the answer the
+    // reader came for when they see a break.
+    let step_x = (W - PAD_L - PAD_R) / series.points.len().max(1) as f64;
+    for point in &series.points {
+        let cx = x(point.at.get());
+        let tip = if point.observed {
+            format!(
+                "{}\nprice: {}\nmedian: {}\nP25-P75: {} - {}\nstock: {} in {} auctions",
+                point.at.to_utc_string(),
+                unit_gold().value(point.price.get()),
+                unit_gold().value(point.median.get()),
+                unit_gold().value(point.p25.get()),
+                unit_gold().value(point.p75.get()),
+                point.quantity,
+                point.listings,
+            )
+        } else {
+            format!("{}\nnothing collected", point.at.to_utc_string())
+        };
+        let _ = write!(
+            svg,
+            r#"<rect class="hit" x="{:.1}" y="{PAD_T}" width="{:.1}" height="{:.1}"><title>{}</title></rect>"#,
+            cx - step_x / 2.0,
+            step_x.max(2.0),
+            H - PAD_T - PAD_B,
+            escape(&tip)
+        );
+    }
+
+    time_axis(&mut svg, min_t, max_t);
+    svg.push_str("</svg>");
+    svg
+}
+
+/// Stock and listings over the same slots the price band covers.
+///
+/// Its own chart rather than a second axis on the price one, for the reason
+/// the existing stock chart already gives: they are different measures on
+/// different scales. Gaps break here too.
+pub fn stock_chart(series: &ChartSeries, empty_note: &str) -> String {
+    let points: Vec<Point> = series
+        .points
+        .iter()
+        .filter(|p| p.observed)
+        .map(|p| Point {
+            at: p.at,
+            price: Copper(p.quantity),
+            quantity: p.listings as u64,
+        })
+        .collect();
+    line_chart(
+        &[Series {
+            label: "units listed",
+            points: &points,
+            slot: 0,
+        }],
+        Unit::Count,
+        empty_note,
+    )
+}
+
+/// Contiguous runs of observed slots.
+///
+/// The unit a band and a line are drawn in: a break in the data has to be a
+/// break in the ink, or the chart asserts something nobody measured.
+fn runs(points: &[ChartPoint]) -> Vec<Vec<&ChartPoint>> {
+    let mut out: Vec<Vec<&ChartPoint>> = Vec::new();
+    let mut run: Vec<&ChartPoint> = Vec::new();
+    for point in points {
+        if point.observed {
+            run.push(point);
+        } else if !run.is_empty() {
+            out.push(std::mem::take(&mut run));
+        }
+    }
+    if !run.is_empty() {
+        out.push(run);
+    }
+    out
+}
+
+fn unit_gold() -> Unit {
+    Unit::Gold
+}
+
+fn time_axis(svg: &mut String, min_t: u64, max_t: u64) {
+    let _ = write!(
+        svg,
+        r#"<text class="axis" x="{PAD_L}" y="{:.1}">{}</text>"#,
+        H - 9.0,
+        Millis(min_t).to_date_string()
+    );
+    let _ = write!(
+        svg,
+        r#"<text class="axis" x="{:.1}" y="{:.1}" text-anchor="end">{}</text>"#,
+        W - PAD_R,
+        H - 9.0,
+        Millis(max_t).to_date_string()
+    );
+}
+
+// --- the distribution ----------------------------------------------------
+
+/// How often this market traded at each price, with today's price marked.
+///
+/// §5.4's panel, and the reason it exists beside the valuation band rather
+/// than instead of it: a band says *where* today sits, and this says *what it
+/// sits in*. `Cheap, P12` in a market whose prices span 20% is a different
+/// proposition from `Cheap, P12` in one that has ranged over a factor of ten,
+/// and no single percentile can carry that difference.
+///
+/// Bars count **hours**, not observations: the same equal-duration buckets
+/// every other historical statistic here is computed over.
+pub fn histogram_chart(histogram: &Histogram, current: Option<Copper>, empty_note: &str) -> String {
+    if histogram.is_empty() {
+        return placeholder(empty_note);
+    }
+    let tallest = histogram.tallest().max(1);
+    let bins = histogram.bins.len().max(1);
+    let plot_w = W - PAD_L - PAD_R;
+    let plot_h = H - PAD_T - PAD_B;
+    let width = plot_w / bins as f64;
+    let here = current.and_then(|price| histogram.bin_of(price));
+
+    let mut svg = String::with_capacity(6 * 1024);
+    open_svg(&mut svg);
+
+    // Bars are anchored to zero, which for a bar chart is not negotiable --
+    // the length *is* the count.
+    let (lo, hi) = (histogram.lo.get(), histogram.hi.get());
+    let span = hi.saturating_sub(lo);
+    for (index, count) in histogram.bins.iter().enumerate() {
+        let height = *count as f64 / tallest as f64 * plot_h;
+        let bx = PAD_L + index as f64 * width;
+        let price = lo + span * index as u64 / (bins.max(2) - 1) as u64;
+        let class = if here == Some(index) {
+            "bar best"
+        } else {
+            "bar"
+        };
+        let _ = write!(
+            svg,
+            r#"<rect class="{class}" x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}"><title>{}</title></rect>"#,
+            bx + 1.0,
+            H - PAD_B - height,
+            (width - 2.0).max(1.0),
+            height,
+            escape(&format!(
+                "around {}\n{count} hours",
+                Unit::Gold.value(price)
+            ))
+        );
+    }
+
+    // The axis is prices, so it is labelled with prices: the two ends and the
+    // middle, which is as many as fit without overlapping.
+    for (fraction, anchor) in [(0.0, "start"), (0.5, "middle"), (1.0, "end")] {
+        let price = lo + (span as f64 * fraction) as u64;
+        let _ = write!(
+            svg,
+            r#"<text class="axis" x="{:.1}" y="{:.1}" text-anchor="{anchor}">{}</text>"#,
+            PAD_L + plot_w * fraction,
+            H - 9.0,
+            escape(&Unit::Gold.tick(price))
+        );
+    }
+    svg.push_str("</svg>");
+    svg
 }
 
 // --- sparkline -----------------------------------------------------------

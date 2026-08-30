@@ -134,6 +134,21 @@ pub const EXTERNAL_STRINGS: &[&str] = &[
     // Spanish page until it was listed here. (Keep quoted tokens out of the
     // comments in this block: the extractor reads them as entries.)
     "Price",
+    // The analysis page's panel questions and units (routes::item). They
+    // reach the template as `{{ head.question|t }}` from a value built in
+    // Rust, so a template scan cannot see them -- and a panel whose question
+    // rendered in English would be the loudest sentence on a Spanish page,
+    // because the question is the panel's whole heading.
+    "What has this been worth, and how tightly?",
+    "What prices has this market spent its time at?",
+    "Is there enough of it to buy?",
+    "How much of this window did we actually see?",
+    "When in the week is it cheapest?",
+    "How has each patch priced it?",
+    // ...and the units those panels answer in.
+    "gold",
+    "hours",
+    "units listed",
     // The valuation bands (market::engine::Valuation). One word decides how a
     // reader reads every figure beside it, and it reaches the template as
     // `{{ band|t }}` from a stored row, so a template scan cannot see it. A

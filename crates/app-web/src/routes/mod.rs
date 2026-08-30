@@ -128,6 +128,10 @@ pub fn router<E: Ports>(env: E, shutdown: crate::Shutdown) -> Router {
         // Distinct prefixes so an expansion slug can never shadow an item id.
         .route("/wow/expansion/{id}", get(market::archived_page::<E>))
         .route("/wow/item/{item_id}", get(item::detail::<E>))
+        // The cacheable half of the item page. A real URL rather than a
+        // `/partials/` one because a reader with scripting off follows it as a
+        // link, and it answers on its own.
+        .route("/wow/item/{item_id}/analysis", get(item::analysis::<E>))
         .route("/wow/item/{item_id}/tooltip", get(tooltip::tooltip::<E>))
         // HTMX fragments
         .route("/partials/alerts", get(alerts::fragment::<E>))

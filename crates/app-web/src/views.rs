@@ -1109,30 +1109,96 @@ pub struct ItemDetail {
     /// The same region as the code a form posts back, lowercase.
     pub region_code: &'static str,
     pub archived: bool,
+}
 
+/// One panel's header: the question it answers, and the terms it answers in.
+///
+/// Phase 6's exit gate is that "every panel names its question, window, units,
+/// coverage, and freshness". Making that a value rather than a paragraph per
+/// panel in the template is what stops the next panel being added without
+/// them -- there is nowhere to put a panel that does not have them, and a
+/// reviewer can see at a glance which of the five each one carries.
+///
+/// `coverage` and `freshness` are `None` where a panel genuinely has no such
+/// thing -- an hour-of-day chart is over the whole history and is not fresh or
+/// stale -- rather than being filled with a plausible-looking value.
+#[derive(Debug, Clone)]
+pub struct PanelHead {
+    /// The question, as a source string. Not a title: "Price over time" names
+    /// a chart, "What has this been worth, and how tightly?" names what the
+    /// reader came to find out.
+    pub question: &'static str,
+    /// The interval, already worded.
+    pub window: String,
+    /// Gold, units, auctions, hours. Named because a chart's y-axis is the one
+    /// place a reader guesses.
+    pub units: &'static str,
+    /// "57 of 336 hours (17%)", or `None` where the panel is not a fraction of
+    /// anything.
+    pub coverage: Option<String>,
+    /// How old the newest observation behind it is.
+    pub freshness: Option<String>,
+}
+
+/// The cacheable half of the item page.
+///
+/// Everything here is a pure function of the published version, the item, the
+/// region, the comparison window and the locale -- which is what lets it carry
+/// an ETag and live in the fragment cache. The personalised half, which is the
+/// follow control and the nav, stays in the shell and stays `no-store`; §16's
+/// Phase 6 asks for that split by name, and §10 is why it is not optional.
+#[derive(Debug, Clone)]
+pub struct ItemAnalysis {
     pub has_data: bool,
+
+    // --- what is it worth now, and where does that sit ---------------------
+    pub price_panel: PanelHead,
     pub current: String,
-    pub mean: String,
+    pub band: Option<&'static str>,
+    pub band_slug: &'static str,
+    pub rank_percent: Option<u8>,
+    pub from_median_percent: Option<i32>,
+    pub insufficient: Option<&'static str>,
+    pub insufficient_have: u32,
+    pub insufficient_need: u32,
+    /// Shown beside the band and never folded into it: §5.4 keeps "unusually
+    /// far from the body of the distribution" apart from "low in it".
+    pub anomaly: &'static str,
+    pub anomaly_slug: &'static str,
     pub median: String,
-    pub low: String,
-    pub low_when: String,
-    pub high: String,
-    pub high_when: String,
+    pub p25: String,
+    pub p75: String,
+    pub iqr: String,
+    pub mad: String,
+
+    pub distribution_panel: PanelHead,
+    pub stock_panel: PanelHead,
     pub quantity: u64,
+    pub listings: u32,
+
+    // --- how good is the evidence -----------------------------------------
+    pub quality_panel: PanelHead,
     pub samples: usize,
+    pub observed_buckets: u32,
+    pub expected_buckets: Option<u32>,
+    pub coverage_percent: Option<u32>,
+    pub largest_gap: String,
     pub first_seen: String,
-    pub volatility_percent: u32,
+    pub observed_at: String,
+
     pub trends: Vec<TrendView>,
+    pub swing_percent: u32,
 
     pub best_hour: Option<String>,
     pub best_weekday: Option<String>,
+    pub cycle_panel: PanelHead,
 
     /// Pre-rendered inline SVG.
     pub price_chart: String,
+    pub distribution_chart: String,
     pub stock_chart: String,
     pub hour_chart: String,
     pub weekday_chart: String,
-    /// Rank labels for the price chart legend, in slot order.
     /// Legend entries: the label, and the colour the chart draws that slot in.
     ///
     /// The colour travels with the label rather than being looked up in CSS,
@@ -1140,6 +1206,7 @@ pub struct ItemDetail {
     /// it did when this was a `.swatch.s1` class.
     pub series_labels: Vec<SeriesKey>,
 
+    pub patch_panel: PanelHead,
     pub patches: Vec<PatchStatRow>,
 }
 

@@ -21,6 +21,7 @@ use super::analysis::{self, Cycle, Point, Trend};
 use super::catalog::{Catalog, ItemKind};
 use super::engine::{Buckets, Distribution, Gates, Position, Spark, Swing};
 use super::key::MarketKey;
+use super::series::{ChartSeries, Histogram, Observation};
 use super::window::Window;
 use super::{Copper, ItemId, PriceSample};
 
@@ -185,6 +186,13 @@ pub struct MarketWindow {
     pub swing: Swing,
     /// The card's shape of this window: equal-duration slots, gaps kept.
     pub spark: Spark,
+    /// The analysis page's chart, at fixed resolution: the observation, the
+    /// rolling band around it, stock, listings, and which slots hold nothing.
+    /// Reduced here so that drawing it is a read (§16, Phase 6).
+    pub series: ChartSeries,
+    /// How this window's prices were distributed -- the shape the valuation
+    /// band is a rank inside. `None` where there is nothing to bin.
+    pub histogram: Option<Histogram>,
     pub samples: u32,
     pub first_at: Millis,
     pub last_at: Millis,
@@ -393,6 +401,23 @@ fn summarise(
         until.unwrap_or(now),
     );
 
+    // The analysis page's chart, over the same span the sparkline covers, so
+    // that the small picture on the card and the large one on the page are the
+    // same picture. Reduced once here rather than per view: the item page
+    // called `downsample` on every request, which is a small reduction and
+    // still the one Phase 6 names.
+    let series = ChartSeries::over(
+        inside.iter().map(|s| Observation {
+            at: s.observed_at,
+            price: s.p05_unit_price,
+            quantity: s.quantity,
+            listings: s.listings,
+        }),
+        spark_from,
+        until.unwrap_or(now),
+    );
+    let histogram = Histogram::of(&buckets);
+
     Some(MarketWindow {
         key,
         window: window.clone(),
@@ -414,6 +439,8 @@ fn summarise(
         distribution,
         swing: Swing::of(&buckets),
         spark,
+        series,
+        histogram,
         samples: inside.len() as u32,
         first_at: inside[0].observed_at,
         last_at: inside[inside.len() - 1].observed_at,

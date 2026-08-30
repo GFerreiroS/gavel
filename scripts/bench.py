@@ -68,7 +68,12 @@ ENDPOINTS = [
     Endpoint("reagent cards", "/partials/reagents", "223 reagents: a first group inline, the rest on reveal"),
     Endpoint("enchant cards", "/partials/enchants", "57 enchants, grouped by slot"),
     Endpoint("patch table", "/partials/patches", "659 rows; fetched only when scrolled to"),
-    Endpoint("commodity analysis", "/wow/item/237367", "one market's whole history, reduced per request"),
+    # Phase 6 split this page in two, and both halves are timed because they
+    # are different kinds of response. The shell is personalised -- nav, CSRF,
+    # whether you follow this item -- so it is `no-store` and pays its build
+    # every time; the body is the same bytes for every reader and is cached.
+    Endpoint("commodity analysis", "/wow/item/237367", "the personalised shell: nav, follow control, no prices"),
+    Endpoint("commodity analysis body", "/wow/item/237367/analysis", "five charts and five panels, cached and revalidated"),
     Endpoint("BoE analysis", "/wow/gear/271441/hero", "one track on every realm of a region"),
 ]
 

@@ -1344,6 +1344,49 @@ fn materialised(item: u32, price: u64, samples: u32) -> Materialised {
             spark: app_core::market::engine::Spark {
                 slots: vec![Some(Copper(price)), None, Some(Copper(price))],
             },
+            // A gap in the middle here too, for the same reason: the series
+            // encodes an unobserved slot as an empty record, and a `None`
+            // between two values is the case that has to survive SQLite.
+            series: app_core::market::series::ChartSeries {
+                from: Millis(0),
+                until: Millis(1_000),
+                points: vec![
+                    app_core::market::series::ChartPoint {
+                        at: Millis(0),
+                        price: Copper(price),
+                        median: Copper(price),
+                        p25: Copper(price),
+                        p75: Copper(price),
+                        quantity: 5,
+                        listings: 2,
+                        observed: true,
+                    },
+                    // 333, not 500: a slot's instant is derived from the
+                    // span and its index rather than stored, which is what
+                    // keeps ninety-six timestamps out of the column. Writing
+                    // an arbitrary one here would be testing a field the
+                    // encoding does not carry.
+                    app_core::market::series::ChartPoint {
+                        at: Millis(333),
+                        ..Default::default()
+                    },
+                    app_core::market::series::ChartPoint {
+                        at: Millis(666),
+                        price: Copper(price),
+                        median: Copper(price),
+                        p25: Copper(price),
+                        p75: Copper(price),
+                        quantity: 7,
+                        listings: 3,
+                        observed: true,
+                    },
+                ],
+            },
+            histogram: Some(app_core::market::series::Histogram {
+                lo: Copper(price),
+                hi: Copper(price * 2),
+                bins: vec![1; app_core::market::series::BINS],
+            }),
             samples,
             first_at: Millis(0),
             last_at: Millis(1_000),

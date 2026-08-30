@@ -16,6 +16,7 @@ pub mod key;
 pub mod materialise;
 pub mod realm;
 pub mod release;
+pub mod series;
 pub mod stats;
 pub mod window;
 
@@ -43,6 +44,7 @@ pub use realm::{
     GearListing, Realm, RealmAuctionProvider, RealmId, RealmSample, RealmSnapshot, summarise_realm,
 };
 pub use release::ReleaseStates;
+pub use series::{ChartPoint, ChartSeries, Histogram, Observation};
 pub use window::Window;
 
 pub use stats::{PriceStats, summarise};

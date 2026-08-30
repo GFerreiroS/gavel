@@ -1,0 +1,228 @@
+{#
+  The item page's analysis body: cacheable, revalidated, and the same bytes for
+  everybody who asks for it. Nothing personal reaches this template -- no
+  session, no CSRF token, no follow state -- which is what makes that true.
+
+  **Every panel names its question, its window, its units, its coverage and its
+  freshness.** That is Phase 6's exit gate, and `panel_head` is how it is kept:
+  there is one way to open a panel, it takes all five, and a panel that has no
+  coverage or freshness to report says so by rendering nothing there rather
+  than by quietly omitting a line nobody notices is missing.
+#}
+{% macro panel_head(head) %}
+<header class="panel-head">
+  <h2>{{ head.question|t }}</h2>
+  <p class="panel-terms">
+    <span class="term"><span class="term-label">{{ "Window"|t }}</span>{{ head.window }}</span>
+    <span class="term"><span class="term-label">{{ "Units"|t }}</span>{{ head.units|t }}</span>
+    {% if let Some(coverage) = head.coverage %}
+    <span class="term"><span class="term-label">{{ "Coverage"|t }}</span>{{ coverage }}</span>
+    {% endif %}
+    {% if let Some(freshness) = head.freshness %}
+    <span class="term"><span class="term-label">{{ "Updated"|t }}</span>{{ freshness }}</span>
+    {% endif %}
+  </p>
+</header>
+{% endmacro %}
+
+{% if !analysis.has_data %}
+<div class="alert alert-archived" role="status">
+  {{ "No observations recorded for this market yet. Statistics appear once the collector has run."|t }}
+</div>
+{% else %}
+
+{# --- what is it worth, and where does that sit ------------------------- #}
+<article class="viz-root panel">
+  {% call panel_head(analysis.price_panel) %}
+
+  <div class="verdict-row">
+    <div class="stat">
+      <span class="label">{{ "Price now"|t }}</span>
+      <span class="value">{{ analysis.current }}</span>
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Where that sits"|t }}</span>
+      {% if let Some(band) = analysis.band %}
+      <span class="value band band-{{ analysis.band_slug }}">{{ band|t }}</span>
+      {% if let Some(rank) = analysis.rank_percent %}
+      <span class="when muted">{{ "P{}"|t|fill(rank) }}{% if let Some(delta) = analysis.from_median_percent %} · {{ "{}% from the median"|t|fill(delta) }}{% endif %}</span>
+      {% endif %}
+      {% else %}
+      {# §5.3: a refused band says what it was short of. A panel that went
+         quiet would read as a panel with nothing to say. #}
+      <span class="value muted">{% if let Some(reason) = analysis.insufficient %}{{ reason|t }}{% else %}{{ "Not enough history"|t }}{% endif %}</span>
+      <span class="when muted">{{ "{} of {} hours"|t|fill(analysis.insufficient_have)|fill(analysis.insufficient_need) }}</span>
+      {% endif %}
+    </div>
+    <div class="stat">
+      {# Separate from the band on purpose (§5.4). "Low in its own history" and
+         "far from the body of its own distribution" are different claims, and
+         a price can be either, both or neither. #}
+      <span class="label">{{ "Unusual?"|t }}</span>
+      <span class="value anomaly anomaly-{{ analysis.anomaly_slug }}">{{ analysis.anomaly|t }}</span>
+      <span class="when muted">{{ "against this market's own spread"|t }}</span>
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Median"|t }}</span>
+      <span class="value">{{ analysis.median }}</span>
+      <span class="when muted">{{ "P25 {} · P75 {}"|t|fill(analysis.p25)|fill(analysis.p75) }}</span>
+    </div>
+  </div>
+
+  {% if analysis.series_labels.len() > 1 %}
+  <p class="legend">
+    {# The swatch colour comes from the chart module, not from a CSS class:
+       the class had no rules left after a stylesheet rewrite and the swatches
+       silently disappeared. #}
+    {% for key in analysis.series_labels %}
+    <span class="key"><i class="swatch" style="background:{{ key.colour }}"></i>{{ key.label }}</span>
+    {% endfor %}
+  </p>
+  {% endif %}
+  {{ analysis.price_chart|safe }}
+  <p class="hint">
+    {{ "The band is the rolling P25–P75; the line through it is the rolling median, and the faint line is each observation. A break in the line is an interval nothing was collected in, not a price of zero."|t }}
+  </p>
+</article>
+
+{# --- the distribution the band is a rank inside ------------------------ #}
+<div class="two-col">
+  <article class="viz-root panel">
+    {% call panel_head(analysis.distribution_panel) %}
+    {{ analysis.distribution_chart|safe }}
+    <p class="hint">
+      {{ "Hours spent at each price, with today's marked. A wide spread and a narrow one can give the same percentile and mean very different things."|t }}
+    </p>
+    <dl class="rank-stats">
+      <dt>{{ "IQR"|t }}</dt><dd>{{ analysis.iqr }}</dd>
+      <dt>{{ "MAD"|t }}</dt><dd>{{ analysis.mad }}</dd>
+      <dt>{{ "Swing"|t }}</dt><dd>{{ analysis.swing_percent }}%</dd>
+    </dl>
+    <p class="hint">
+      {{ "IQR and MAD are robust measures of spread. Swing is (highest − lowest) ÷ mean: legible, and moved by any two observations."|t }}
+    </p>
+  </article>
+
+  {# --- how much of it there is ---------------------------------------- #}
+  <article class="viz-root panel">
+    {% call panel_head(analysis.stock_panel) %}
+    <div class="verdict-row">
+      <div class="stat">
+        <span class="label">{{ "In stock"|t }}</span>
+        <span class="value">{{ analysis.quantity }}</span>
+      </div>
+      <div class="stat">
+        <span class="label">{{ "Auctions"|t }}</span>
+        <span class="value">{{ analysis.listings }}</span>
+      </div>
+    </div>
+    {{ analysis.stock_chart|safe }}
+    <p class="hint">
+      {{ "Units listed right now, not units sold. Nothing here says how much of it changes hands. A price drop with supply collapsing is somebody undercutting an empty market."|t }}
+    </p>
+  </article>
+</div>
+
+{# --- how good is the evidence ------------------------------------------ #}
+<article class="panel">
+  {% call panel_head(analysis.quality_panel) %}
+  <div class="verdict-row">
+    <div class="stat">
+      <span class="label">{{ "Hours observed"|t }}</span>
+      <span class="value">{{ analysis.observed_buckets }}</span>
+      {% if let Some(expected) = analysis.expected_buckets %}
+      <span class="when muted">{{ "of {} the window holds"|t|fill(expected) }}</span>
+      {% endif %}
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Coverage"|t }}</span>
+      {% if let Some(coverage) = analysis.coverage_percent %}
+      <span class="value">{{ coverage }}%</span>
+      {% else %}
+      {# §2: no start to be a fraction of is a real answer, and it is not zero. #}
+      <span class="value muted">{{ "not applicable"|t }}</span>
+      {% endif %}
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Longest gap"|t }}</span>
+      <span class="value">{{ analysis.largest_gap }}</span>
+      <span class="when muted">{{ "between observations, not from the window's edge"|t }}</span>
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Observations"|t }}</span>
+      <span class="value">{{ analysis.samples }}</span>
+      <span class="when muted">{{ "since {}"|t|fill(analysis.first_seen) }}</span>
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Last seen"|t }}</span>
+      <span class="value">{{ analysis.observed_at }}</span>
+    </div>
+  </div>
+  <p class="hint">
+    {{ "Everything above is read from a published analysis version. Nothing on this page is calculated while you wait for it."|t }}
+  </p>
+</article>
+
+<article class="panel">
+  <h2>{{ "Change"|t }}</h2>
+  <div class="trend-row">
+    {% for trend in analysis.trends %}
+    <div class="trend">
+      <span class="label">{{ trend.label|t }}</span>
+      {% if trend.known %}
+      <span class="value {% if trend.cheaper %}good{% else if trend.percent > 0 %}bad{% endif %}">
+        {% if trend.percent > 0 %}+{% endif %}{{ trend.percent }}%
+      </span>
+      {% else %}
+      <span class="value muted">{{ "not enough history"|t }}</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</article>
+
+{# --- when in the week ---------------------------------------------------- #}
+<article class="panel">
+  {% call panel_head(analysis.cycle_panel) %}
+  <div class="two-col">
+    <div class="viz-root">
+      <h3>{{ "By hour (UTC)"|t }}</h3>
+      {% if let Some(best) = analysis.best_hour %}
+      <p class="hint">{{ "Cheapest around"|t }} <strong>{{ best }}</strong>.</p>
+      {% else %}
+      <p class="hint">{{ "Needs a few observations in every hour before this is meaningful."|t }}</p>
+      {% endif %}
+      {{ analysis.hour_chart|safe }}
+    </div>
+    <div class="viz-root">
+      <h3>{{ "By weekday"|t }}</h3>
+      {% if let Some(best) = analysis.best_weekday %}
+      <p class="hint">{{ "Cheapest on"|t }} <strong>{{ best }}</strong>.</p>
+      {% else %}
+      <p class="hint">{{ "Needs a few observations on every weekday."|t }}</p>
+      {% endif %}
+      {{ analysis.weekday_chart|safe }}
+    </div>
+  </div>
+</article>
+
+<article class="panel">
+  {% call panel_head(analysis.patch_panel) %}
+  <div class="scroll-x">
+    <table>
+      <thead><tr><th>{{ "Patch"|t }}</th><th>{{ "Median"|t }}</th><th>{{ "Low"|t }}</th><th>{{ "High"|t }}</th><th>{{ "Observations"|t }}</th></tr></thead>
+      <tbody>
+        {% for patch in analysis.patches %}
+        <tr>
+          <td title="{{ patch.label }}">{{ patch.patch }}</td>
+          <td>{% if patch.has_data %}<b>{{ patch.mean }}</b>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td class="muted">{{ patch.low }}</td>
+          <td class="muted">{{ patch.high }}</td>
+          <td class="muted">{{ patch.samples }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</article>
+{% endif %}

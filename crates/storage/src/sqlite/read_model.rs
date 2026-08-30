@@ -22,6 +22,7 @@ use app_core::market::materialise::{
     LevelStat, MarketRollup, MarketState, MarketSummary, MarketWindow, Materialised, ModifierStat,
     Scope,
 };
+use app_core::market::series::{ChartSeries, Histogram};
 use app_core::market::window::Window;
 use app_core::market::{Copper, ItemId, MarketKey, RealmId, Region};
 use app_core::repo::{AnalysisVersion, ReadModelRepository, VersionState};
@@ -423,6 +424,21 @@ fn window_from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<MarketWindow> {
         },
         swing: Swing(row.get::<i64, _>("swing") as u32),
         spark: Spark::decode(&row.get::<String, _>("spark")),
+        // `try_get`, because the category-card path deliberately does not
+        // select these two: a chart series is about 1.5 KB and that page reads
+        // two thousand windows at once, which is the shape of the bug Phase 2
+        // recorded against `MarketState`'s stored series. A narrow select
+        // yields an empty series here, which is what a page that draws no
+        // chart wants; `no_card_query_selects_a_chart_series` is what stops
+        // that becoming a page silently missing its chart.
+        series: row
+            .try_get::<String, _>("series")
+            .map(|raw| ChartSeries::decode(&raw))
+            .unwrap_or_default(),
+        histogram: row
+            .try_get::<String, _>("histogram")
+            .ok()
+            .and_then(|raw| Histogram::decode(&raw)),
         samples: row.get::<i64, _>("samples") as u32,
         first_at: Millis(row.get::<i64, _>("first_at") as u64),
         last_at: Millis(row.get::<i64, _>("last_at") as u64),
@@ -457,6 +473,17 @@ fn version_from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<AnalysisVersion
 
 const SELECT_STATE: &str = "SELECT * FROM market_current WHERE state = 'published'";
 const SELECT_WINDOW: &str = "SELECT * FROM market_windows WHERE state = 'published'";
+
+/// Everything a category card draws, and nothing a chart needs.
+///
+/// `series` and `histogram` are deliberately absent: see `commodity_windows`.
+/// Spelled out rather than `SELECT *` minus two, because SQL has no such
+/// thing and a column added later should have to be classified by a human.
+const CARD_WINDOW_COLUMNS: &str = "market_key, window, low, low_at, high, high_at, mean, median, \
+     samples, first_at, last_at, expected_buckets, observed_buckets, largest_gap_ms, \
+     p05, p25, p75, p95, iqr, mad, buckets, swing, spark, \
+     rank, valuation, from_median_percent, anomaly, \
+     insufficient, insufficient_have, insufficient_need";
 
 impl ReadModelRepository for SqliteReadModel {
     async fn begin(&self, algorithm: u32, now: Millis) -> RepoResult<u64> {
@@ -592,10 +619,11 @@ impl ReadModelRepository for SqliteReadModel {
                         low, low_at, high, high_at, mean, median, samples, first_at, last_at,
                         expected_buckets, observed_buckets, largest_gap_ms,
                         p05, p25, p75, p95, iqr, mad, buckets, swing, spark,
+                        series, histogram,
                         rank, valuation, from_median_percent, anomaly,
                         insufficient, insufficient_have, insufficient_need)
                      VALUES (?, ?, 'staging', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                      ON CONFLICT(market_key, window, state) DO UPDATE SET
                         version = excluded.version, low = excluded.low, low_at = excluded.low_at,
                         high = excluded.high, high_at = excluded.high_at, mean = excluded.mean,
@@ -607,7 +635,8 @@ impl ReadModelRepository for SqliteReadModel {
                         p05 = excluded.p05, p25 = excluded.p25, p75 = excluded.p75,
                         p95 = excluded.p95, iqr = excluded.iqr, mad = excluded.mad,
                         buckets = excluded.buckets, swing = excluded.swing,
-                        spark = excluded.spark,
+                        spark = excluded.spark, series = excluded.series,
+                        histogram = excluded.histogram,
                         rank = excluded.rank, valuation = excluded.valuation,
                         from_median_percent = excluded.from_median_percent,
                         anomaly = excluded.anomaly, insufficient = excluded.insufficient,
@@ -642,6 +671,8 @@ impl ReadModelRepository for SqliteReadModel {
                 .bind(w.distribution.buckets as i64)
                 .bind(w.swing.0 as i64)
                 .bind(w.spark.encode())
+                .bind(w.series.encode())
+                .bind(w.histogram.as_ref().map(|h| h.encode()).unwrap_or_default())
                 .bind(w.position.rank.map(i64::from))
                 .bind(w.position.valuation.map(|v| v.as_str()))
                 .bind(w.position.from_median_percent.map(i64::from))
@@ -983,8 +1014,19 @@ impl ReadModelRepository for SqliteReadModel {
         region: Region,
         window: &Window,
     ) -> RepoResult<Vec<MarketWindow>> {
+        // Named columns, not `*`, and the two the card does not draw are
+        // missing on purpose. A chart series is about 1.5 KB and this reads
+        // one window of every market in a region -- two thousand of them --
+        // so `SELECT *` would drag three megabytes across to render a price
+        // and a sparkline. It is the same mistake `commodities` records
+        // against `market_current`'s stored series, one table over, and
+        // `no_card_query_selects_a_chart_series` is what keeps it from being
+        // made a third time.
         let rows = sqlx::query(&format!(
-            "{SELECT_WINDOW} AND window = ? AND kind = 'commodity' AND region = ? ORDER BY item_id"
+            "SELECT {CARD_WINDOW_COLUMNS}
+               FROM market_windows
+              WHERE state = 'published' AND window = ? AND kind = 'commodity' AND region = ?
+              ORDER BY item_id"
         ))
         .bind(window.key())
         .bind(region.as_str())
@@ -1072,6 +1114,54 @@ mod tests {
             offenders.is_empty(),
             "these touch the read model without saying which state they mean: {offenders:#?}"
         );
+    }
+
+    /// A category page must not select a chart series.
+    ///
+    /// `commodity_windows` reads one window of every market in a region --
+    /// about two thousand rows -- and draws a price, a sparkline and a band
+    /// from each. A `series` column is roughly 1.5 KB, so selecting it there
+    /// would move three megabytes to render figures that do not use it. That
+    /// is the bug §11b records twice already: 1,316 cache reads for tooltips
+    /// nobody asked for, and `MarketState`'s stored series dragged across a
+    /// page that draws no charts.
+    ///
+    /// The check is on the query rather than on the timing, because the timing
+    /// is a cache hit on a warm page and would not notice.
+    #[test]
+    fn no_card_query_selects_a_chart_series() {
+        let whole = include_str!("read_model.rs");
+        let source = whole
+            .split_once("#[cfg(test)]")
+            .map(|(code, _)| code)
+            .unwrap_or(whole);
+
+        // The card path names its columns; the constant is where they live.
+        let columns = source
+            .split_once("const CARD_WINDOW_COLUMNS")
+            .map(|(_, rest)| rest.split(";\n").next().unwrap_or("").to_string())
+            .expect("the card column list has been renamed");
+
+        for heavy in ["series", "histogram"] {
+            assert!(
+                !columns.contains(heavy),
+                "`{heavy}` is in the card column list; a category page would \
+                 read one per market to draw a chart it does not have"
+            );
+        }
+        // And the list is really the one in use.
+        assert!(
+            source.contains("SELECT {CARD_WINDOW_COLUMNS}"),
+            "the card column list is defined but no query uses it"
+        );
+        // The columns a card does draw are still there, so that "no heavy
+        // columns" cannot be satisfied by selecting nothing.
+        for needed in ["spark", "median", "valuation", "market_key"] {
+            assert!(
+                columns.contains(needed),
+                "the card column list has lost `{needed}`"
+            );
+        }
     }
 
     /// And the check can fail, which is the other half of it being worth

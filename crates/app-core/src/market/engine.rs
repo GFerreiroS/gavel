@@ -78,6 +78,12 @@ impl Buckets {
         self.prices.len()
     }
 
+    /// The bucket prices, sorted. For a consumer that needs the shape rather
+    /// than a statistic of it -- [`super::series::Histogram`] is the one.
+    pub fn prices(&self) -> &[u64] {
+        &self.prices
+    }
+
     pub fn is_empty(&self) -> bool {
         self.prices.is_empty()
     }
