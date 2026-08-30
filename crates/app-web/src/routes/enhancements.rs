@@ -127,20 +127,33 @@ async fn fragment<E: Ports>(
     Extension(prefs): Extension<MarketPrefs>,
     Query(params): Query<SearchParams>,
 ) -> WebResult<Html<String>> {
-    page(
-        &EnhancementsFragment {
-            view: build(
-                &env,
-                kind,
-                prefs,
-                params.q.as_deref(),
-                params.expansion.as_deref(),
-                super::gear::Detail::Full,
-            )
-            .await?,
-        },
-        prefs.locale,
+    let view = build(
+        &env,
+        kind,
+        prefs,
+        params.q.as_deref(),
+        params.expansion.as_deref(),
+        super::gear::Detail::Full,
     )
+    .await?;
+
+    if let Some(wanted) = params.group.as_deref() {
+        let baseline_days = view.baseline_days;
+        let Some(group) = crate::groups::only(view.groups, wanted) else {
+            return Err(app_core::AppError::NotFound.into());
+        };
+        return page(
+            &crate::groups::CardGroupFragment {
+                group,
+                baseline_days,
+                note: String::new(),
+                heading_id: "slot",
+            },
+            prefs.locale,
+        );
+    }
+
+    page(&EnhancementsFragment { view }, prefs.locale)
 }
 
 /// Everything both pages show. `kind` decides the wording and the grouping;
@@ -211,6 +224,9 @@ async fn build<E: Ports>(
         });
         matched += cards.len();
         groups.push(CardGroup {
+            // Filled in by `groups::defer` once the page's size is known.
+            deferred: false,
+            href: String::new(),
             // `audience` is the anchor id on a grouped page and unused on a
             // flat one; the field is named for the consumables page, which
             // was the first thing to group cards.
@@ -218,6 +234,23 @@ async fn build<E: Ports>(
             label,
             cards,
         });
+    }
+
+    // Enchants are 57 cards across a dozen slots and gems are 16 in one grid,
+    // so the threshold decides rather than the page: the gems page is under it
+    // and is one response, the enchants page is over it and is not.
+    let fragment = |group: &str| {
+        format!(
+            "{}?expansion={}&group={}",
+            Text::of(kind).fragment_path,
+            super::gear::query_value(&catalog.id),
+            super::gear::query_value(group),
+        )
+    };
+    // Only where the page has sections to defer to: gems are one flat grid,
+    // and a grid cannot arrive in halves.
+    if matches!(kind, ItemKind::Enchant) {
+        crate::groups::defer(&mut groups, needle.is_some(), fragment);
     }
 
     let text = Text::of(kind);

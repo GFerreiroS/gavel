@@ -183,12 +183,6 @@ pub struct GearView {
     /// False when this region has no connected realms configured at all,
     /// which is a deployment to fix rather than an empty page to explain.
     pub has_realms: bool,
-    /// Where the cards come from, with the current choices already in it.
-    ///
-    /// Built server-side rather than gathered from the form by `hx-include`:
-    /// the element that fetches this is a sibling of the toolbar, not a child,
-    /// and a load-time fetch should not depend on the DOM being wired up yet.
-    pub fragment_href: String,
     pub expansion: String,
     pub expansion_id: String,
     pub archived: bool,
@@ -229,6 +223,10 @@ pub struct GearGroup {
     pub label: &'static str,
     pub anchor: &'static str,
     pub cards: Vec<GearCard>,
+    /// Rendered as a heading and a count, with its cards fetched when the
+    /// reader scrolls to it. See [`CardGroup::deferred`].
+    pub deferred: bool,
+    pub href: String,
 }
 
 /// One connected realm on the picker.
@@ -1009,6 +1007,17 @@ pub struct CardGroup {
     pub audience: &'static str,
     pub label: &'static str,
     pub cards: Vec<ItemCard>,
+    /// Rendered as a heading and a count, with its cards fetched when the
+    /// reader scrolls to it.
+    ///
+    /// `docs/market-analysis.md` §15: a small page inlines its cards, a large
+    /// category renders a useful first group and loads the rest as they
+    /// approach the viewport. The count is still here either way, so the page
+    /// says how much there is before it says what it is -- and so the anchors
+    /// the headings carry keep working.
+    pub deferred: bool,
+    /// Where this group's cards come from when it is deferred.
+    pub href: String,
 }
 
 /// A signed change, pre-rendered.

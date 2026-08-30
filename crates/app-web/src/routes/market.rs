@@ -363,6 +363,9 @@ async fn build<E: Ports>(
                 .then_with(|| crate::cards::by_rarity(a, b))
         });
         groups.push(CardGroup {
+            // Filled in by `groups::defer` once the page's size is known.
+            deferred: false,
+            href: String::new(),
             audience: audience.as_str(),
             label,
             cards,

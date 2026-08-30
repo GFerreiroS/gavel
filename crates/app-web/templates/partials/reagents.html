@@ -15,11 +15,4 @@
 <p class="muted">{{ "Nothing matches that search."|t }}</p>
 {% endif %}
 
-{% for group in reagents.groups %}
-<section class="group" id="profession-{{ group.audience }}">
-  <h2>{{ group.label|t }} <span class="muted">({{ group.cards.len() }})</span></h2>
-  <div class="card-grid">
-    {% for card in group.cards %}{% call tips::item_card(card, reagents.baseline_days) %}{% endfor %}
-  </div>
-</section>
-{% endfor %}
+{% for group in reagents.groups %}{% call tips::card_group(group, reagents.baseline_days, "profession", "") %}{% endfor %}

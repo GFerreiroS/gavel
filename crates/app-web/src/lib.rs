@@ -7,6 +7,7 @@ mod chart;
 mod csrf;
 mod error;
 mod format;
+mod groups;
 mod headers;
 mod i18n;
 mod metrics;

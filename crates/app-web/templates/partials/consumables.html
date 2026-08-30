@@ -27,18 +27,4 @@
 
 
 
-{% for group in market.groups %}
-<section class="group" id="group-{{ group.audience }}">
-  <h2>{{ group.label|t }}</h2>
-  <p class="hint">
-    {{ "Average, lowest and highest are all-time. Each rank is its own market, so each gets its own column."|t }}
-  </p>
-  {% if group.cards.is_empty() %}
-  <p class="muted">{{ "Nothing tracked in this group."|t }}</p>
-  {% else %}
-  <div class="card-grid">
-    {% for card in group.cards %}{% call tips::item_card(card, market.baseline_days) %}{% endfor %}
-  </div>
-  {% endif %}
-</section>
-{% endfor %}
+{% for group in market.groups %}{% call tips::card_group(group, market.baseline_days, "group", "Average, lowest and highest are all-time. Each rank is its own market, so each gets its own column."|t) %}{% endfor %}

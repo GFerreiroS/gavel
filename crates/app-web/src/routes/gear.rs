@@ -72,6 +72,16 @@ pub struct GearFragment {
     pub gear: GearView,
 }
 
+/// One group of gear cards, for a deferred section fetching itself.
+#[derive(Template)]
+#[template(path = "partials/gear_group.html")]
+pub struct GearGroupFragment {
+    pub group: crate::views::GearGroup,
+    pub region: &'static str,
+    pub realm_slug: String,
+    pub compact: bool,
+}
+
 /// `GET /wow/auctions/gear`
 pub async fn page_handler<E: Ports>(
     state: State<E>,
@@ -131,6 +141,10 @@ async fn render<E: Ports>(
     Query(params): Query<SearchParams>,
     headers: HeaderMap,
 ) -> WebResult<Html<String>> {
+    // `Full`, not `Shell`: the cards are inlined into the first response.
+    // They are stored rows now -- nine of them for gear, and a bounded first
+    // group for recipes -- so the round trip that used to buy the paint now
+    // only costs one.
     let gear = build(
         &env,
         kind,
@@ -138,7 +152,7 @@ async fn render<E: Ports>(
         &chosen,
         params.expansion.as_deref(),
         params.q.as_deref(),
-        Detail::Shell,
+        Detail::Full,
     )
     .await?;
     let user = current_user(&env, &headers).await?;
@@ -186,21 +200,35 @@ async fn fragment_of<E: Ports>(
     Extension(chosen): Extension<RealmChoice>,
     Query(params): Query<SearchParams>,
 ) -> WebResult<Html<String>> {
-    page(
-        &GearFragment {
-            gear: build(
-                &env,
-                kind,
-                prefs,
-                &chosen,
-                params.expansion.as_deref(),
-                params.q.as_deref(),
-                Detail::Full,
-            )
-            .await?,
-        },
-        prefs.locale,
+    let gear = build(
+        &env,
+        kind,
+        prefs,
+        &chosen,
+        params.expansion.as_deref(),
+        params.q.as_deref(),
+        Detail::Full,
     )
+    .await?;
+
+    // One group, for a deferred section fetching itself.
+    if let Some(wanted) = params.group.as_deref() {
+        let (region, realm_slug, compact) = (gear.region, gear.realm_slug.clone(), gear.compact);
+        let Some(group) = crate::groups::only(gear.groups, wanted) else {
+            return Err(app_core::AppError::NotFound.into());
+        };
+        return page(
+            &GearGroupFragment {
+                group,
+                region,
+                realm_slug,
+                compact,
+            },
+            prefs.locale,
+        );
+    }
+
+    page(&GearFragment { gear }, prefs.locale)
 }
 
 /// Percent-encode one query-string value.
@@ -353,6 +381,9 @@ async fn build<E: Ports>(
         }
         cards.sort_by(|a, b| a.name.cmp(&b.name));
         groups.push(GearGroup {
+            // Filled in by `groups::defer` once the page's size is known.
+            deferred: false,
+            href: String::new(),
             label,
             anchor,
             cards,
@@ -369,6 +400,21 @@ async fn build<E: Ports>(
     };
     let realm_slug = chosen.0.clone().unwrap_or_default();
     let region_code = selected.map_or(prefs.region, |r| r.region).as_str();
+
+    // Gear is nine cards and recipes are a hundred and thirty-four, so the
+    // threshold decides rather than the page.
+    let defer_href = |group: &str| {
+        format!(
+            "{}?expansion={}&region={}&realm={}&group={}",
+            text.fragment_path,
+            query_value(&catalog.id),
+            region_code,
+            query_value(&realm_slug),
+            query_value(group),
+        )
+    };
+    crate::groups::defer(&mut groups, needle.is_some(), defer_href);
+
     Ok(GearView {
         realm_name: realm_name.clone(),
         region_label: prefs.region.to_string().to_uppercase(),
@@ -377,14 +423,6 @@ async fn build<E: Ports>(
             _ => "gear",
         },
         has_realms: !realms.is_empty(),
-        fragment_href: format!(
-            "{}?expansion={}&region={}&realm={}&q={}",
-            text.fragment_path,
-            query_value(&catalog.id),
-            region_code,
-            query_value(&realm_slug),
-            query_value(needle.as_deref().unwrap_or_default()),
-        ),
         title: text.title,
         blurb: text.blurb,
         path: text.path,

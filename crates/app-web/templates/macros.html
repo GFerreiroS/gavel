@@ -121,3 +121,155 @@
   {% endif %}
 </article>
 {% endmacro %}
+
+{# One group of cards, or the promise of one.
+   Shared by every category fragment and by the single-group endpoint they
+   defer to, so the markup exists once -- §7's rule about shared components,
+   applied to the one piece of markup two endpoints both render. #}
+{% macro card_group(group, baseline_days, heading_id, note) %}
+<section class="group" id="{{ heading_id }}-{{ group.audience }}"
+  {%- if group.deferred %}
+  hx-get="{{ group.href }}"
+  hx-trigger="revealed"
+  hx-swap="outerHTML"
+  {%- endif %}>
+  <h2>{{ group.label|t }} <span class="muted">({{ group.cards.len() }})</span></h2>
+  {# A page may explain its own columns under the heading. Passed in already
+     translated, because the sentence belongs to the page rather than to the
+     shared section. #}
+  {% if !note.is_empty() %}<p class="hint">{{ note }}</p>{% endif %}
+  {% if group.cards.is_empty() && !group.deferred %}
+  <p class="muted">{{ "Nothing tracked in this group."|t }}</p>
+  {% else %}{% if group.deferred %}
+  <p class="hint" aria-busy="true">{{ "Loading prices…"|t }}</p>
+  {# A real URL that answers on its own, for a reader with scripting off. #}
+  <noscript>
+    <p><a href="{{ group.href }}">{{ "Show the prices"|t }}</a></p>
+  </noscript>
+  {% else %}
+  <div class="card-grid">
+    {% for card in group.cards %}{% call item_card(card, baseline_days) %}{% endfor %}
+  </div>
+  {% endif %}{% endif %}
+</section>
+{% endmacro %}
+
+{# One gear or recipe card. Lifted out of the fragment so the fragment and the
+   single-group endpoint below render the same markup rather than two copies of
+   it -- §7's rule about shared components. #}
+{% macro gear_card(card, region, realm_slug) %}
+  <article class="item-card">
+    <header>
+      {% if let Some(icon) = card.icon %}
+      {% call item_icon(card.tooltip_item_id, card.name, icon, 40, card.tooltip) %}
+      {% endif %}
+      <div class="item-head-text">
+        <h3 title="{{ card.name }}">{{ card.name }}</h3>
+        {% if !card.slot.is_empty() %}<span class="sub">{{ card.slot|t }}</span>
+        {% else if let Some(material) = card.material %}<span class="sub">{{ material }}</span>{% endif %}
+      </div>
+    </header>
+
+    {% if card.unlisted %}
+    {# Tracked, but nobody is selling one. Said out loud, because it is a
+       different answer from "we do not follow this item". #}
+    <p class="muted rank-empty">{{ "No listings in this snapshot."|t }}</p>
+    {% else %}
+    {# A row per item level, a cell per region. Rows rather than columns so the
+       same item level always lines up across regions: with columns, one side
+       having an extra line of detail pushed everything below it out of step. #}
+    {# A row per item level, a cell per region -- rows rather than columns so
+       the same item level always lines up across regions. Inside a row the
+       markup is the commodity card's: label, price, figures, and the button
+       at the bottom, because that is where the button is on every other card
+       in the app. #}
+    <div class="gear-levels" style="--scopes: {{ card.scopes.len() }}">
+      {% if card.scopes.len() > 1 %}
+      <div class="gear-cells gear-scopes">
+        {% for scope in card.scopes %}<span class="rank-label">{{ scope }}</span>{% endfor %}
+      </div>
+      {% endif %}
+
+      {% for level in card.tracks %}
+      <div class="gear-level">
+        {% if level.leveled %}
+        {# The track leads, because the track is the choice: a Hero piece and
+           a Veteran piece are different things to buy. The item levels behind
+           it are a range, and `ilvl` stays `ilvl` in every language -- it is
+           what the game and every player call it. #}
+        <span class="rank-label gear-level-name">{{ level.track|t }}
+          {% if !level.levels.is_empty() %}<span class="muted">· ilvl {{ level.levels }}</span>{% endif %}</span>
+        {% endif %}
+        <div class="gear-cells">
+          {% for cell in level.cells %}
+          <div class="rank-col">
+            {% if !cell.listed %}
+            <p class="muted rank-empty">{{ "No listings."|t }}</p>
+            {% else %}
+            <span class="now">{{ cell.price }}</span>
+            <dl class="rank-stats">
+              <dt>{{ "Cheapest"|t }}</dt>
+              <dd>{{ cell.cheapest.price }}
+                {% if let Some(realm) = cell.cheapest.realm %}<small class="muted realm-name"
+                  {% if !cell.cheapest.realm_full.is_empty() %}title="{{ cell.cheapest.realm_full }}"{% endif %}>{{ realm }}</small>{% endif %}</dd>
+              <dt>{{ "Highest"|t }}</dt>
+              <dd>{{ cell.highest.price }}
+                {% if let Some(realm) = cell.highest.realm %}<small class="muted realm-name"
+                  {% if !cell.highest.realm_full.is_empty() %}title="{{ cell.highest.realm_full }}"{% endif %}>{{ realm }}</small>{% endif %}</dd>
+              <dt>{{ "Listings"|t }}</dt>
+              <dd>{{ cell.listings }}
+                {% if cell.realms > 1 %}<small class="muted">{{ "on {} realms"|t|fill(cell.realms) }}</small>{% endif %}</dd>
+              {# Always present, so every cell is the same height. Kept to one
+                 line, with the full list on hover: a wrapped list of extras is
+                 what knocked the regions out of alignment. #}
+              <dt>{{ "Extras"|t }}</dt>
+              <dd class="gear-extras"
+                  title="{% for extra in cell.extras %}{{ extra.name|t }} ×{{ extra.listings }}{% if !loop.last %}, {% endif %}{% endfor %}">
+                {% if cell.extras.is_empty() %}<small class="muted">—</small>
+                {% else %}<small class="muted">{% for extra in cell.extras %}{{ extra.name|t }}&nbsp;×{{ extra.listings }}{% if !loop.last %} · {% endif %}{% endfor %}</small>{% endif %}
+              </dd>
+            </dl>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {# Only where there is something to show. A track nobody is selling
+           still gets its row, so the grid lines up, but a button leading to an
+           empty page is a promise the page cannot keep. #}
+        {% if !level.href.is_empty() && level.listed %}
+        <a class="rank-link outline secondary" role="button"
+           href="{{ level.href }}?region={{ region }}{% if !realm_slug.is_empty() %}&realm={{ realm_slug }}{% endif %}">{{ "Stats & graphs"|t }} →</a>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </article>
+{% endmacro %}
+
+{# One group of gear cards, or the promise of one. The commodity pages'
+   `card_group` with the gear card inside it; the rule about when a group
+   arrives lives in `groups.rs` and is the same for both. #}
+{% macro gear_group(group, region, realm_slug, compact) %}
+<section class="group"
+  {%- if group.deferred %}
+  hx-get="{{ group.href }}"
+  hx-trigger="revealed"
+  hx-swap="outerHTML"
+  {%- endif %}>
+  {% if !group.label.is_empty() %}
+  <h2 id="group-{{ group.anchor }}">{{ group.label|t }} <span class="muted">({{ group.cards.len() }})</span></h2>
+  {% endif %}
+  {% if group.deferred %}
+  <p class="hint" aria-busy="true">{{ "Loading prices…"|t }}</p>
+  {# A real URL that answers on its own, for a reader with scripting off. #}
+  <noscript>
+    <p><a href="{{ group.href }}">{{ "Show the prices"|t }}</a></p>
+  </noscript>
+  {% else %}
+  <div class="card-grid{% if !compact %} gear-grid{% endif %}">
+    {% for card in group.cards %}{% call gear_card(card, region, realm_slug) %}{% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endmacro %}

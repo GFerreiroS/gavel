@@ -33,6 +33,9 @@ const MAX_QUERY: usize = 64;
 pub struct SearchParams {
     #[serde(default)]
     pub q: Option<String>,
+    /// One group's slug, when a deferred group is fetching itself.
+    #[serde(default)]
+    pub group: Option<String>,
     /// Which expansion, when arriving from the Auction House index. Absent
     /// means the one currently being collected.
     #[serde(default)]
@@ -93,19 +96,35 @@ pub async fn fragment<E: Ports>(
     Extension(prefs): Extension<MarketPrefs>,
     Query(params): Query<SearchParams>,
 ) -> WebResult<Html<String>> {
-    page(
-        &ReagentsFragment {
-            reagents: build(
-                &env,
-                prefs,
-                params.q.as_deref(),
-                params.expansion.as_deref(),
-                super::gear::Detail::Full,
-            )
-            .await?,
-        },
-        prefs.locale,
+    let view = build(
+        &env,
+        prefs,
+        params.q.as_deref(),
+        params.expansion.as_deref(),
+        super::gear::Detail::Full,
     )
+    .await?;
+
+    // One group, for a deferred section fetching itself. A slug that names no
+    // group is a 404 rather than an empty section: the page never asks for one
+    // that does not exist, so a request for it did not come from the page.
+    if let Some(wanted) = params.group.as_deref() {
+        let baseline_days = view.baseline_days;
+        let Some(group) = crate::groups::only(view.groups, wanted) else {
+            return Err(app_core::AppError::NotFound.into());
+        };
+        return page(
+            &crate::groups::CardGroupFragment {
+                group,
+                baseline_days,
+                note: String::new(),
+                heading_id: "profession",
+            },
+            prefs.locale,
+        );
+    }
+
+    page(&ReagentsFragment { reagents: view }, prefs.locale)
 }
 
 async fn build<E: Ports>(
@@ -172,11 +191,25 @@ async fn build<E: Ports>(
         cards.sort_by(crate::cards::by_rarity);
         matched += cards.len();
         groups.push(CardGroup {
+            // Filled in by `groups::defer` once the page's size is known.
+            deferred: false,
+            href: String::new(),
             audience: profession.as_str(),
             label: profession.label(),
             cards,
         });
     }
+
+    // Below the threshold the whole page is one response; above it, the first
+    // group is, and the rest arrive as the reader reaches them.
+    let fragment = |group: &str| {
+        format!(
+            "/partials/reagents?expansion={}&group={}",
+            super::gear::query_value(&catalog.id),
+            super::gear::query_value(group),
+        )
+    };
+    crate::groups::defer(&mut groups, needle.is_some(), fragment);
 
     Ok(ReagentsView {
         fragment_href: format!(

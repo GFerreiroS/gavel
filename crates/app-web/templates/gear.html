@@ -93,21 +93,17 @@
 </small>
 {% endif %}
 
-{# The cards arrive in their own request. The shell -- title, realm picker,
-   search -- costs one small query and paints immediately; counting every
-   market in every collected region is what takes the time, and there is no
-   reason for the controls to wait on it. The realm picker and the search box
-   swap into this same target, so the reader only ever learns one behaviour. #}
-<div id="gear-list"
-     hx-get="{{ gear.fragment_href }}"
-     hx-trigger="load"
-     hx-swap="innerHTML">
-  <p class="hint page-meta" aria-busy="true">{{ "Loading prices…"|t }}</p>
-  {# The cards are fetched, so without scripting nothing would arrive. The
-     fragment is a real URL and answers on its own; unstyled, but the prices
-     are all there. #}
-  <noscript>
-    <p><a href="{{ gear.fragment_href }}">{{ "Show the prices"|t }}</a></p>
-  </noscript>
+{# The cards are in this response. They used to arrive in a second request,
+   because counting every market in every collected region was most of the
+   page's time -- and it bought the paint at the cost of a round trip that
+   never made the data arrive any sooner. They are stored rows now: nine of
+   them for gear, and a bounded first group for recipes with the rest fetched
+   as the reader reaches them.
+
+   No `hx-get` on this container. The search box and the realm picker carry
+   their own and target this element, so it needs none -- and a bare `hx-get`
+   here would default to fetching on click. #}
+<div id="gear-list">
+  {% include "partials/gear.html" %}
 </div>
 {% endblock %}

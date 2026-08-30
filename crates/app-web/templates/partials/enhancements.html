@@ -17,12 +17,7 @@
 
 {% for group in view.groups %}
 {% if view.grouped %}
-<section class="group" id="slot-{{ group.audience }}">
-  <h2>{{ group.label|t }} <span class="muted">({{ group.cards.len() }})</span></h2>
-  <div class="card-grid">
-    {% for card in group.cards %}{% call tips::item_card(card, view.baseline_days) %}{% endfor %}
-  </div>
-</section>
+{% call tips::card_group(group, view.baseline_days, "slot", "") %}
 {% else %}
 {# One flat grid: sixteen gems under a single heading reading "Gems", on a
    page already titled Gems, is a heading that says nothing. #}

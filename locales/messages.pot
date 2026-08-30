@@ -5,7 +5,7 @@
 # renders as English rather than as a missing key.
 msgid ""
 msgstr ""
-"Project-Id-Version: wow-auction-tracker 826a310-dirty\n"
+"Project-Id-Version: wow-auction-tracker 272a5a5-dirty\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
@@ -43,7 +43,7 @@ msgstr ""
 msgid "Account"
 msgstr ""
 
-#: crates/app-web/templates/partials/consumables.html:53
+#: crates/app-web/templates/consumables.html:49
 #: crates/app-web/templates/partials/patches.html:5
 msgid "Across {}"
 msgstr ""
@@ -130,7 +130,7 @@ msgstr ""
 msgid "Average unit price per patch, with the low and high underneath. The last column is the whole expansion, which is what “what did this cost during {}” means once it is over."
 msgstr ""
 
-#: crates/app-web/templates/partials/consumables.html:34
+#: crates/app-web/templates/partials/consumables.html:30
 msgid "Average, lowest and highest are all-time. Each rank is its own market, so each gets its own column."
 msgstr ""
 
@@ -196,7 +196,7 @@ msgstr ""
 
 #: crates/app-web/templates/gear_stats.html:114
 #: crates/app-web/templates/gear_stats.html:38
-#: crates/app-web/templates/partials/gear.html:70
+#: crates/app-web/templates/macros.html:211
 msgid "Cheapest"
 msgstr ""
 
@@ -366,7 +366,7 @@ msgstr ""
 msgid "Expansion"
 msgstr ""
 
-#: crates/app-web/templates/partials/gear.html:84
+#: crates/app-web/templates/macros.html:225
 msgid "Extras"
 msgstr ""
 
@@ -466,7 +466,7 @@ msgstr ""
 
 #: crates/app-web/templates/gear_stats.html:115
 #: crates/app-web/templates/gear_stats.html:38
-#: crates/app-web/templates/partials/gear.html:74
+#: crates/app-web/templates/macros.html:215
 msgid "Highest"
 msgstr ""
 
@@ -603,7 +603,7 @@ msgid "Linked accounts"
 msgstr ""
 
 #: crates/app-web/templates/gear_stats.html:118
-#: crates/app-web/templates/partials/gear.html:78
+#: crates/app-web/templates/macros.html:219
 msgid "Listings"
 msgstr ""
 
@@ -613,12 +613,13 @@ msgstr ""
 
 #: crates/app-web/templates/consumables.html:27
 #: crates/app-web/templates/enhancements.html:43
-#: crates/app-web/templates/gear.html:105
+#: crates/app-web/templates/macros.html:144
+#: crates/app-web/templates/macros.html:264
 #: crates/app-web/templates/reagents.html:54
 msgid "Loading prices…"
 msgstr ""
 
-#: crates/app-web/templates/partials/consumables.html:54
+#: crates/app-web/templates/consumables.html:50
 msgid "Loading the patch history…"
 msgstr ""
 
@@ -706,11 +707,11 @@ msgid "No linked accounts."
 msgstr ""
 
 #: crates/app-web/templates/gear_stats.html:111
-#: crates/app-web/templates/partials/gear.html:35
+#: crates/app-web/templates/macros.html:176
 msgid "No listings in this snapshot."
 msgstr ""
 
-#: crates/app-web/templates/partials/gear.html:66
+#: crates/app-web/templates/macros.html:207
 msgid "No listings."
 msgstr ""
 
@@ -763,7 +764,7 @@ msgstr ""
 msgid "Nothing matches that search."
 msgstr ""
 
-#: crates/app-web/templates/partials/consumables.html:37
+#: crates/app-web/templates/macros.html:142
 msgid "Nothing tracked in this group."
 msgstr ""
 
@@ -977,13 +978,14 @@ msgstr ""
 msgid "Shoulder"
 msgstr ""
 
-#: crates/app-web/templates/partials/consumables.html:57
+#: crates/app-web/templates/consumables.html:53
 msgid "Show the patch history"
 msgstr ""
 
 #: crates/app-web/templates/consumables.html:32
 #: crates/app-web/templates/enhancements.html:48
-#: crates/app-web/templates/gear.html:110
+#: crates/app-web/templates/macros.html:147
+#: crates/app-web/templates/macros.html:267
 #: crates/app-web/templates/reagents.html:59
 msgid "Show the prices"
 msgstr ""
@@ -1050,7 +1052,7 @@ msgid "State"
 msgstr ""
 
 #: crates/app-web/templates/macros.html:110
-#: crates/app-web/templates/partials/gear.html:100
+#: crates/app-web/templates/macros.html:241
 msgid "Stats & graphs"
 msgstr ""
 
@@ -1488,7 +1490,7 @@ msgstr ""
 msgid "offline"
 msgstr ""
 
-#: crates/app-web/templates/partials/gear.html:80
+#: crates/app-web/templates/macros.html:221
 msgid "on {} realms"
 msgstr ""
 
