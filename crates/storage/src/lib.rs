@@ -8,5 +8,5 @@ mod sqlite;
 
 pub use sqlite::{
     SqliteCache, SqliteClusterStore, SqliteConfig, SqliteEvents, SqliteJobs, SqliteKv,
-    SqlitePrices, SqliteSessions, SqliteStore, SqliteUsers,
+    SqlitePrices, SqliteSessions, SqliteStore, SqliteUsers, SqliteWatches,
 };

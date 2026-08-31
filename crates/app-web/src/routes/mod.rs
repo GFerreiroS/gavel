@@ -91,6 +91,11 @@ where
         .route("/admin/events", post(admin::add_event::<E>))
         .route("/admin/events/review", post(admin::review_event::<E>))
         .route("/nodes/{id}/roles", post(cluster::set_role::<E>))
+        // Character lookup: admin-only for now while abuse/rate-limit
+        // handling for it is designed. Not a permanent product decision --
+        // see CLAUDE.md §7.
+        .route("/wow", get(pages::wow::<E>))
+        .route("/wow/character", get(wow::character::<E>))
         // The fragments behind those pages, which would otherwise answer the
         // same questions to anyone who asked them directly.
         .route("/partials/stats", get(partials::stats::<E>))
@@ -110,10 +115,8 @@ where
 
     Router::new()
         .merge(operations)
-        // The product: what the auction house costs, and what the game's API
-        // says about a character.
+        // The product: what the auction house costs.
         .route("/account", get(pages::account::<E>))
-        .route("/wow", get(pages::wow::<E>))
         .route("/wow/auctions", get(market::index::<E>))
         // Per account: what you follow, and what fired today. A visitor who is
         // signed out gets the page with an invitation and no alerts.
@@ -167,7 +170,6 @@ where
         .route("/partials/gems", get(enhancements::gems_fragment::<E>))
         .route("/partials/gear", get(gear::fragment::<E>))
         .route("/partials/recipes", get(gear::recipes_fragment::<E>))
-        .route("/wow/character", get(wow::character::<E>))
         // Live updates. The fragments above keep a slow poll as a fallback.
         .route("/events/stream", get(stream::events::<E>))
         // Liveness. No port call and therefore no database dependency: it
@@ -187,6 +189,10 @@ where
         .route("/account/login", post(account::login::<E>))
         .route("/account/logout", post(account::logout::<E>))
         .route("/account/delete", post(account::delete::<E>))
+        .route(
+            "/account/discord-webhook",
+            post(account::set_discord_webhook::<E>),
+        )
         // assets
         .route("/static/pico.css", get(assets::pico))
         .route("/static/style.css", get(assets::style))

@@ -116,6 +116,26 @@ impl UserRepository for SqliteUsers {
         Ok(row.as_ref().map(user_from_row))
     }
 
+    async fn discord_webhook(&self, id: UserId) -> RepoResult<Option<String>> {
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT discord_webhook_url FROM users WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(map_err)?;
+        Ok(row.and_then(|(webhook,)| webhook))
+    }
+
+    async fn set_discord_webhook(&self, id: UserId, webhook: Option<&str>) -> RepoResult<()> {
+        sqlx::query("UPDATE users SET discord_webhook_url = ? WHERE id = ?")
+            .bind(webhook)
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(())
+    }
+
     async fn linked_accounts(&self, id: UserId) -> RepoResult<Vec<LinkedAccount>> {
         let rows = sqlx::query(
             "SELECT user_id, provider, external_id, display_name, linked_at

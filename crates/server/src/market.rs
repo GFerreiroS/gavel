@@ -11,9 +11,12 @@ use app_core::market::{
     Alert, AlertSink, CommodityProvider, ItemId, MarketConfig, Realm, RealmAuctionProvider,
     RealmId, RealmSnapshot, Region, Snapshot,
 };
-use app_integrations::{BlizzardAuctions, BlizzardItems, BlizzardRealms, DiscordWebhook};
+use app_integrations::{
+    BlizzardAuctions, BlizzardItems, BlizzardRealms, DiscordWebhook, PerUserDiscord,
+};
 use cluster_core::Millis;
 use cluster_local::SystemClock;
+use storage::{SqliteUsers, SqliteWatches};
 
 /// The commodity source, present or not.
 pub enum Commodities {
@@ -134,19 +137,31 @@ impl ItemDetailProvider for Items {
     }
 }
 
-/// Outbound alert channel. Alerts are always stored and shown in the UI; this
-/// is the extra push.
-pub enum Alerts {
-    Discord(Box<DiscordWebhook>),
-    None,
+/// Outbound alert channels. Alerts are always stored and shown in the UI;
+/// these are the extra push -- an optional instance-wide ops channel, and
+/// self-service per-user channels for whoever configured one and is
+/// watching the market that just fired. Neither depends on the other being
+/// configured.
+pub struct Alerts {
+    global: Option<Box<DiscordWebhook>>,
+    per_user: PerUserDiscord<SqliteWatches, SqliteUsers>,
+}
+
+impl Alerts {
+    pub fn new(
+        global: Option<Box<DiscordWebhook>>,
+        per_user: PerUserDiscord<SqliteWatches, SqliteUsers>,
+    ) -> Self {
+        Self { global, per_user }
+    }
 }
 
 impl AlertSink for Alerts {
     async fn publish(&self, alert: &Alert, item_name: &str) {
-        match self {
-            Alerts::Discord(hook) => hook.publish(alert, item_name).await,
-            Alerts::None => {}
+        if let Some(hook) = &self.global {
+            hook.publish(alert, item_name).await;
         }
+        self.per_user.publish(alert, item_name).await;
     }
 }
 

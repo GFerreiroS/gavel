@@ -28,7 +28,7 @@ use app_core::repo::{
 };
 use app_integrations::{
     BlizzardAuctions, BlizzardConfig, BlizzardCredentials, BlizzardItems, DiscordWebhook,
-    RaiderIoClient, RaiderIoConfig,
+    PerUserDiscord, RaiderIoClient, RaiderIoConfig,
 };
 use clap::Parser;
 use cluster_core::{Clock, EventLog, JobStore, Millis};
@@ -165,16 +165,22 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
         }
     };
 
-    let alerts = match DiscordWebhook::from_env() {
+    let global_alerts = match DiscordWebhook::from_env() {
         Some(hook) => {
-            tracing::info!("Discord webhook configured for price alerts");
-            market::Alerts::Discord(Box::new(hook))
+            tracing::info!("Discord webhook configured for instance-wide price alerts");
+            Some(Box::new(hook))
         }
         None => {
-            tracing::info!("DISCORD_WEBHOOK_URL not set: alerts will appear in the UI only");
-            market::Alerts::None
+            tracing::info!(
+                "DISCORD_WEBHOOK_URL not set: no instance-wide alert channel, per-user \
+                 webhooks still work"
+            );
+            None
         }
     };
+    let per_user_alerts = PerUserDiscord::new(store.watches().clone(), store.users().clone())
+        .expect("building the per-user Discord HTTP client");
+    let alerts = market::Alerts::new(global_alerts, per_user_alerts);
 
     let catalogs = CatalogSet::embedded();
 

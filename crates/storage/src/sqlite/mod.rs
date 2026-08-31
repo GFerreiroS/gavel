@@ -36,7 +36,7 @@ pub use releases::SqliteReleases;
 pub use sessions::SqliteSessions;
 pub use settings::SqliteSettings;
 pub use users::SqliteUsers;
-use watches::SqliteWatches;
+pub use watches::SqliteWatches;
 
 /// Translate a backend error without letting SQLx types escape the crate.
 pub(crate) fn map_err(err: sqlx::Error) -> RepoError {

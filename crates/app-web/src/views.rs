@@ -649,11 +649,8 @@ impl Layout {
         csrf: String,
     ) -> Self {
         // What the app is for. Everyone sees these.
-        const NAV: [(&str, &str); 3] = [
-            ("Auction House", "/wow/auctions"),
-            ("WoW", "/wow"),
-            ("Account", "/account"),
-        ];
+        const NAV: [(&str, &str); 2] =
+            [("Auction House", "/wow/auctions"), ("Account", "/account")];
         // Only means anything with an account behind it: the page is a list of
         // what *you* follow. Offering it to a signed-out visitor is offering a
         // page that can only say "sign in".
@@ -661,12 +658,13 @@ impl Layout {
         // How the app is running. Only an administrator has any use for them,
         // and a nav full of pages most visitors cannot open is a worse
         // greeting than a short one.
-        const ADMIN_NAV: [(&str, &str); 5] = [
+        const ADMIN_NAV: [(&str, &str); 6] = [
             ("Dashboard", "/"),
             ("Cluster", "/cluster"),
             ("Nodes", "/nodes"),
             ("Jobs", "/jobs"),
             ("Collection", "/admin"),
+            ("WoW", "/wow"),
         ];
         let is_admin = user.is_some_and(|u| u.is_admin);
         let title = title.into();

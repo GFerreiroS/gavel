@@ -68,6 +68,7 @@ struct AccountPage {
     signed_in: bool,
     username: String,
     linked: Vec<String>,
+    discord_webhook_configured: bool,
 }
 
 #[derive(Template)]
@@ -262,16 +263,20 @@ pub async fn account<E: Ports>(
     headers: HeaderMap,
 ) -> WebResult<Html<String>> {
     let user = current_user(&env, &headers).await?;
-    let linked = match &user {
-        Some(user) => env
-            .store()
-            .users()
-            .linked_accounts(user.id)
-            .await?
-            .into_iter()
-            .map(|a| format!("{} ({})", a.provider, a.display_name))
-            .collect(),
-        None => Vec::new(),
+    let (linked, discord_webhook_configured) = match &user {
+        Some(user) => {
+            let linked = env
+                .store()
+                .users()
+                .linked_accounts(user.id)
+                .await?
+                .into_iter()
+                .map(|a| format!("{} ({})", a.provider, a.display_name))
+                .collect();
+            let webhook = env.store().users().discord_webhook(user.id).await?;
+            (linked, webhook.is_some())
+        }
+        None => (Vec::new(), false),
     };
     page(
         &AccountPage {
@@ -287,6 +292,7 @@ pub async fn account<E: Ports>(
             signed_in: user.is_some(),
             username: user.map(|u| u.username).unwrap_or_default(),
             linked,
+            discord_webhook_configured,
         },
         prefs.locale,
     )

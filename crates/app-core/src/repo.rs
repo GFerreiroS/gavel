@@ -95,6 +95,30 @@ pub trait UserRepository: Send + Sync + 'static {
 
     fn by_id(&self, id: UserId) -> impl Future<Output = RepoResult<Option<User>>> + Send;
 
+    /// The webhook a person configured for their own Discord notifications,
+    /// kept off `User` for the same reason `password_hash` is: a credential,
+    /// not a profile fact to be rendered or logged. Defaults to "nobody has
+    /// one configured", same neutral shape as `bootstrap_admin` and
+    /// `delete` above, so a store that does not care about this need not
+    /// implement it.
+    fn discord_webhook(
+        &self,
+        _id: UserId,
+    ) -> impl Future<Output = RepoResult<Option<String>>> + Send {
+        async { Ok(None) }
+    }
+
+    /// Replace it, or clear it with `None`. Validation of what a "real"
+    /// webhook URL looks like is the caller's job -- this port only stores
+    /// what it is given.
+    fn set_discord_webhook(
+        &self,
+        _id: UserId,
+        _webhook: Option<&str>,
+    ) -> impl Future<Output = RepoResult<()>> + Send {
+        async { Ok(()) }
+    }
+
     fn linked_accounts(
         &self,
         id: UserId,
@@ -445,6 +469,15 @@ pub trait WatchRepository: Send + Sync + 'static {
         item: ItemId,
         region: Region,
     ) -> impl Future<Output = RepoResult<()>> + Send;
+
+    /// The other direction: who to tell when this market moves. Raising an
+    /// alert needs this and only this -- not the added-at ordering `watches`
+    /// carries, which is a page's concern and not a notifier's.
+    fn watchers(
+        &self,
+        item: ItemId,
+        region: Region,
+    ) -> impl Future<Output = RepoResult<Vec<UserId>>> + Send;
 }
 
 /// One catalogue's place in its life, as the database has it.

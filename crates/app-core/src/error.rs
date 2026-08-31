@@ -48,6 +48,8 @@ pub mod text {
     pub const CHARACTER_CHARSET: &str =
         "that character name contains characters that are not allowed";
 
+    pub const DISCORD_WEBHOOK_INVALID: &str = "that doesn't look like a Discord webhook URL (should start with https://discord.com/api/webhooks/)";
+
     /// The whole list, for the test that says none of them can go untranslated.
     pub const ALL: &[&str] = &[
         NOT_FOUND,
@@ -73,6 +75,7 @@ pub mod text {
         REALM_CHARSET,
         CHARACTER_REQUIRED,
         CHARACTER_CHARSET,
+        DISCORD_WEBHOOK_INVALID,
     ];
 }
 

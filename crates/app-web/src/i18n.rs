@@ -359,6 +359,7 @@ pub const EXTERNAL_STRINGS: &[&str] = &[
     "that realm name contains characters that are not allowed",
     "a character name is required",
     "that character name contains characters that are not allowed",
+    "that doesn't look like a Discord webhook URL (should start with https://discord.com/api/webhooks/)",
     // Relative times (format::ago).
     "{} ago",
     "just now",

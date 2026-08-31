@@ -78,4 +78,20 @@ impl WatchRepository for SqliteWatches {
             .map_err(map_err)?;
         Ok(())
     }
+
+    async fn watchers(&self, item: ItemId, region: Region) -> RepoResult<Vec<UserId>> {
+        let rows = sqlx::query(
+            "SELECT user_id FROM user_watches WHERE item_id = ? AND region = ?
+             ORDER BY user_id",
+        )
+        .bind(item.get() as i64)
+        .bind(region.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(rows
+            .iter()
+            .map(|row| row.get::<i64, _>("user_id"))
+            .collect())
+    }
 }

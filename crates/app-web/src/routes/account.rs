@@ -16,7 +16,9 @@ use serde::Deserialize;
 
 use crate::csrf::Csrf;
 use crate::error::WebResult;
-use crate::session::{cleared_session_cookie, cookie_name, cookie_value, session_cookie};
+use crate::session::{
+    cleared_session_cookie, cookie_name, cookie_value, current_user, session_cookie,
+};
 use crate::throttle::{AuthGate, LoginThrottle, SignUpThrottle, WINDOW_MS};
 
 #[derive(Debug, Deserialize)]
@@ -31,6 +33,15 @@ pub struct CredentialsForm {
 pub struct LogoutForm {
     #[serde(default)]
     pub csrf_token: String,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct DiscordWebhookForm {
+    #[serde(default)]
+    pub csrf_token: String,
+    /// Blank clears it. Anything else must look like a real Discord webhook.
+    #[serde(default)]
+    pub webhook_url: String,
 }
 
 /// Header HTMX puts on every request it makes.
@@ -287,6 +298,48 @@ pub async fn delete<E: Ports>(
         is_htmx(&headers),
         Some(cleared_session_cookie(env.config())),
     ))
+}
+
+/// A webhook URL that looks like Discord's own, not an arbitrary
+/// attacker-supplied host this server would relay a POST to. Discord's docs
+/// describe both domains as live; `discordapp.com` is the pre-rename one and
+/// still resolves.
+fn looks_like_discord_webhook(url: &str) -> bool {
+    url.starts_with("https://discord.com/api/webhooks/")
+        || url.starts_with("https://discordapp.com/api/webhooks/")
+}
+
+/// `POST /account/discord-webhook` -- self-service notifications (CLAUDE.md
+/// §7's "Alerts belong to somebody"), one webhook per account. Signed out is
+/// *not found*, matching every other per-account mutation on this page.
+pub async fn set_discord_webhook<E: Ports>(
+    State(env): State<E>,
+    Extension(csrf): Extension<Csrf>,
+    headers: HeaderMap,
+    axum::Form(form): axum::Form<DiscordWebhookForm>,
+) -> WebResult<Response> {
+    let Some(user) = current_user(&env, &headers).await? else {
+        return Err(app_core::AppError::NotFound.into());
+    };
+    csrf.verify_request(&headers, Some(&form.csrf_token))?;
+
+    let webhook = form.webhook_url.trim();
+    let store = env.store();
+    if webhook.is_empty() {
+        store.users().set_discord_webhook(user.id, None).await?;
+        tracing::info!(user_id = user.id, "discord webhook cleared");
+    } else {
+        if !looks_like_discord_webhook(webhook) {
+            return Err(app_core::AppError::validation(text::DISCORD_WEBHOOK_INVALID).into());
+        }
+        store
+            .users()
+            .set_discord_webhook(user.id, Some(webhook))
+            .await?;
+        tracing::info!(user_id = user.id, "discord webhook configured");
+    }
+
+    Ok(redirect_to("/account", is_htmx(&headers), None))
 }
 
 #[cfg(test)]

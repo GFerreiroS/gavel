@@ -16,6 +16,30 @@
 </article>
 
 <article>
+  <h2>{{ "Discord notifications"|t }}</h2>
+  <p class="hint">
+    {{ "Paste a Discord webhook URL to get pinged there when a price you follow (\"Alerts\", per item) drops. Leave it blank and save to turn it off."|t }}
+  </p>
+  <p>
+    {% if discord_webhook_configured %}
+    <span class="badge ok">{{ "Configured"|t }}</span>
+    {% else %}
+    <span class="muted">{{ "Not configured"|t }}</span>
+    {% endif %}
+  </p>
+  <form method="post" action="/account/discord-webhook"
+        hx-post="/account/discord-webhook" hx-target="#discord-webhook-error" hx-swap="innerHTML">
+    <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
+    <label>{{ "Webhook URL"|t }}
+      <input type="url" name="webhook_url" placeholder="https://discord.com/api/webhooks/…"
+             autocomplete="off">
+    </label>
+    <button type="submit">{{ "Save"|t }}</button>
+  </form>
+  <div id="discord-webhook-error"></div>
+</article>
+
+<article>
   <h2>{{ "Linked accounts"|t }}</h2>
   {% if linked.is_empty() %}
   <p class="muted">{{ "No linked accounts."|t }}</p>

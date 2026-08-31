@@ -78,6 +78,31 @@ async fn users_round_trip_and_usernames_are_unique() {
     assert!(users.linked_accounts(created.id).await.unwrap().is_empty());
 }
 
+/// Off by default, set, cleared -- and never spilling onto `by_id`'s `User`,
+/// which is what pages render.
+#[tokio::test]
+async fn a_discord_webhook_round_trips_and_stays_off_the_user_view() {
+    let store = store().await;
+    let users = store.users();
+    let alice = users.create("alice", "hash", Millis(0)).await.unwrap().id;
+
+    assert_eq!(users.discord_webhook(alice).await.unwrap(), None);
+
+    let url = "https://discord.com/api/webhooks/1/secret";
+    users.set_discord_webhook(alice, Some(url)).await.unwrap();
+    assert_eq!(
+        users.discord_webhook(alice).await.unwrap().as_deref(),
+        Some(url)
+    );
+    assert!(
+        !format!("{:?}", users.by_id(alice).await.unwrap().unwrap()).contains("discord"),
+        "the webhook must not ride along on the type a page renders"
+    );
+
+    users.set_discord_webhook(alice, None).await.unwrap();
+    assert_eq!(users.discord_webhook(alice).await.unwrap(), None);
+}
+
 #[tokio::test]
 async fn administrator_bootstrap_is_explicit_and_atomic() {
     let store = store().await;
@@ -995,6 +1020,49 @@ async fn a_region_is_part_of_what_is_followed() {
         .await
         .unwrap();
     assert_eq!(store.watches().watches(alice).await.unwrap().len(), 2);
+}
+
+/// The direction raising an alert actually needs: not "what does Alice
+/// follow" but "who follows this market" -- and only that market, not a
+/// namesake item in another region or a different item in the same one.
+#[tokio::test]
+async fn watchers_of_a_market_are_found_and_nobody_elses_are() {
+    let store = store().await;
+    let alice = a_user(&store, "alice").await;
+    let bob = a_user(&store, "bob").await;
+    let watches = store.watches();
+
+    watches
+        .watch(alice, ItemId(1), Region::Eu, Millis(10))
+        .await
+        .unwrap();
+    watches
+        .watch(bob, ItemId(1), Region::Eu, Millis(20))
+        .await
+        .unwrap();
+    // A namesake in another region, and a different item in the same
+    // region: neither belongs in the answer for (1, Eu).
+    watches
+        .watch(alice, ItemId(1), Region::Us, Millis(30))
+        .await
+        .unwrap();
+    watches
+        .watch(bob, ItemId(2), Region::Eu, Millis(40))
+        .await
+        .unwrap();
+
+    let mut watchers = watches.watchers(ItemId(1), Region::Eu).await.unwrap();
+    watchers.sort();
+    assert_eq!(watchers, vec![alice, bob]);
+
+    assert!(
+        watches
+            .watchers(ItemId(99), Region::Eu)
+            .await
+            .unwrap()
+            .is_empty(),
+        "nobody watches an item nobody followed"
+    );
 }
 
 /// The control is a toggle, and a double-click is not a fault.
