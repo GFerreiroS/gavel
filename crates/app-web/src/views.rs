@@ -103,6 +103,9 @@ pub struct AuctionCategory {
     pub scope: &'static str,
     pub tracked_items: usize,
     pub live: bool,
+    /// A key into the `macros.html` `icon` macro, not a display string --
+    /// matching on `name` instead would tie the icon to translated text.
+    pub icon: &'static str,
 }
 
 /// The reagents page: every tracked crafting material, by profession.

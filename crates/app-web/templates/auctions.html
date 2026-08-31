@@ -92,6 +92,7 @@
   {% for category in auctions.categories %}
   <article class="item-card">
     <header>
+      <span class="category-icon">{% call tips::icon(category.icon) %}</span>
       <div class="item-head-text">
         <h3>{{ category.name|t }}</h3>
         <span class="sub">{{ category.scope|t }}</span>

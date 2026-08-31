@@ -337,6 +337,12 @@ td > .rank-link { margin: 0; }
   border-radius: var(--pico-border-radius);
   flex: none;
 }
+/* The Auction House index's category cards have no item icon to show --
+   there is no one item behind "Consumables" -- so this fills the same slot
+   in the header with a line icon instead, at the same visual weight as the
+   40px raster ones beside it. */
+.category-icon { flex: none; color: var(--pico-primary); }
+.category-icon .icon { width: 2rem; height: 2rem; }
 /* The last line of a card before its button: an expansion's link to its
    prices, a patch's list of the raid tiers it opened.
 
