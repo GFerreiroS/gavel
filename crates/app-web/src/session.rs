@@ -68,7 +68,7 @@ pub async fn current_user<E: Ports>(env: &E, headers: &HeaderMap) -> WebResult<O
 /// came for.
 pub async fn admin_only<E: Ports>(State(env): State<E>, request: Request, next: Next) -> Response {
     let admin = match current_user(&env, request.headers()).await {
-        Ok(user) => user.is_some_and(|u| u.is_admin),
+        Ok(user) => has_admin_access(user.as_ref()),
         // A store that cannot answer is not an authorisation to proceed.
         Err(e) => {
             tracing::warn!(error = ?e, "could not resolve the session; refusing admin access");
@@ -79,6 +79,10 @@ pub async fn admin_only<E: Ports>(State(env): State<E>, request: Request, next: 
         return next.run(request).await;
     }
     refuse(request.uri().path())
+}
+
+fn has_admin_access(user: Option<&User>) -> bool {
+    user.is_some_and(|user| user.is_admin)
 }
 
 /// What somebody who is not an administrator gets.
@@ -123,6 +127,29 @@ pub fn cleared_session_cookie(config: &WebConfig) -> HeaderValue {
 mod tests {
     use super::*;
     use axum::http::StatusCode;
+
+    #[test]
+    fn only_an_administrator_passes_the_operations_gate() {
+        let ordinary = User {
+            id: 1,
+            username: "ordinary".into(),
+            created_at: cluster_core::Millis(1),
+            is_admin: false,
+        };
+        let admin = User {
+            is_admin: true,
+            ..ordinary.clone()
+        };
+        assert!(!has_admin_access(None), "a visitor is refused");
+        assert!(
+            !has_admin_access(Some(&ordinary)),
+            "a normal user is refused"
+        );
+        assert!(
+            has_admin_access(Some(&admin)),
+            "an administrator is admitted"
+        );
+    }
 
     /// A 403 confirms the page is there. These pages describe how the
     /// deployment is doing, and somebody guessing must learn nothing.

@@ -182,8 +182,46 @@ impl Artifacts {
         partition: u32,
         rows: Vec<Materialised>,
     ) -> bool {
+        let input = match self.registered(version, algorithm, partition) {
+            Some(input) => input,
+            None => return false,
+        };
+        // Authentication says which worker sent the bytes, not that it did the
+        // assigned work. Recompute at the coordinator boundary and require the
+        // exact ordered row set. This simultaneously rejects extra, missing,
+        // duplicated and cross-market keys, wrong cardinality, and plausible
+        // values manufactured for a valid task/digest.
+        let expected: Vec<Materialised> = input
+            .markets
+            .iter()
+            .map(|(key, history, ladder)| {
+                materialise::commodity(
+                    *key,
+                    history,
+                    ladder,
+                    &input.catalog,
+                    &input.windows,
+                    input.now,
+                )
+            })
+            .collect();
+        if rows != expected {
+            tracing::warn!(
+                version,
+                algorithm,
+                partition,
+                expected = expected.len(),
+                received = rows.len(),
+                "rejecting a worker artifact that does not match its registered input"
+            );
+            return false;
+        }
         let mut held = self.lock();
-        if held.version != version || held.algorithm != algorithm {
+        let same_input = held
+            .inputs
+            .get(&partition)
+            .is_some_and(|current| Arc::ptr_eq(current, &input));
+        if held.version != version || held.algorithm != algorithm || !same_input {
             return false;
         }
         held.results.insert(partition, rows);
@@ -758,6 +796,106 @@ mod tests {
         let twice = artifacts.collect(3).expect("still complete");
         assert_eq!(once.len(), twice.len());
         assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn semantically_forged_worker_artifacts_are_rejected_even_with_valid_bytes() {
+        use cluster_core::ArtifactStore;
+
+        let history = history(4, 4);
+        let inputs = cut(&history);
+        let input = &inputs[0];
+        let expected: Vec<Materialised> = input
+            .markets
+            .iter()
+            .map(|(key, history, ladder)| {
+                materialise::commodity(
+                    *key,
+                    history,
+                    ladder,
+                    &input.catalog,
+                    &input.windows,
+                    input.now,
+                )
+            })
+            .collect();
+
+        let mut nonexistent_key = expected.clone();
+        nonexistent_key[0].state.key = MarketKey::commodity(Region::Eu, ItemId(4_000_000), 1);
+        let mut other_market = expected.clone();
+        other_market[0].state.key =
+            MarketKey::commodity(Region::Us, other_market[0].state.key.item(), 1);
+        let mut duplicate_key = expected.clone();
+        duplicate_key[1] = duplicate_key[0].clone();
+        let mut reordered = expected.clone();
+        reordered.swap(0, 1);
+        let foreign_history = self::history(4, 5);
+        let foreign_inputs = cut(&foreign_history);
+        let foreign_content: Vec<Materialised> = foreign_inputs[0]
+            .markets
+            .iter()
+            .map(|(key, history, ladder)| {
+                materialise::commodity(
+                    *key,
+                    history,
+                    ladder,
+                    &input.catalog,
+                    &input.windows,
+                    input.now,
+                )
+            })
+            .collect();
+        let cases = [
+            (
+                "missing/cardinality",
+                expected[..expected.len() - 1].to_vec(),
+            ),
+            ("extra/cardinality", {
+                let mut rows = expected.clone();
+                rows.push(expected[0].clone());
+                rows
+            }),
+            ("nonexistent key", nonexistent_key),
+            ("foreign region/market", other_market),
+            ("duplicate key", duplicate_key),
+            ("reordered partition", reordered),
+            (
+                "valid task id with another input's content",
+                foreign_content,
+            ),
+        ];
+
+        for (case, forged) in cases {
+            let artifacts = Artifacts::new();
+            artifacts.begin(8, 7, cut(&history));
+            let artifact = cluster_core::Artifact::new(postcard::to_allocvec(&forged).unwrap());
+            assert!(
+                artifact.verify().is_some(),
+                "the manipulated {case} has a valid digest"
+            );
+            artifacts.produced(
+                TaskSpec::Analysis {
+                    version: 8,
+                    algorithm: 7,
+                    partition: 0,
+                },
+                &artifact.bytes,
+            );
+            assert_eq!(artifacts.done().0, 0, "forged {case} must stay missing");
+        }
+
+        let artifacts = Artifacts::new();
+        artifacts.begin(8, 7, cut(&history));
+        let bytes = postcard::to_allocvec(&expected).unwrap();
+        artifacts.produced(
+            TaskSpec::Analysis {
+                version: 8,
+                algorithm: 7,
+                partition: 99,
+            },
+            &bytes,
+        );
+        assert_eq!(artifacts.done().0, 0, "foreign partition must be rejected");
     }
 
     /// A result for a candidate that has been abandoned is dropped rather than

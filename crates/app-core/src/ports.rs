@@ -29,6 +29,9 @@ pub struct WebConfig {
     pub debug_controls: bool,
     /// Send `Secure` on the session cookie. Off for plain-HTTP local dev.
     pub secure_cookies: bool,
+    /// Accept proxy-supplied client IP headers. Off unless every direct peer
+    /// is a trusted reverse proxy that overwrites those headers.
+    pub trust_proxy_headers: bool,
     /// How long upstream WoW responses stay cached.
     pub upstream_cache_ttl_ms: u64,
     /// How long static item data (names, effects, qualities) stays cached.
@@ -53,6 +56,7 @@ impl Default for WebConfig {
             event_log_limit: 25,
             debug_controls: false,
             secure_cookies: false,
+            trust_proxy_headers: false,
             upstream_cache_ttl_ms: 10 * 60 * 1000,
             item_cache_ttl_ms: 7 * 24 * 60 * 60 * 1000,
             server_timing: false,

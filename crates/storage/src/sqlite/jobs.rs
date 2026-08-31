@@ -242,4 +242,54 @@ impl JobRepository for SqliteJobs {
         }
         Ok(out)
     }
+
+    async fn unfinished_jobs_page(
+        &self,
+        after: Option<JobId>,
+        limit: usize,
+    ) -> RepoResult<Vec<(Job, Vec<Task>)>> {
+        let rows = sqlx::query(
+            "SELECT * FROM jobs
+              WHERE state IN ('queued', 'running') AND id > ?
+              ORDER BY id LIMIT ?",
+        )
+        .bind(after.map_or(0, JobId::get) as i64)
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        let mut out = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let job = job_from_row(row)?;
+            let tasks = self.tasks_for_job(job.id).await?;
+            out.push((job, tasks));
+        }
+        Ok(out)
+    }
+
+    async fn prune_terminal_before(&self, before: Millis) -> RepoResult<u64> {
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        sqlx::query(
+            "DELETE FROM task_failures WHERE job_id IN (
+                 SELECT id FROM jobs
+                  WHERE state IN ('completed','failed','cancelled')
+                    AND COALESCE(finished_at, created_at) < ?)",
+        )
+        .bind(before.get() as i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+        let deleted = sqlx::query(
+            "DELETE FROM jobs
+              WHERE state IN ('completed','failed','cancelled')
+                AND COALESCE(finished_at, created_at) < ?",
+        )
+        .bind(before.get() as i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?
+        .rows_affected();
+        tx.commit().await.map_err(map_err)?;
+        Ok(deleted)
+    }
 }

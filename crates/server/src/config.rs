@@ -46,6 +46,12 @@ pub struct Cli {
     #[arg(long, env = "APP_WORKER_LISTEN")]
     pub worker_listen: Option<SocketAddr>,
 
+    #[arg(long, env = "APP_MAX_WORKER_CONNECTIONS", default_value_t = 64)]
+    pub max_worker_connections: usize,
+
+    #[arg(long, env = "APP_MAX_WORKER_HANDSHAKES", default_value_t = 16)]
+    pub max_worker_handshakes: usize,
+
     /// Run as a worker instead of a web server: connect to the coordinator at
     /// this address, take work, and exit when it goes away.
     ///
@@ -107,6 +113,11 @@ pub struct Cli {
     #[arg(skip)]
     pub cluster_token: Option<String>,
 
+    /// One-shot administrator bootstrap credentials. Environment-only so the
+    /// password never appears in `ps` or shell history. Both must be present.
+    #[arg(skip)]
+    pub bootstrap_admin: Option<(String, String)>,
+
     /// Break every response's time down in a `Server-Timing` header: database,
     /// cache, analysis and template time, plus the statement and row counts.
     ///
@@ -121,6 +132,12 @@ pub struct Cli {
     /// Mark cookies `Secure`. Requires HTTPS; off for local plain-HTTP dev.
     #[arg(long, env = "APP_SECURE_COOKIES", default_value_t = false, action = clap::ArgAction::Set)]
     pub secure_cookies: bool,
+
+    /// Trust `Forwarded`/`X-Forwarded-For` for per-origin limits. Enable only
+    /// when the service is reachable exclusively through a proxy that
+    /// overwrites these headers.
+    #[arg(long, env = "APP_TRUST_PROXY_HEADERS", default_value_t = false, action = clap::ArgAction::Set)]
+    pub trust_proxy_headers: bool,
 
     /// How long upstream WoW responses stay cached, in seconds.
     #[arg(long, env = "APP_CACHE_TTL_SECS", default_value_t = 600)]
@@ -179,6 +196,11 @@ pub struct Cli {
     #[arg(long, env = "APP_MARKET_LADDER_DAYS", default_value_t = 14)]
     pub market_ladder_days: u64,
 
+    /// Terminal jobs and cluster events retained for diagnosis. Zero keeps
+    /// operational history forever.
+    #[arg(long, env = "APP_OPERATION_RETENTION_DAYS", default_value_t = 90)]
+    pub operation_retention_days: u64,
+
     /// Tracing filter, e.g. `info`, `debug`, `server=debug,cluster_local=trace`.
     #[arg(
         long,
@@ -221,6 +243,19 @@ impl Cli {
         Ok(())
     }
 
+    pub fn resolve_bootstrap_admin(&mut self) -> anyhow::Result<()> {
+        let username = secret_env("APP_BOOTSTRAP_ADMIN_USERNAME");
+        let password = secret_env("APP_BOOTSTRAP_ADMIN_PASSWORD");
+        self.bootstrap_admin = match (username, password) {
+            (Some(username), Some(password)) => Some((username, password)),
+            (None, None) => None,
+            _ => anyhow::bail!(
+                "APP_BOOTSTRAP_ADMIN_USERNAME and APP_BOOTSTRAP_ADMIN_PASSWORD must be set together"
+            ),
+        };
+        Ok(())
+    }
+
     /// The `--workers` default.
     const DEFAULT_WORKERS: u16 = 4;
 
@@ -242,6 +277,10 @@ impl Cli {
             remote_nodes: Vec::new(),
             node_listen: self.worker_listen,
             join_token: self.cluster_token.clone(),
+            max_remote_connections: self.max_worker_connections.max(1),
+            max_pending_handshakes: self
+                .max_worker_handshakes
+                .clamp(1, self.max_worker_connections.max(1)),
             health: HealthPolicy {
                 heartbeat_interval_ms: self.heartbeat_ms,
                 suspect_after_ms: self.suspect_ms,
@@ -259,6 +298,7 @@ impl Cli {
             debug_controls: self.debug_controls,
             server_timing: self.server_timing,
             secure_cookies: self.secure_cookies,
+            trust_proxy_headers: self.trust_proxy_headers,
             upstream_cache_ttl_ms: self.cache_ttl_secs * 1_000,
             ..WebConfig::default()
         }
@@ -336,4 +376,11 @@ impl Cli {
             self.server_timing,
         )
     }
+}
+
+fn secret_env(name: &str) -> Option<String> {
+    std::env::var(name)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }

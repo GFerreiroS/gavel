@@ -51,6 +51,10 @@ async fn users_round_trip_and_usernames_are_unique() {
         .unwrap();
     assert_eq!(created.username, "Tester");
     assert_eq!(created.created_at, Millis(1_000));
+    assert!(
+        !created.is_admin,
+        "public registration never bootstraps admin"
+    );
 
     let found = users.by_username("Tester").await.unwrap().unwrap();
     assert_eq!(found.user.id, created.id);
@@ -72,6 +76,139 @@ async fn users_round_trip_and_usernames_are_unique() {
         "Tester"
     );
     assert!(users.linked_accounts(created.id).await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn administrator_bootstrap_is_explicit_and_atomic() {
+    let store = store().await;
+    let users = store.users();
+    let ordinary = users.create("first", "hash", Millis(1)).await.unwrap();
+    assert!(!ordinary.is_admin, "creation order grants no privilege");
+
+    let (left, right) = tokio::join!(
+        users.bootstrap_admin("operator-a", "hash-a", Millis(2)),
+        users.bootstrap_admin("operator-b", "hash-b", Millis(2)),
+    );
+    let created = usize::from(left.unwrap().is_some()) + usize::from(right.unwrap().is_some());
+    assert_eq!(created, 1, "concurrent bootstrap creates exactly one admin");
+
+    assert!(
+        users
+            .bootstrap_admin("operator-c", "hash-c", Millis(3))
+            .await
+            .unwrap()
+            .is_none(),
+        "bootstrap is one-shot once an administrator exists"
+    );
+
+    let admin = users
+        .by_username("operator-a")
+        .await
+        .unwrap()
+        .or(users.by_username("operator-b").await.unwrap())
+        .unwrap()
+        .user;
+    assert!(users.delete(admin.id).await.unwrap());
+    assert!(
+        users
+            .bootstrap_admin("operator-d", "hash-d", Millis(4))
+            .await
+            .unwrap()
+            .is_none(),
+        "deleting personal data must not reopen bootstrap"
+    );
+}
+
+#[tokio::test]
+async fn operational_retention_removes_only_old_terminal_history() {
+    use cluster_core::{EventLog, JobStore};
+
+    let store = store().await;
+    let jobs = store.jobs();
+    let make = |id: u64, created: u64, state: JobState| {
+        let spec = JobSpec::Sleep {
+            total_ms: 1,
+            tasks: 1,
+        };
+        let mut job = cluster_core::Job::new(cluster_core::JobId(id), spec, Millis(created));
+        let task = cluster_core::Task::new(
+            cluster_core::TaskId(id),
+            job.id,
+            0,
+            spec.split()[0],
+            Millis(created),
+        );
+        job.state = state;
+        if state.is_terminal() {
+            job.finished_at = Some(Millis(created));
+        }
+        (job, task)
+    };
+    let (old_done, old_task) = make(1, 10, JobState::Completed);
+    let (old_live, live_task) = make(2, 10, JobState::Queued);
+    let (new_done, new_task) = make(3, 30, JobState::Completed);
+    for (job, task) in [
+        (&old_done, &old_task),
+        (&old_live, &live_task),
+        (&new_done, &new_task),
+    ] {
+        jobs.create_job(job, std::slice::from_ref(task))
+            .await
+            .unwrap();
+    }
+
+    assert_eq!(jobs.prune_terminal_before(Millis(20)).await.unwrap(), 1);
+    assert!(jobs.job(old_done.id).await.unwrap().is_none());
+    assert!(jobs.job(old_live.id).await.unwrap().is_some());
+    assert!(jobs.job(new_done.id).await.unwrap().is_some());
+
+    store
+        .events()
+        .append(&EventRecord::new(
+            1,
+            Millis(10),
+            ClusterEvent::NodeJoined { node: NodeId(1) },
+        ))
+        .await
+        .unwrap();
+    store
+        .events()
+        .append(&EventRecord::new(
+            2,
+            Millis(30),
+            ClusterEvent::NodeJoined { node: NodeId(2) },
+        ))
+        .await
+        .unwrap();
+    assert_eq!(store.events().prune_before(Millis(20)).await.unwrap(), 1);
+    assert_eq!(store.events().recent(10).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn deleting_an_account_cascades_owned_data() {
+    let store = store().await;
+    let users = store.users();
+    let user = users.create("eraseme", "hash", Millis(1)).await.unwrap();
+    store
+        .sessions()
+        .create(&Session {
+            id: "owned-session".into(),
+            user_id: user.id,
+            created_at: Millis(1),
+            expires_at: Millis(10),
+        })
+        .await
+        .unwrap();
+    assert!(users.delete(user.id).await.unwrap());
+    assert!(users.by_id(user.id).await.unwrap().is_none());
+    assert!(
+        store
+            .sessions()
+            .get("owned-session")
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 #[tokio::test]

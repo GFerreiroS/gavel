@@ -15,6 +15,11 @@ pub struct Metrics {
     latency_micros_total: AtomicU64,
     in_flight: AtomicU64,
     peak_in_flight: AtomicU64,
+    login_limited: AtomicU64,
+    argon2_saturated: AtomicU64,
+    sse_connections: AtomicU64,
+    sse_rejected: AtomicU64,
+    upstream_oversize: AtomicU64,
 }
 
 impl Metrics {
@@ -62,6 +67,25 @@ impl Metrics {
         }
     }
 
+    pub fn login_limited(&self) {
+        self.login_limited.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn argon2_saturated(&self) {
+        self.argon2_saturated.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn sse_opened(&self) {
+        self.sse_connections.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn sse_closed(&self) {
+        self.sse_connections.fetch_sub(1, Ordering::Relaxed);
+    }
+    pub fn sse_rejected(&self) {
+        self.sse_rejected.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn upstream_oversize(&self) {
+        self.upstream_oversize.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn snapshot(&self) -> MetricsSnapshot {
         let requests = self.requests_total.load(Ordering::Relaxed);
         let micros = self.latency_micros_total.load(Ordering::Relaxed);
@@ -72,6 +96,11 @@ impl Metrics {
             mean_latency_micros: micros.checked_div(requests).unwrap_or(0),
             in_flight: self.in_flight.load(Ordering::Relaxed),
             peak_in_flight: self.peak_in_flight.load(Ordering::Relaxed),
+            login_limited: self.login_limited.load(Ordering::Relaxed),
+            argon2_saturated: self.argon2_saturated.load(Ordering::Relaxed),
+            sse_connections: self.sse_connections.load(Ordering::Relaxed),
+            sse_rejected: self.sse_rejected.load(Ordering::Relaxed),
+            upstream_oversize: self.upstream_oversize.load(Ordering::Relaxed),
         }
     }
 }
@@ -85,6 +114,11 @@ pub struct MetricsSnapshot {
     /// Requests being served right now -- the "active connections" signal.
     pub in_flight: u64,
     pub peak_in_flight: u64,
+    pub login_limited: u64,
+    pub argon2_saturated: u64,
+    pub sse_connections: u64,
+    pub sse_rejected: u64,
+    pub upstream_oversize: u64,
 }
 
 impl MetricsSnapshot {

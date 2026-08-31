@@ -396,6 +396,10 @@ msgstr "Panel"
 msgid "Dearest realm"
 msgstr "Reino más caro"
 
+#: crates/app-web/templates/account.html:14
+msgid "Delete account"
+msgstr "Eliminar cuenta"
+
 #: crates/app-web/templates/partials/job_detail.html:39
 msgid "Detail"
 msgstr "Detalle"

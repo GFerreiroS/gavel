@@ -70,6 +70,29 @@ pub trait JobStore: Send + Sync + 'static {
     /// decide what to do with them on boot.
     fn unfinished_jobs(&self) -> impl Future<Output = StoreResult<Vec<(Job, Vec<Task>)>>> + Send;
 
+    /// Page unfinished jobs by monotonically increasing id. The default keeps
+    /// compatibility for simple stores; durable adapters should query it
+    /// directly so restart memory is bounded.
+    fn unfinished_jobs_page(
+        &self,
+        after: Option<JobId>,
+        limit: usize,
+    ) -> impl Future<Output = StoreResult<Vec<(Job, Vec<Task>)>>> + Send {
+        async move {
+            let mut jobs = self.unfinished_jobs().await?;
+            jobs.retain(|(job, _)| after.is_none_or(|id| job.id > id));
+            jobs.truncate(limit);
+            Ok(jobs)
+        }
+    }
+
+    fn prune_terminal_before(
+        &self,
+        _before: Millis,
+    ) -> impl Future<Output = StoreResult<u64>> + Send {
+        async { Ok(0) }
+    }
+
     /// Allocate ids and build a job plus its split tasks.
     fn allocate(
         &self,
@@ -110,6 +133,10 @@ pub trait EventLog: Send + Sync + 'static {
 
     /// Highest sequence number persisted, so the runtime can resume numbering.
     fn last_seq(&self) -> impl Future<Output = StoreResult<u64>> + Send;
+
+    fn prune_before(&self, _before: Millis) -> impl Future<Output = StoreResult<u64>> + Send {
+        async { Ok(0) }
+    }
 }
 
 /// Durable cluster state that is not a job and not an event.

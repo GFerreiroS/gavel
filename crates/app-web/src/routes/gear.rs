@@ -394,6 +394,9 @@ async fn build<E: Ports>(
         .0
         .as_deref()
         .and_then(|want| realms.iter().find(|r| realm_matches(r, want)));
+    if chosen.0.is_some() && selected.is_none() {
+        return Err(app_core::AppError::NotFound.into());
+    }
 
     // One query: the stored roll-ups for this kind, in this region, at the
     // scope the reader chose. A few hundred rows rather than the eighteen

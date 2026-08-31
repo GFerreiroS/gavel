@@ -58,6 +58,15 @@ pub struct ClusterSnapshot {
     pub leader: Option<NodeId>,
     /// Accepts external HTTP traffic. Separate concept from the leader.
     pub gateway: Option<NodeId>,
+    /// Low-cardinality operational saturation signals.
+    pub worker_connections: usize,
+    pub worker_preauth: usize,
+    pub worker_rejected: u64,
+    pub persistence_queue: usize,
+    pub persistence_oldest_ms: u64,
+    pub persistence_errors: u64,
+    pub jobs_recovered: u64,
+    pub task_retries: u64,
 }
 
 impl ClusterSnapshot {

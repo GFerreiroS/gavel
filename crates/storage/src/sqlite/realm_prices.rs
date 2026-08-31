@@ -69,6 +69,62 @@ const LATEST: &str = "
 const BY_MARKET: &str = " GROUP BY item_id, realm_id, variant";
 
 impl RealmPriceRepository for SqliteRealmPrices {
+    async fn record_snapshot(
+        &self,
+        samples: &[RealmSample],
+        region: Region,
+        realm: RealmId,
+        observed_at: Millis,
+        ladders: &[(ItemId, String, Ladder)],
+    ) -> RepoResult<(u64, u64)> {
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        let mut sample_rows = 0u64;
+        for sample in samples {
+            sample_rows += sqlx::query(
+                "INSERT INTO realm_price_samples
+                   (item_id, region, realm_id, variant, observed_at,
+                    min_price, median_price, max_price, listings)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(item_id, region, realm_id, variant, observed_at) DO NOTHING",
+            )
+            .bind(sample.item.get() as i64)
+            .bind(sample.region.as_str())
+            .bind(sample.realm.get() as i64)
+            .bind(&sample.variant)
+            .bind(sample.observed_at.get() as i64)
+            .bind(sample.min_price.get() as i64)
+            .bind(sample.median_price.get() as i64)
+            .bind(sample.max_price.get() as i64)
+            .bind(sample.listings as i64)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?
+            .rows_affected();
+        }
+        let mut ladder_rows = 0u64;
+        for (item, variant, ladder) in ladders.iter().filter(|(_, _, ladder)| !ladder.is_empty()) {
+            ladder_rows += sqlx::query(
+                "INSERT OR IGNORE INTO realm_price_ladders
+                   (item_id, region, realm_id, variant, observed_at, levels, total, steps)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(item.get() as i64)
+            .bind(region.as_str())
+            .bind(realm.get() as i64)
+            .bind(variant)
+            .bind(observed_at.get() as i64)
+            .bind(ladder.levels() as i64)
+            .bind(ladder.total() as i64)
+            .bind(ladder.encode())
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?
+            .rows_affected();
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok((sample_rows, ladder_rows))
+    }
+
     /// One transaction per snapshot: a realm's hour lands whole or not at all.
     async fn record_samples(&self, samples: &[RealmSample]) -> RepoResult<u64> {
         if samples.is_empty() {
@@ -417,5 +473,61 @@ impl RealmPriceRepository for SqliteRealmPrices {
                 })
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod atomic_tests {
+    use super::*;
+    use crate::{SqliteConfig, SqliteStore};
+    use app_core::market::Listing;
+    use app_core::repo::Store;
+
+    #[tokio::test]
+    async fn a_realm_ladder_failure_cannot_advance_last_observed() {
+        let store = SqliteStore::connect(&SqliteConfig::in_memory())
+            .await
+            .unwrap();
+        let prices = store.realm_prices();
+        sqlx::query(
+            "CREATE TRIGGER reject_test_realm_ladder BEFORE INSERT ON realm_price_ladders
+             BEGIN SELECT RAISE(ABORT, 'injected ladder failure'); END",
+        )
+        .execute(&prices.pool)
+        .await
+        .unwrap();
+        let at = Millis(1_000);
+        let sample = RealmSample {
+            item: ItemId(1),
+            region: Region::Eu,
+            realm: RealmId(1),
+            variant: "plain".into(),
+            observed_at: at,
+            min_price: Copper(10),
+            median_price: Copper(10),
+            max_price: Copper(10),
+            listings: 1,
+        };
+        let ladder = Ladder::of(&[Listing {
+            item: ItemId(1),
+            unit_price: Copper(10),
+            quantity: 1,
+        }]);
+        assert!(
+            prices
+                .record_snapshot(
+                    &[sample],
+                    Region::Eu,
+                    RealmId(1),
+                    at,
+                    &[(ItemId(1), "plain".into(), ladder)],
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            prices.last_observed(Region::Eu, RealmId(1)).await.unwrap(),
+            None
+        );
     }
 }

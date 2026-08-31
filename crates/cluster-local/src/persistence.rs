@@ -37,18 +37,31 @@ pub(crate) enum Write {
 #[derive(Clone)]
 pub(crate) struct Writer {
     queue: mpsc::Sender<Write>,
+    telemetry: std::sync::Arc<crate::telemetry::Telemetry>,
 }
 
 impl Writer {
-    pub(crate) fn spawn<P: ClusterStore>(store: P) -> (Self, tokio::task::JoinHandle<()>) {
+    pub(crate) fn spawn<P: ClusterStore>(
+        store: P,
+        telemetry: std::sync::Arc<crate::telemetry::Telemetry>,
+    ) -> (Self, tokio::task::JoinHandle<()>) {
         let (tx, rx) = mpsc::channel(QUEUE_DEPTH);
-        let handle = tokio::spawn(drain(store, rx));
-        (Self { queue: tx }, handle)
+        let handle = tokio::spawn(drain(store, rx, telemetry.clone()));
+        (
+            Self {
+                queue: tx,
+                telemetry,
+            },
+            handle,
+        )
     }
 
     /// Applies backpressure when the store falls behind; that is the point.
     async fn push(&self, write: Write) {
+        self.telemetry.queued();
         if self.queue.send(write).await.is_err() {
+            self.telemetry.dequeued();
+            self.telemetry.persistence_error();
             tracing::error!("persistence worker stopped; cluster state is no longer durable");
         }
     }
@@ -74,7 +87,11 @@ impl Writer {
     }
 }
 
-async fn drain<P: ClusterStore>(store: P, mut queue: mpsc::Receiver<Write>) {
+async fn drain<P: ClusterStore>(
+    store: P,
+    mut queue: mpsc::Receiver<Write>,
+    telemetry: std::sync::Arc<crate::telemetry::Telemetry>,
+) {
     while let Some(write) = queue.recv().await {
         let result = match &write {
             Write::Job(job) => store.save_job(job).await,
@@ -83,7 +100,9 @@ async fn drain<P: ClusterStore>(store: P, mut queue: mpsc::Receiver<Write>) {
             Write::Event(record) => store.append(record).await,
             Write::Roles { node, roles, at } => store.save_node_roles(*node, *roles, *at).await,
         };
+        telemetry.dequeued();
         if let Err(e) = result {
+            telemetry.persistence_error();
             // A failed write must not take the cluster down, but it must be
             // loud: the UI is now showing state the store does not have.
             tracing::error!(error = %e, kind = write.kind(), "durable write failed");

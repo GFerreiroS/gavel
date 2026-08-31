@@ -9,6 +9,10 @@
     <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
     <button type="submit">{{ "Sign out"|t }}</button>
   </form>
+  <form method="post" action="/account/delete" hx-post="/account/delete">
+    <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
+    <button type="submit" class="secondary">{{ "Delete account"|t }}</button>
+  </form>
 </article>
 
 <article>

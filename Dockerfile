@@ -2,7 +2,7 @@
 # started with different flags, so a worker can never be a different build from
 # the thing that was tested.
 
-FROM rust:1.88-slim AS build
+FROM rust:1.88-slim@sha256:38bc5a86d998772d4aec2348656ed21438d20fcdce2795b56ca434cf21430d89 AS build
 WORKDIR /src
 
 RUN apt-get update \
@@ -32,7 +32,7 @@ COPY . .
 RUN find crates -name '*.rs' -exec touch {} + \
  && cargo build --release --locked -p server
 
-FROM debian:bookworm-slim AS runtime
+FROM debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171 AS runtime
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates curl \
  && rm -rf /var/lib/apt/lists/* \

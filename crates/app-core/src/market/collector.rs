@@ -143,15 +143,9 @@ where
         };
 
         let (samples, ladders) = self.summarise_all(region, generated_at, listings);
-        let written = self.prices.record_samples(&samples).await?;
-        // Written whatever `written` says. A snapshot whose samples all
-        // collided is one we have seen, and `record_ladders` ignores a
-        // duplicate instant for itself -- but a deployment that gained ladder
-        // collection *after* recording a snapshot has samples without ladders,
-        // and this is what fills them in rather than waiting an hour.
-        let ladder_rows = self
+        let (written, ladder_rows) = self
             .prices
-            .record_ladders(region, generated_at, &ladders)
+            .record_snapshot(&samples, region, generated_at, &ladders)
             .await?;
 
         // Zero rows written means every one of them collided with an existing

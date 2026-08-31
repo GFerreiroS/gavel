@@ -58,6 +58,9 @@ pub struct LocalClusterConfig {
     /// with no token admits anyone who can reach it. The server refuses that
     /// combination at startup rather than leaving it to be noticed later.
     pub join_token: Option<String>,
+    /// Hard caps for accepted worker sockets and unauthenticated handshakes.
+    pub max_remote_connections: usize,
+    pub max_pending_handshakes: usize,
     /// Fill in plausible load/memory numbers for in-process workers. Remote
     /// workers report their own values.
     pub simulate_load: bool,
@@ -90,6 +93,8 @@ impl Default for LocalClusterConfig {
             remote_nodes: Vec::new(),
             node_listen: None,
             join_token: None,
+            max_remote_connections: 64,
+            max_pending_handshakes: 16,
             simulate_load: true,
             workload: None,
             artifacts: None,

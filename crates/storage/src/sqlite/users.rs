@@ -30,11 +30,8 @@ fn user_from_row(row: &SqliteRow) -> User {
 impl UserRepository for SqliteUsers {
     async fn create(&self, username: &str, password_hash: &str, now: Millis) -> RepoResult<User> {
         let row = sqlx::query(
-            // The first account is the administrator. `NOT EXISTS` rather
-            // than a count read first: two simultaneous registrations on an
-            // empty database would otherwise both believe they were first.
             "INSERT INTO users(username, password_hash, created_at, is_admin)
-             VALUES(?, ?, ?, NOT EXISTS(SELECT 1 FROM users))
+             VALUES(?, ?, ?, 0)
              RETURNING id, username, created_at, is_admin",
         )
         .bind(username)
@@ -44,6 +41,56 @@ impl UserRepository for SqliteUsers {
         .await
         .map_err(map_err)?;
         Ok(user_from_row(&row))
+    }
+
+    async fn bootstrap_admin(
+        &self,
+        username: &str,
+        password_hash: &str,
+        now: Millis,
+    ) -> RepoResult<Option<User>> {
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        // This write is deliberately first: it obtains SQLite's writer slot
+        // before the no-admin decision, so two processes cannot both read an
+        // empty snapshot and then create administrators.
+        sqlx::query(
+            "INSERT INTO admin_bootstrap(singleton, user_id)
+             SELECT 1, MIN(id) FROM users WHERE is_admin = 1
+             HAVING MIN(id) IS NOT NULL
+             ON CONFLICT(singleton) DO NOTHING",
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
+        let bootstrapped: Option<(i64,)> =
+            sqlx::query_as("SELECT 1 FROM admin_bootstrap WHERE singleton = 1")
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(map_err)?;
+        if bootstrapped.is_some() {
+            tx.commit().await.map_err(map_err)?;
+            return Ok(None);
+        }
+        let row = sqlx::query(
+            "INSERT INTO users(username, password_hash, created_at, is_admin)
+             VALUES(?, ?, ?, 1)
+             RETURNING id, username, created_at, is_admin",
+        )
+        .bind(username)
+        .bind(password_hash)
+        .bind(now.get() as i64)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(map_err)?;
+        if let Some(row) = &row {
+            sqlx::query("INSERT INTO admin_bootstrap(singleton, user_id) VALUES(1, ?)")
+                .bind(row.get::<i64, _>("id"))
+                .execute(&mut *tx)
+                .await
+                .map_err(map_err)?;
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok(row.as_ref().map(user_from_row))
     }
 
     async fn by_username(&self, username: &str) -> RepoResult<Option<Credentials>> {
@@ -88,5 +135,14 @@ impl UserRepository for SqliteUsers {
                 linked_at: Millis(row.get::<i64, _>("linked_at") as u64),
             })
             .collect())
+    }
+
+    async fn delete(&self, id: UserId) -> RepoResult<bool> {
+        let result = sqlx::query("DELETE FROM users WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(result.rows_affected() != 0)
     }
 }

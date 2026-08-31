@@ -18,17 +18,20 @@ use std::time::Duration;
 
 use anyhow::Context;
 use app_core::Metrics;
-use app_core::auth::{Argon2Hasher, OsTokens};
+use app_core::auth::{
+    Argon2Hasher, OsTokens, PasswordHasher, validate_password, validate_username,
+};
 use app_core::market::{CatalogSet, ReleaseStates};
 use app_core::repo::{
     CacheStore, KeyValueStore, MarketEventRepository, ReleaseRepository, SessionRepository, Store,
+    UserRepository,
 };
 use app_integrations::{
     BlizzardAuctions, BlizzardConfig, BlizzardCredentials, BlizzardItems, DiscordWebhook,
     RaiderIoClient, RaiderIoConfig,
 };
 use clap::Parser;
-use cluster_core::Clock;
+use cluster_core::{Clock, EventLog, JobStore, Millis};
 use cluster_local::{LocalCluster, SystemClock};
 use storage::{SqliteConfig, SqliteStore};
 use tracing_subscriber::layer::SubscriberExt;
@@ -54,6 +57,7 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
     let mut cli = Cli::parse();
     init_tracing(&cli.log, cli.server_timing)?;
     cli.resolve_cluster_token()?;
+    cli.resolve_bootstrap_admin()?;
 
     // Worker mode short-circuits everything below: no HTTP, no database, no
     // application state. It dials the coordinator and does what it is told.
@@ -72,6 +76,12 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
         ),
         (None, _) => tracing::debug!("no .env file found"),
     }
+    if !cli.host.is_loopback() && !cli.secure_cookies {
+        tracing::warn!(
+            host = %cli.host,
+            "HTTP is bound beyond loopback while APP_SECURE_COOKIES is false; use this only for explicit plain-HTTP development"
+        );
+    }
 
     // --- adapters ---------------------------------------------------------
     let store = SqliteStore::connect(&SqliteConfig::new(&cli.database))
@@ -79,11 +89,16 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
         .context("opening the database")?;
 
     let clock = SystemClock;
-    let removed = housekeeping(&store, &clock).await;
+    let metrics = std::sync::Arc::new(Metrics::new());
+    let removed = housekeeping(&store, &clock, cli.operation_retention_days).await;
     if removed > 0 {
         tracing::info!(rows = removed, "purged expired sessions and cache entries");
     }
     record_boot_configuration(&store, &cli).await;
+
+    if let Some((username, password)) = cli.bootstrap_admin.take() {
+        bootstrap_admin(&store, &clock, username, password).await?;
+    }
 
     // One store handle: the runtime persists jobs, events and role assignments.
     // The inputs and results of whatever analysis version is being built.
@@ -96,11 +111,6 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
     // lets the same one be installed in a `--connect` process that has no
     // database, no catalogue and no candidate of its own.
     let artifacts = std::sync::Arc::new(analysis_work::Artifacts::new());
-    let mut cluster_config = cli.cluster_config();
-    cluster_config.workload = Some(std::sync::Arc::new(analysis_work::MarketWorkload::new()));
-    cluster_config.artifacts = Some(artifacts.clone());
-    let (cluster, supervisor) = LocalCluster::start(cluster_config, store.cluster_handle());
-    tracing::info!(workers = cli.workers, "worker pool starting");
 
     let characters = RaiderIoClient::new(RaiderIoConfig::default(), clock)
         .map_err(|e| anyhow::anyhow!("building the Raider.IO client: {e}"))?;
@@ -112,16 +122,20 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
             tracing::info!("Battle.net credentials loaded");
             // Two adapters, one set of credentials: prices come from the
             // auction house, tooltips from the static game data.
+            let blizzard_config = BlizzardConfig {
+                metrics: Some(metrics.clone()),
+                ..BlizzardConfig::default()
+            };
             let auctions =
-                BlizzardAuctions::new(BlizzardConfig::default(), credentials.clone(), clock)
+                BlizzardAuctions::new(blizzard_config.clone(), credentials.clone(), clock)
                     .map_err(|e| anyhow::anyhow!("building the Blizzard client: {e}"))?;
             let realms = app_integrations::BlizzardRealms::new(
-                BlizzardConfig::default(),
+                blizzard_config.clone(),
                 credentials.clone(),
                 clock,
             )
             .map_err(|e| anyhow::anyhow!("building the Blizzard realm client: {e}"))?;
-            let items = BlizzardItems::new(BlizzardConfig::default(), credentials, clock)
+            let items = BlizzardItems::new(blizzard_config, credentials, clock)
                 .map_err(|e| anyhow::anyhow!("building the Blizzard item client: {e}"))?;
             (
                 market::Commodities::Live(Box::new(auctions)),
@@ -211,6 +225,15 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
         Err(error) => tracing::warn!(%error, "could not record the catalogue timeline"),
     }
 
+    // Only now start concurrent writers. Bootstrap, release seeding and the
+    // catalogue timeline above are startup transactions and must not race a
+    // supervisor write, which used to produce SQLITE_BUSY_SNAPSHOT (517).
+    let mut cluster_config = cli.cluster_config();
+    cluster_config.workload = Some(std::sync::Arc::new(analysis_work::MarketWorkload::new()));
+    cluster_config.artifacts = Some(artifacts.clone());
+    let (cluster, supervisor) = LocalCluster::start(cluster_config, store.cluster_handle());
+    tracing::info!(workers = cli.workers, "worker pool starting");
+
     let market_config = market::config(
         cli.regions(),
         cli.realms(),
@@ -231,11 +254,11 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
         catalogs,
         releases,
         market: market_config,
-        hasher: Argon2Hasher::new(),
+        hasher: std::sync::Arc::new(Argon2Hasher::new()),
         tokens: OsTokens,
         clock,
         config: cli.web_config(),
-        metrics: Metrics::new(),
+        metrics,
     });
 
     // Whether this process expects workers to dial in, which is the one thing
@@ -265,11 +288,14 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
     // start waiting for them.
     let (drain, draining) = tokio::sync::oneshot::channel::<()>();
     let mut server = tokio::spawn(async move {
-        axum::serve(listener, app)
-            .with_graceful_shutdown(async move {
-                let _ = draining.await;
-            })
-            .await
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            let _ = draining.await;
+        })
+        .await
     });
 
     shutdown_signal().await;
@@ -299,22 +325,28 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
             // used to. The deadline has to actually end the thing it gave up
             // waiting for.
             server.abort();
+            let _ = (&mut server).await;
         }
     }
 
     // Dropping the last handle stops the supervisor, which stops the nodes.
     collector.abort();
+    let _ = collector.await;
     drop(env);
     // Bounded for the same reason as the server above: a shutdown path that
     // can wait for ever is a shutdown path that eventually does.
-    if tokio::time::timeout(SHUTDOWN_GRACE, supervisor)
-        .await
-        .is_err()
-    {
-        tracing::warn!(
-            seconds = SHUTDOWN_GRACE.as_secs(),
-            "the cluster did not stop in time; exiting anyway"
-        );
+    let mut supervisor = supervisor;
+    match tokio::time::timeout(SHUTDOWN_GRACE, &mut supervisor).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::warn!(%error, "cluster lifecycle task ended badly"),
+        Err(_) => {
+            tracing::warn!(
+                seconds = SHUTDOWN_GRACE.as_secs(),
+                "the cluster did not stop in time; aborting the lifecycle task"
+            );
+            supervisor.abort();
+            let _ = supervisor.await;
+        }
     }
     Ok(())
 }
@@ -345,15 +377,65 @@ fn init_tracing(filter: &str, server_timing: bool) -> anyhow::Result<()> {
 
 /// Drop rows nobody will ever read again. Cheap, and keeps the database from
 /// growing on expired sessions and cache entries alone.
-async fn housekeeping(store: &SqliteStore, clock: &SystemClock) -> u64 {
+async fn housekeeping(store: &SqliteStore, clock: &SystemClock, operation_days: u64) -> u64 {
     let now = clock.now();
-    let sessions = store.sessions().purge_expired(now).await.unwrap_or(0);
-    let cache = store.cache().purge_expired(now).await.unwrap_or(0);
+    let sessions = match store.sessions().purge_expired(now).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(%error, "could not purge expired sessions");
+            0
+        }
+    };
+    let cache = match store.cache().purge_expired(now).await {
+        Ok(rows) => rows,
+        Err(error) => {
+            tracing::warn!(%error, "could not purge expired cache entries");
+            0
+        }
+    };
     // The price tables grow on every collection cycle. A plan chosen against
     // last month's statistics is a plan chosen against a different table, and
     // on this archive that was a four-fold difference on every category page.
     store.optimize().await;
-    sessions + cache
+    let mut operational = 0;
+    if operation_days != 0 {
+        let cutoff = Millis(
+            now.get()
+                .saturating_sub(operation_days.saturating_mul(24 * 60 * 60 * 1000)),
+        );
+        match store.jobs().prune_terminal_before(cutoff).await {
+            Ok(rows) => operational += rows,
+            Err(error) => tracing::warn!(%error, "could not prune terminal jobs"),
+        }
+        match store.events().prune_before(cutoff).await {
+            Ok(rows) => operational += rows,
+            Err(error) => tracing::warn!(%error, "could not prune cluster events"),
+        }
+    }
+    sessions + cache + operational
+}
+
+async fn bootstrap_admin(
+    store: &SqliteStore,
+    clock: &SystemClock,
+    username: String,
+    password: String,
+) -> anyhow::Result<()> {
+    validate_username(&username).context("validating bootstrap administrator username")?;
+    validate_password(&password).context("validating bootstrap administrator password")?;
+    let hash = tokio::task::spawn_blocking(move || Argon2Hasher::new().hash(&password))
+        .await
+        .context("joining bootstrap password hash task")??;
+    match store
+        .users()
+        .bootstrap_admin(&username, &hash, clock.now())
+        .await
+        .context("creating bootstrap administrator")?
+    {
+        Some(user) => tracing::info!(user = %user.username, "administrator bootstrapped"),
+        None => tracing::info!("administrator already exists; bootstrap credentials were not used"),
+    }
+    Ok(())
 }
 
 /// Persist what this run was actually configured with, through the generic
@@ -408,5 +490,52 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = interrupt => tracing::debug!("interrupted"),
         _ = terminate => tracing::debug!("terminated"),
+    }
+}
+
+#[cfg(test)]
+mod bootstrap_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn configured_bootstrap_creates_an_admin_and_rejects_weak_credentials() {
+        let store = SqliteStore::connect(&SqliteConfig::in_memory())
+            .await
+            .unwrap();
+        let clock = SystemClock;
+
+        assert!(
+            bootstrap_admin(&store, &clock, "operator".into(), "short".into())
+                .await
+                .is_err(),
+            "invalid bootstrap credentials are rejected before storage"
+        );
+        assert!(
+            store
+                .users()
+                .by_username("operator")
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        bootstrap_admin(
+            &store,
+            &clock,
+            "operator".into(),
+            "a sufficiently long bootstrap password".into(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            store
+                .users()
+                .by_username("operator")
+                .await
+                .unwrap()
+                .unwrap()
+                .user
+                .is_admin
+        );
     }
 }

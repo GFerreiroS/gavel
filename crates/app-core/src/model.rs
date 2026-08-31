@@ -13,9 +13,8 @@ pub struct User {
     pub id: UserId,
     pub username: String,
     pub created_at: Millis,
-    /// May change what the tracker collects. The first account to register
-    /// gets it: on a one-server instance that is whoever deployed it, and an
-    /// instance nobody can administer needs a database edit to rescue.
+    /// May change what the tracker collects. Granted only by the explicit
+    /// operator bootstrap path, never by public registration order.
     pub is_admin: bool,
 }
 

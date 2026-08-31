@@ -31,7 +31,13 @@ services:
       # this cluster. Same value here and on every worker; the web container
       # refuses to start if it is missing.
       APP_CLUSTER_TOKEN: ${APP_CLUSTER_TOKEN:?set APP_CLUSTER_TOKEN in .env, e.g. openssl rand -hex 32}
+      # Optional and one-shot. Public registration never grants admin; set
+      # both for the first start, then remove them and recreate this container.
+      APP_BOOTSTRAP_ADMIN_USERNAME: ${APP_BOOTSTRAP_ADMIN_USERNAME:-}
+      APP_BOOTSTRAP_ADMIN_PASSWORD: ${APP_BOOTSTRAP_ADMIN_PASSWORD:-}
       APP_LOG: ${APP_LOG:-info,sqlx=warn}
+      APP_SECURE_COOKIES: "true"
+      APP_TRUST_PROXY_HEADERS: "true"
     volumes:
       - data:/data
     ports:

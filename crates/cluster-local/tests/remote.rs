@@ -364,6 +364,73 @@ async fn declared_workers_exist_as_offline_nodes_before_they_connect() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn shutdown_cancels_an_idle_listener_and_incomplete_connection() {
+    let probe = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = probe.local_addr().unwrap();
+    drop(probe);
+    let mut config = remote_config(Vec::new());
+    config.node_listen = Some(address);
+    let (cluster, lifecycle) = LocalCluster::start(config, MemoryStore::new());
+    let socket = loop {
+        match TcpStream::connect(address).await {
+            Ok(socket) => break socket,
+            Err(_) => tokio::time::sleep(Duration::from_millis(10)).await,
+        }
+    };
+    drop(cluster);
+    tokio::time::timeout(Duration::from_secs(2), lifecycle)
+        .await
+        .expect("listener shutdown must not use the five-second backstop")
+        .expect("lifecycle joins cleanly");
+    drop(socket);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn incomplete_handshakes_are_bounded_and_slots_are_recovered() {
+    let mut config = remote_config(Vec::new());
+    config.max_remote_connections = 1;
+    config.max_pending_handshakes = 1;
+    let (cluster, address, _store) = start(config).await;
+
+    let stalled = TcpStream::connect(&address)
+        .await
+        .expect("first connection");
+    wait_for("stalled handshake occupies the only slot", async || {
+        let snapshot = cluster.snapshot().await;
+        snapshot.worker_connections == 1 && snapshot.worker_preauth == 1
+    })
+    .await;
+
+    let mut excess = TcpStream::connect(&address)
+        .await
+        .expect("TCP accept queue remains live");
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(Duration::from_secs(1), excess.read(&mut byte))
+        .await
+        .expect("saturated connection is rejected promptly")
+        .expect("read closure");
+    assert_eq!(read, 0, "the saturated socket is closed without a task");
+    wait_for("rejection is observable", async || {
+        cluster.snapshot().await.worker_rejected >= 1
+    })
+    .await;
+
+    drop(stalled);
+    wait_for("connection and preauth permits are released", async || {
+        let snapshot = cluster.snapshot().await;
+        snapshot.worker_connections == 0 && snapshot.worker_preauth == 0
+    })
+    .await;
+
+    let worker = FakeWorker::join_anonymous(&address).await;
+    assert_ne!(
+        worker.id,
+        NodeId(0),
+        "a later valid worker can use the freed slot"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn a_declared_worker_keeps_its_roles_when_it_connects() {
     let (cluster, address, _store) = start(remote_config(declared(5))).await;
 

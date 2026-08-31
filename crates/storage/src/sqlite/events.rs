@@ -65,4 +65,13 @@ impl EventRepository for SqliteEvents {
             .map_err(map_err)?;
         Ok(row.get::<i64, _>("seq") as u64)
     }
+
+    async fn prune_before(&self, before: Millis) -> RepoResult<u64> {
+        let result = sqlx::query("DELETE FROM cluster_events WHERE at < ?")
+            .bind(before.get() as i64)
+            .execute(&self.pool)
+            .await
+            .map_err(map_err)?;
+        Ok(result.rows_affected())
+    }
 }

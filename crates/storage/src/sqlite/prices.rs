@@ -33,6 +33,57 @@ fn sample_from_row(row: &SqliteRow) -> RepoResult<PriceSample> {
 }
 
 impl PriceRepository for SqlitePrices {
+    async fn record_snapshot(
+        &self,
+        samples: &[PriceSample],
+        region: Region,
+        observed_at: Millis,
+        ladders: &[(ItemId, Ladder)],
+    ) -> RepoResult<(u64, u64)> {
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        let mut sample_rows = 0u64;
+        for sample in samples {
+            sample_rows += sqlx::query(
+                "INSERT INTO price_samples
+                   (item_id, region, observed_at, min_unit, p05_unit, median_unit, quantity, listings)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 ON CONFLICT(item_id, region, observed_at) DO NOTHING",
+            )
+            .bind(sample.item.get() as i64)
+            .bind(sample.region.as_str())
+            .bind(sample.observed_at.get() as i64)
+            .bind(sample.min_unit_price.get() as i64)
+            .bind(sample.p05_unit_price.get() as i64)
+            .bind(sample.median_unit_price.get() as i64)
+            .bind(sample.quantity as i64)
+            .bind(sample.listings as i64)
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?
+            .rows_affected();
+        }
+        let mut ladder_rows = 0u64;
+        for (item, ladder) in ladders.iter().filter(|(_, ladder)| !ladder.is_empty()) {
+            ladder_rows += sqlx::query(
+                "INSERT OR IGNORE INTO price_ladders
+                   (item_id, region, observed_at, levels, total, steps)
+                 VALUES (?, ?, ?, ?, ?, ?)",
+            )
+            .bind(item.get() as i64)
+            .bind(region.as_str())
+            .bind(observed_at.get() as i64)
+            .bind(ladder.levels() as i64)
+            .bind(ladder.total() as i64)
+            .bind(ladder.encode())
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?
+            .rows_affected();
+        }
+        tx.commit().await.map_err(map_err)?;
+        Ok((sample_rows, ladder_rows))
+    }
+
     /// One transaction for the whole snapshot: either the hour lands or it
     /// does not, so a partial write cannot skew a baseline.
     async fn record_samples(&self, samples: &[PriceSample]) -> RepoResult<u64> {
@@ -445,4 +496,57 @@ fn alert_from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<Alert> {
         discount_percent: row.get::<i64, _>("discount") as u8,
         quantity: row.get::<i64, _>("quantity") as u64,
     })
+}
+
+#[cfg(test)]
+mod atomic_tests {
+    use super::*;
+    use crate::{SqliteConfig, SqliteStore};
+    use app_core::market::Listing;
+    use app_core::repo::Store;
+
+    #[tokio::test]
+    async fn a_ladder_failure_rolls_back_the_samples_from_the_same_snapshot() {
+        let store = SqliteStore::connect(&SqliteConfig::in_memory())
+            .await
+            .unwrap();
+        let prices = store.prices();
+        sqlx::query(
+            "CREATE TRIGGER reject_test_ladder BEFORE INSERT ON price_ladders
+             BEGIN SELECT RAISE(ABORT, 'injected ladder failure'); END",
+        )
+        .execute(&prices.pool)
+        .await
+        .unwrap();
+        let at = Millis(1_000);
+        let sample = PriceSample {
+            item: ItemId(1),
+            region: Region::Eu,
+            observed_at: at,
+            min_unit_price: Copper(10),
+            p05_unit_price: Copper(10),
+            median_unit_price: Copper(10),
+            quantity: 1,
+            listings: 1,
+        };
+        let ladder = Ladder::of(&[Listing {
+            item: ItemId(1),
+            unit_price: Copper(10),
+            quantity: 1,
+        }]);
+        assert!(
+            prices
+                .record_snapshot(&[sample], Region::Eu, at, &[(ItemId(1), ladder)])
+                .await
+                .is_err()
+        );
+        assert!(
+            prices
+                .history(ItemId(1), Region::Eu, Millis(0))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(prices.last_observed(Region::Eu).await.unwrap(), None);
+    }
 }

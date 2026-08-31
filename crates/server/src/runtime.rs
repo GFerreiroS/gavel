@@ -28,11 +28,11 @@ pub struct Inner {
     /// the database.
     pub releases: ReleaseStates,
     pub market: MarketConfig,
-    pub hasher: Argon2Hasher,
+    pub hasher: Arc<Argon2Hasher>,
     pub tokens: OsTokens,
     pub clock: SystemClock,
     pub config: WebConfig,
-    pub metrics: Metrics,
+    pub metrics: Arc<Metrics>,
 }
 
 /// Cheap to clone: Axum clones the state for every request.
@@ -58,7 +58,7 @@ impl Ports for Runtime {
     type RealmAuctions = RealmAuctions;
     type Items = Items;
     type Alerts = Alerts;
-    type Hasher = Argon2Hasher;
+    type Hasher = Arc<Argon2Hasher>;
     type Tokens = OsTokens;
     type Clock = SystemClock;
 

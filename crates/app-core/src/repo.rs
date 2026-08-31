@@ -71,10 +71,22 @@ pub trait CacheStore: Send + Sync + 'static {
 pub trait UserRepository: Send + Sync + 'static {
     fn create(
         &self,
-        username: &str,
-        password_hash: &str,
-        now: Millis,
+        _username: &str,
+        _password_hash: &str,
+        _now: Millis,
     ) -> impl Future<Output = RepoResult<User>> + Send;
+
+    /// Create the explicitly bootstrapped administrator, but only while the
+    /// installation has no administrator. Implementations must make the check
+    /// and insert atomically.
+    fn bootstrap_admin(
+        &self,
+        _username: &str,
+        _password_hash: &str,
+        _now: Millis,
+    ) -> impl Future<Output = RepoResult<Option<User>>> + Send {
+        async { Ok(None) }
+    }
 
     fn by_username(
         &self,
@@ -87,6 +99,12 @@ pub trait UserRepository: Send + Sync + 'static {
         &self,
         id: UserId,
     ) -> impl Future<Output = RepoResult<Vec<LinkedAccount>>> + Send;
+
+    /// Delete one account and all user-owned rows through foreign-key
+    /// cascades. Operational history contains no username and is retained.
+    fn delete(&self, _id: UserId) -> impl Future<Output = RepoResult<bool>> + Send {
+        async { Ok(false) }
+    }
 }
 
 /// Sessions have their own port so changing the shared-session backend does
@@ -100,6 +118,20 @@ pub trait SessionRepository: Send + Sync + 'static {
 
 /// Auction-house price history and the alerts derived from it.
 pub trait PriceRepository: Send + Sync + 'static {
+    /// Persist the summary and depth of one upstream snapshot as one unit.
+    fn record_snapshot(
+        &self,
+        samples: &[PriceSample],
+        region: Region,
+        observed_at: Millis,
+        ladders: &[(ItemId, Ladder)],
+    ) -> impl Future<Output = RepoResult<(u64, u64)>> + Send {
+        async move {
+            let samples = self.record_samples(samples).await?;
+            let ladders = self.record_ladders(region, observed_at, ladders).await?;
+            Ok((samples, ladders))
+        }
+    }
     /// Append observations. One row per item per snapshot; re-recording the
     /// same instant is a no-op so a retried job cannot double-count.
     fn record_samples(
@@ -228,6 +260,23 @@ pub trait PriceRepository: Send + Sync + 'static {
 /// different price meaning, different table. A caller that wants a gear price
 /// must say so.
 pub trait RealmPriceRepository: Send + Sync + 'static {
+    /// Persist one realm snapshot atomically across summary and depth tables.
+    fn record_snapshot(
+        &self,
+        samples: &[RealmSample],
+        region: Region,
+        realm: RealmId,
+        observed_at: Millis,
+        ladders: &[(ItemId, String, Ladder)],
+    ) -> impl Future<Output = RepoResult<(u64, u64)>> + Send {
+        async move {
+            let samples = self.record_samples(samples).await?;
+            let ladders = self
+                .record_ladders(region, realm, observed_at, ladders)
+                .await?;
+            Ok((samples, ladders))
+        }
+    }
     /// Append observations. Re-recording the same snapshot is a no-op, so a
     /// retried collection cannot double-count a realm.
     fn record_samples(

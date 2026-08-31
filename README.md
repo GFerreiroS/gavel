@@ -13,9 +13,17 @@ cargo run
 ```
 
 ```bash
+cp .env.example .env
+printf '\nAPP_CLUSTER_TOKEN=%s\n' "$(openssl rand -hex 32)" >> .env
 docker compose up --build              # web + 3 workers
 docker compose up -d --scale worker=8
 ```
+
+For the first successful start only, set `APP_BOOTSTRAP_ADMIN_USERNAME` and
+`APP_BOOTSTRAP_ADMIN_PASSWORD` in `.env`. Once the log confirms the bootstrap,
+remove both and recreate the web container so the cleartext bootstrap password
+does not remain in its environment. Public registration always creates an
+ordinary user; creation order never grants administration.
 
 ---
 
@@ -83,6 +91,23 @@ Dockerfile            One image for both roles.
 compose.yml           Web + scalable workers on one host.
 ```
 
+### Container provenance and updates
+
+The Dockerfile keeps the readable Debian/Rust tags and pins their multi-arch
+manifest digests. Renovate those two digests deliberately (inspect the new
+manifest, rebuild, run the validation suite, and review the resulting package
+diff) rather than accepting a different base under the same commit. Debian
+packages are intentionally installed at the latest security revision available
+inside that pinned base; exact APT version pins become uninstallable as Debian
+security repositories rotate. Both APT layers remove their indexes.
+
+BuildKit can attach an SPDX SBOM and provenance without adding tooling to the
+image:
+
+```bash
+docker buildx build --sbom=true --provenance=true -t wow-auction-tracker .
+```
+
 Dependencies point inwards. `cluster-core` depends only on `serde`,
 `thiserror`, `postcard` and `futures-core`; `app-core` depends on
 `cluster-core`; the adapters depend on the core; `server` is the only crate
@@ -113,8 +138,11 @@ Every setting is a CLI flag backed by an environment variable, with a default.
 | `--database` | `APP_DATABASE` | `data/cluster.db` | SQLite file, or `:memory:` |
 | `--workers` | `APP_WORKERS` | `4` | Workers inside this process |
 | `--worker-listen` | `APP_WORKER_LISTEN` | off | Accept worker connections, e.g. `0.0.0.0:3001` |
+| `--max-worker-connections` | `APP_MAX_WORKER_CONNECTIONS` | `64` | Global accepted worker socket cap |
+| `--max-worker-handshakes` | `APP_MAX_WORKER_HANDSHAKES` | `16` | Concurrent preauthentication cap |
 | `--connect` | `APP_CONNECT` | off | Run as a worker against this coordinator |
 | *(none)* | `APP_CLUSTER_TOKEN` | — | Cluster join secret. Required with `--worker-listen`; sent by `--connect` |
+| *(none)* | `APP_BOOTSTRAP_ADMIN_USERNAME` / `APP_BOOTSTRAP_ADMIN_PASSWORD` | — | One-shot administrator bootstrap; set together, then remove |
 | `--heartbeat-ms` | `APP_HEARTBEAT_MS` | `1000` | Heartbeat interval |
 | `--suspect-ms` | `APP_SUSPECT_MS` | `3000` | Silence before Suspect |
 | `--offline-ms` | `APP_OFFLINE_MS` | `6000` | Silence before Offline |
@@ -123,11 +151,13 @@ Every setting is a CLI flag backed by an environment variable, with a default.
 | `--gateway-min` etc. | `APP_GATEWAY_MIN` … | `1,2,2,1,1` | Role minimums |
 | `--debug-controls` | `APP_DEBUG_CONTROLS` | `false` | Mount `/debug/*` (administrator only) |
 | `--secure-cookies` | `APP_SECURE_COOKIES` | `false` | Requires HTTPS |
+| `--trust-proxy-headers` | `APP_TRUST_PROXY_HEADERS` | `false` | Trust client-IP headers only behind an overwriting proxy |
 | `--server-timing` | `APP_SERVER_TIMING` | `false` | `Server-Timing` on every response: db, cache, analysis, template, statements, rows |
 | `--log` | `APP_LOG` | `info,sqlx=warn` | Tracing filter |
 | `--market-regions` | `APP_MARKET_REGIONS` | `eu,us,kr,tw` | Auction regions to collect and offer in the picker |
 | `--market-interval-min` | `APP_MARKET_INTERVAL_MIN` | `30` | Commodity poll interval |
 | `--market-retain-days` | `APP_MARKET_RETAIN_DAYS` | `90` | Price history kept |
+| `--operation-retention-days` | `APP_OPERATION_RETENTION_DAYS` | `90` | Terminal jobs/events retained; `0` keeps forever |
 
 Each collected region costs one commodities call per cycle (25 against
 Battle.net's hourly budget of 36,000) and its own price rows. Narrow the list
@@ -156,6 +186,23 @@ Secrets are never flags, and never logged:
   it just collects no prices and shows untranslated catalog names.
 * `BATTLENET_CLIENT_ID` / `BATTLENET_CLIENT_SECRET` -- the OAuth client, for
   account linking. Not wired up yet.
+
+### Data lifecycle
+
+An authenticated account owner can use **Delete account** on `/account`. The
+operation deletes the user row and, in the same SQLite statement/transaction,
+cascades every session, linked external account and watch owned by that user.
+Market observations, anonymous cluster jobs and cluster events contain no user
+identifier, so they remain operational/history data rather than being attached
+to the deleted identity. Consuming the administrator bootstrap is retained as
+an identity-free marker; deleting its original account does not silently reopen
+the privileged bootstrap path.
+
+Expired sessions and cache entries are purged at startup. Terminal jobs and
+cluster events older than `APP_OPERATION_RETENTION_DAYS` are also removed;
+unfinished jobs are never removed by retention. `0` keeps operational history
+forever. Market samples and ladders have their separate retention/downsampling
+settings because they are the product's historical dataset, not account data.
 
 ---
 

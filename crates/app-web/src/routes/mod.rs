@@ -36,15 +36,19 @@ use tower_http::compression::CompressionLayer;
 use tower_http::trace::TraceLayer;
 
 use app_core::repo::Store;
+use cluster_core::ClusterControl;
 
-use crate::throttle::{LoginThrottle, SignUpThrottle};
+use crate::throttle::{AuthGate, LoginThrottle, SignUpThrottle, SseGate};
 use crate::{assets, csrf, error, headers, metrics, prefs};
 
 /// Build the application router.
 ///
 /// Generic over the port bundle, so this function never names SQLite, the
 /// Tokio-task cluster or Raider.IO.
-pub fn router<E: Ports>(env: E, shutdown: crate::Shutdown) -> Router {
+pub fn router<E: Ports>(env: E, shutdown: crate::Shutdown) -> Router
+where
+    E::Hasher: Clone,
+{
     let debug_routes = if env.config().debug_controls {
         Router::new()
             .route("/debug/nodes/{id}/stop", post(debug::stop_node::<E>))
@@ -182,6 +186,7 @@ pub fn router<E: Ports>(env: E, shutdown: crate::Shutdown) -> Router {
         .route("/account/register", post(account::register::<E>))
         .route("/account/login", post(account::login::<E>))
         .route("/account/logout", post(account::logout::<E>))
+        .route("/account/delete", post(account::delete::<E>))
         // assets
         .route("/static/pico.css", get(assets::pico))
         .route("/static/style.css", get(assets::style))
@@ -198,6 +203,8 @@ pub fn router<E: Ports>(env: E, shutdown: crate::Shutdown) -> Router {
         .layer(Extension(Arc::new(crate::FragmentCache::new())))
         .layer(Extension(Arc::new(LoginThrottle::new())))
         .layer(Extension(Arc::new(SignUpThrottle::new())))
+        .layer(Extension(Arc::new(AuthGate::default())))
+        .layer(Extension(Arc::new(SseGate::default())))
         // Held by the handlers that keep a connection open, so they can let go
         // when the process is stopping rather than holding the door.
         .layer(Extension(shutdown))
@@ -249,6 +256,25 @@ async fn healthz() -> StatusCode {
 /// published analysis" says no more than `/healthz` already does by answering.
 async fn readyz<E: Ports>(State(env): State<E>) -> Response {
     use app_core::repo::ReadModelRepository;
+
+    let cluster = match tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        env.cluster().snapshot(),
+    )
+    .await
+    {
+        Ok(snapshot) => snapshot,
+        Err(_) => {
+            return (StatusCode::SERVICE_UNAVAILABLE, "cluster is not responding").into_response();
+        }
+    };
+    if cluster.persistence_queue >= 900 || cluster.persistence_oldest_ms >= 30_000 {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "durable persistence is saturated",
+        )
+            .into_response();
+    }
 
     match env.store().read_model().published().await {
         Ok(Some(version)) => (

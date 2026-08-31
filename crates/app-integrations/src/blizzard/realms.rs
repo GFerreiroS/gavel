@@ -32,6 +32,8 @@ use super::{BlizzardConfig, BlizzardCredentials};
 pub struct BlizzardRealms<C> {
     http: reqwest::Client,
     token: TokenSource<C>,
+    clock: C,
+    metrics: Option<std::sync::Arc<app_core::Metrics>>,
 }
 
 impl<C: Clock + Clone + 'static> BlizzardRealms<C> {
@@ -40,14 +42,17 @@ impl<C: Clock + Clone + 'static> BlizzardRealms<C> {
         credentials: BlizzardCredentials,
         clock: C,
     ) -> AppResult<Self> {
+        let metrics = config.metrics.clone();
         let http = reqwest::Client::builder()
             .timeout(config.timeout)
             .user_agent(config.user_agent.clone())
             .build()
             .map_err(|e| AppError::internal(format!("building HTTP client: {e}")))?;
         Ok(Self {
-            token: TokenSource::new(http.clone(), config, credentials, clock),
+            token: TokenSource::new(http.clone(), config, credentials, clock.clone()),
             http,
+            clock,
+            metrics,
         })
     }
 }
@@ -112,15 +117,24 @@ impl<C: Clock + Clone + 'static> RealmAuctionProvider for BlizzardRealms<C> {
             }
         }
 
-        let generated_at = response
-            .headers()
-            .get(reqwest::header::LAST_MODIFIED)
-            .and_then(|v| v.to_str().ok())
-            .and_then(parse_http_date);
+        let generated_at =
+            super::snapshot_time(response.headers(), self.clock.now(), "realm auctions");
 
-        let payload: AuctionsResponse = response.json().await.map_err(|e| {
-            AppError::Integration(format!("unexpected realm {realm} auctions payload: {e}"))
-        })?;
+        let payload: AuctionsResponse = super::bounded_json(
+            response,
+            64 * 1024 * 1024,
+            "realm auctions",
+            self.metrics.as_deref(),
+        )
+        .await?;
+        if payload.auctions.len() > 1_500_000 {
+            if let Some(metrics) = &self.metrics {
+                metrics.upstream_oversize();
+            }
+            return Err(AppError::Integration(
+                "realm auctions payload contains too many auctions".into(),
+            ));
+        }
 
         let wanted: BTreeSet<u32> = wanted.iter().map(|i| i.get()).collect();
         let total = payload.auctions.len();
@@ -150,10 +164,7 @@ impl<C: Clock + Clone + 'static> RealmAuctionProvider for BlizzardRealms<C> {
         );
 
         Ok(RealmSnapshot::Fresh {
-            generated_at: generated_at.unwrap_or_else(|| {
-                tracing::warn!(realm = %realm, "realm auctions response had no Last-Modified");
-                Millis(0)
-            }),
+            generated_at,
             listings,
         })
     }
@@ -222,12 +233,6 @@ impl<C: Clock + Clone + 'static> RealmAuctionProvider for BlizzardRealms<C> {
 
 fn http_date(at: Millis) -> String {
     httpdate::fmt_http_date(std::time::UNIX_EPOCH + std::time::Duration::from_millis(at.get()))
-}
-
-fn parse_http_date(value: &str) -> Option<Millis> {
-    let parsed = httpdate::parse_http_date(value).ok()?;
-    let since = parsed.duration_since(std::time::UNIX_EPOCH).ok()?;
-    Some(Millis(since.as_millis() as u64))
 }
 
 // --- wire format ---------------------------------------------------------

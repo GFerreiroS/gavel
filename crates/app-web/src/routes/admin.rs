@@ -617,16 +617,22 @@ pub async fn review_event<E: Ports>(
 /// form field is not a dependency.
 fn parse_instant(raw: &str) -> Option<Millis> {
     let (date, time) = raw.split_once('T').unwrap_or((raw, "00:00"));
-    let mut parts = date.split('-');
-    let year: i64 = parts.next()?.parse().ok()?;
-    let month: i64 = parts.next()?.parse().ok()?;
-    let day: i64 = parts.next()?.parse().ok()?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+    let [year, month, day] = <[&str; 3]>::try_from(date.split('-').collect::<Vec<_>>()).ok()?;
+    if year.len() != 4 || month.len() != 2 || day.len() != 2 {
         return None;
     }
-    let mut clock = time.split(':');
-    let hour: i64 = clock.next().unwrap_or("0").parse().unwrap_or(0);
-    let minute: i64 = clock.next().unwrap_or("0").parse().unwrap_or(0);
+    let year: i64 = year.parse().ok()?;
+    let month: i64 = month.parse().ok()?;
+    let day: i64 = day.parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=days_in_month(year, month)).contains(&day) {
+        return None;
+    }
+    let [hour, minute] = <[&str; 2]>::try_from(time.split(':').collect::<Vec<_>>()).ok()?;
+    if hour.len() != 2 || minute.len() != 2 {
+        return None;
+    }
+    let hour: i64 = hour.parse().ok()?;
+    let minute: i64 = minute.parse().ok()?;
     if !(0..24).contains(&hour) || !(0..60).contains(&minute) {
         return None;
     }
@@ -643,9 +649,20 @@ fn parse_instant(raw: &str) -> Option<Millis> {
     if days < 0 {
         return None;
     }
-    Some(Millis(
-        (days as u64) * 86_400_000 + (hour as u64) * 3_600_000 + (minute as u64) * 60_000,
-    ))
+    let millis = (days as u64)
+        .checked_mul(86_400_000)?
+        .checked_add((hour as u64).checked_mul(3_600_000)?)?
+        .checked_add((minute as u64).checked_mul(60_000)?)?;
+    Some(Millis(millis))
+}
+
+fn days_in_month(year: i64, month: i64) -> i64 {
+    match month {
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        _ => 31,
+    }
 }
 
 #[cfg(test)]
@@ -675,6 +692,23 @@ mod tests {
         ] {
             let at = parse_instant(typed).unwrap_or_else(|| panic!("{typed} did not parse"));
             assert_eq!(at.to_utc_string(), expected, "for {typed}");
+        }
+    }
+
+    #[test]
+    fn impossible_or_partial_dates_are_rejected() {
+        assert!(parse_instant("2026-02-28").is_some());
+        assert!(parse_instant("2024-02-29").is_some());
+        for invalid in [
+            "2026-02-29",
+            "2026-02-31",
+            "2026-04-31",
+            "2026-01-01suffix",
+            "2026-01-01T12:30:00",
+            "999999999999-01-01",
+            "2026-1-01",
+        ] {
+            assert!(parse_instant(invalid).is_none(), "accepted {invalid}");
         }
     }
 

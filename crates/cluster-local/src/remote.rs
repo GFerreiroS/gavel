@@ -30,7 +30,7 @@ use cluster_core::{
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Semaphore, mpsc, oneshot, watch};
 
 use crate::node::{NodeInbox, NodeReport};
 use crate::supervisor::{Command, RemoteAttachment};
@@ -44,12 +44,20 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// giving up and closing anyway.
 const GOODBYE_TIMEOUT: Duration = Duration::from_secs(1);
 
+pub(crate) struct ListenerLimits {
+    pub connections: usize,
+    pub handshakes: usize,
+}
+
 /// Accept worker connections until the supervisor goes away.
 pub(crate) async fn serve(
     listener: TcpListener,
-    commands: mpsc::Sender<Command>,
+    commands: mpsc::WeakSender<Command>,
     token: Option<String>,
     artifacts: Option<std::sync::Arc<dyn cluster_core::ArtifactStore>>,
+    mut stopping: watch::Receiver<bool>,
+    limits: ListenerLimits,
+    telemetry: std::sync::Arc<crate::telemetry::Telemetry>,
 ) {
     let local = listener
         .local_addr()
@@ -57,8 +65,19 @@ pub(crate) async fn serve(
         .unwrap_or_else(|_| "?".into());
     tracing::info!(address = %local, "listening for cluster nodes");
 
+    let connections = std::sync::Arc::new(Semaphore::new(limits.connections.max(1)));
+    let handshakes = std::sync::Arc::new(Semaphore::new(limits.handshakes.max(1)));
+    let mut tasks = tokio::task::JoinSet::new();
     loop {
-        let (socket, peer) = match listener.accept().await {
+        // JoinSet retains completed task outputs until they are collected.
+        // Reap before every accept so churn cannot turn short-lived sockets
+        // into an unbounded bookkeeping allocation.
+        while tasks.try_join_next().is_some() {}
+        let accepted = tokio::select! {
+            _ = stopping.changed() => break,
+            accepted = listener.accept() => accepted,
+        };
+        let (socket, peer) = match accepted {
             Ok(accepted) => accepted,
             Err(e) => {
                 tracing::error!(error = %e, "accepting a node connection failed");
@@ -70,18 +89,44 @@ pub(crate) async fn serve(
             }
         };
 
-        if commands.is_closed() {
+        let Some(commands) = commands.upgrade() else {
             break;
-        }
-        let commands = commands.clone();
+        };
+        let Ok(connection_permit) = std::sync::Arc::clone(&connections).try_acquire_owned() else {
+            tracing::warn!(peer = %peer, "rejecting worker connection: connection limit reached");
+            telemetry.rejected();
+            drop(socket);
+            continue;
+        };
+        let Ok(handshake_permit) = std::sync::Arc::clone(&handshakes).try_acquire_owned() else {
+            tracing::warn!(peer = %peer, "rejecting worker connection: handshake limit reached");
+            telemetry.rejected();
+            drop(socket);
+            continue;
+        };
         let token = token.clone();
         let artifacts = artifacts.clone();
-        tokio::spawn(async move {
-            if let Err(e) = connection(socket, peer, commands, token.as_deref(), artifacts).await {
+        let telemetry = telemetry.clone();
+        tasks.spawn(async move {
+            let _connection_permit = connection_permit;
+            let mut connection_guard = crate::telemetry::ConnectionGuard::new(telemetry);
+            if let Err(e) = connection(
+                socket,
+                peer,
+                commands,
+                token.as_deref(),
+                artifacts,
+                handshake_permit,
+                &mut connection_guard,
+            )
+            .await
+            {
                 tracing::debug!(peer = %peer, error = %e, "node connection ended");
             }
         });
     }
+    tasks.abort_all();
+    while tasks.join_next().await.is_some() {}
 }
 
 /// One worker, from handshake to disconnect.
@@ -91,6 +136,8 @@ async fn connection(
     commands: mpsc::Sender<Command>,
     token: Option<&str>,
     artifacts: Option<std::sync::Arc<dyn cluster_core::ArtifactStore>>,
+    handshake_permit: tokio::sync::OwnedSemaphorePermit,
+    connection_guard: &mut crate::telemetry::ConnectionGuard,
 ) -> std::io::Result<()> {
     // Frames are small and latency matters: a heartbeat held back by Nagle's
     // algorithm is a node that looks slower than it is.
@@ -135,6 +182,8 @@ async fn connection(
         tracing::warn!(peer = %peer, "rejecting worker: missing or incorrect join token");
         return reject(&mut wr, RejectReason::Unauthorized).await;
     }
+    drop(handshake_permit);
+    connection_guard.authenticated();
 
     // Ask the supervisor whether this worker may join, and which identity it
     // gets. It owns the registry, so it -- not this task -- decides.

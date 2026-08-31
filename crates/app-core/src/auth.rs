@@ -3,6 +3,8 @@
 //! Password hashing sits behind [`PasswordHasher`] so the domain service does
 //! not depend on Argon2 directly and remains straightforward to test.
 
+use std::sync::Arc;
+
 use cluster_core::Millis;
 
 use crate::error::{AppError, AppResult, Message, text};
@@ -25,7 +27,7 @@ pub const SESSION_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1000;
 /// parameters from the hash, not from the verifier -- so it is the reference
 /// `Params::default()` of m=19456, t=2, p=1. Regenerate it if those change,
 /// or the two paths drift apart again.
-const ABSENT_USER_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$PBDGmYQeDFZi+ngthQy7oA$nWFqoA3BhV2HzsVjhYkCtBOCC1eJX9HiHrqd0jaL7aQ";
+pub const ABSENT_USER_HASH: &str = "$argon2id$v=19$m=19456,t=2,p=1$PBDGmYQeDFZi+ngthQy7oA$nWFqoA3BhV2HzsVjhYkCtBOCC1eJX9HiHrqd0jaL7aQ";
 
 const MIN_USERNAME: usize = 3;
 const MAX_USERNAME: usize = 32;
@@ -35,6 +37,16 @@ const MAX_PASSWORD: usize = 256;
 pub trait PasswordHasher: Send + Sync + 'static {
     fn hash(&self, password: &str) -> AppResult<String>;
     fn verify(&self, password: &str, hash: &str) -> AppResult<bool>;
+}
+
+impl<H: PasswordHasher> PasswordHasher for Arc<H> {
+    fn hash(&self, password: &str) -> AppResult<String> {
+        (**self).hash(password)
+    }
+
+    fn verify(&self, password: &str, hash: &str) -> AppResult<bool> {
+        (**self).verify(password, hash)
+    }
 }
 
 /// Source of unguessable session tokens.

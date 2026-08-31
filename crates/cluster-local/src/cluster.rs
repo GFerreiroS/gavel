@@ -13,7 +13,7 @@ use core::pin::Pin;
 use core::task::{Context, Poll};
 
 use futures_core::Stream;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::clock::SystemClock;
@@ -26,6 +26,16 @@ use crate::supervisor::{Command, Supervisor};
 pub struct LocalCluster {
     commands: mpsc::Sender<Command>,
     events: broadcast::Sender<EventRecord>,
+    lifetime: std::sync::Arc<ShutdownOnDrop>,
+    telemetry: std::sync::Arc<crate::telemetry::Telemetry>,
+}
+
+struct ShutdownOnDrop(watch::Sender<bool>);
+
+impl Drop for ShutdownOnDrop {
+    fn drop(&mut self) {
+        let _ = self.0.send(true);
+    }
 }
 
 impl Clone for LocalCluster {
@@ -33,6 +43,8 @@ impl Clone for LocalCluster {
         Self {
             commands: self.commands.clone(),
             events: self.events.clone(),
+            lifetime: self.lifetime.clone(),
+            telemetry: self.telemetry.clone(),
         }
     }
 }
@@ -67,9 +79,15 @@ impl LocalCluster {
         let listen = config.node_listen;
         let join_token = config.join_token.clone();
         let artifacts_for_listener = config.artifacts.clone();
+        let remote_limit = config.max_remote_connections;
+        let handshake_limit = config.max_pending_handshakes;
+        let (stop_tx, stop_rx) = watch::channel(false);
+        let lifetime = std::sync::Arc::new(ShutdownOnDrop(stop_tx));
+        let telemetry = std::sync::Arc::new(crate::telemetry::Telemetry::default());
         // Durable writes are drained by their own task so the supervisor never
         // blocks on the store while there are messages to process.
-        let (writer, _writer_task) = crate::persistence::Writer::spawn(store.clone());
+        let (writer, writer_task) =
+            crate::persistence::Writer::spawn(store.clone(), telemetry.clone());
         let supervisor = Supervisor::new(
             config,
             store,
@@ -79,20 +97,34 @@ impl LocalCluster {
             clock,
             command_rx,
             event_tx.clone(),
+            telemetry.clone(),
         );
-        let handle = tokio::spawn(supervisor.run());
+        let supervisor_task = tokio::spawn(supervisor.run());
 
         // Remote workers, if this deployment expects any. Bound before the
         // workers can connect and independent of the supervisor task, so a
         // worker that dials in during startup simply waits in the accept queue
         // rather than being refused.
-        if let Some(address) = listen {
-            let commands = command_tx.clone();
+        let listener_task = if let Some(address) = listen {
+            let commands = command_tx.downgrade();
             let artifacts = artifacts_for_listener.clone();
-            tokio::spawn(async move {
+            let listener_telemetry = telemetry.clone();
+            Some(tokio::spawn(async move {
                 match tokio::net::TcpListener::bind(address).await {
                     Ok(listener) => {
-                        crate::remote::serve(listener, commands, join_token, artifacts).await
+                        crate::remote::serve(
+                            listener,
+                            commands,
+                            join_token,
+                            artifacts,
+                            stop_rx,
+                            crate::remote::ListenerLimits {
+                                connections: remote_limit,
+                                handshakes: handshake_limit,
+                            },
+                            listener_telemetry,
+                        )
+                        .await
                     }
                     // Not fatal: the in-process part of the cluster still runs,
                     // and saying so beats exiting with a bind error on a port
@@ -102,13 +134,32 @@ impl LocalCluster {
                         "could not listen for workers; only in-process ones can run"
                     ),
                 }
-            });
-        }
+            }))
+        } else {
+            None
+        };
+
+        // One lifecycle handle owns every background task. When the last
+        // LocalCluster handle drops, ShutdownOnDrop cancels the listener and
+        // its connections, which releases their command senders. The
+        // supervisor then exits, drops the writer sender, and the writer drains
+        // the bounded queue before this handle completes.
+        let handle = tokio::spawn(async move {
+            let _ = supervisor_task.await;
+            if let Some(listener) = listener_task {
+                let _ = listener.await;
+            }
+            if let Err(error) = writer_task.await {
+                tracing::error!(%error, "persistence writer task ended badly");
+            }
+        });
 
         (
             Self {
                 commands: command_tx,
                 events: event_tx,
+                lifetime,
+                telemetry,
             },
             handle,
         )
@@ -154,7 +205,9 @@ impl ClusterControl for LocalCluster {
     type Events = EventStream;
 
     async fn snapshot(&self) -> ClusterSnapshot {
-        self.ask(Command::Snapshot).await.unwrap_or_default()
+        let mut snapshot = self.ask(Command::Snapshot).await.unwrap_or_default();
+        self.telemetry.apply(&mut snapshot);
+        snapshot
     }
 
     fn subscribe(&self) -> EventStream {

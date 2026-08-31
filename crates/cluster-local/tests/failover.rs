@@ -469,3 +469,64 @@ async fn the_event_stream_pushes_live_events() {
     assert!(seen.contains(&"job_created"), "got {seen:?}");
     assert!(seen.contains(&"job_completed"), "got {seen:?}");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn recovery_is_not_limited_by_the_ui_history_window() {
+    let store = MemoryStore::new();
+    let (queued, running) = store.seed_jobs_beyond_history_window();
+    let mut config = fast_config(0);
+    config.job_buffer = 200;
+    let (cluster, lifecycle) = LocalCluster::start(config, store);
+
+    wait_for("old queued job restored", async || {
+        cluster.job(queued).await.is_some()
+    })
+    .await;
+    wait_for("old running job restored", async || {
+        cluster.job(running).await.is_some()
+    })
+    .await;
+    assert_eq!(
+        cluster.job(queued).await.unwrap().tasks[0].state,
+        TaskState::Queued
+    );
+    assert_eq!(
+        cluster.job(running).await.unwrap().tasks[0].state,
+        TaskState::Queued
+    );
+
+    drop(cluster);
+    tokio::time::timeout(Duration::from_secs(2), lifecycle)
+        .await
+        .expect("cluster lifecycle shuts down")
+        .expect("lifecycle task joins");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shutdown_waits_for_and_drains_a_blocked_persistence_writer() {
+    let store = MemoryStore::new();
+    let gate = store.block_event_writes();
+    let (cluster, lifecycle) = LocalCluster::start(fast_config(1), store.clone());
+
+    tokio::time::timeout(Duration::from_secs(2), store.wait_for_blocked_event_write())
+        .await
+        .expect("writer reached the deliberately blocked store");
+    drop(cluster);
+
+    let mut lifecycle = Box::pin(lifecycle);
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut lifecycle)
+            .await
+            .is_err(),
+        "shutdown must wait while a durable write is blocked"
+    );
+    gate.add_permits(128);
+    tokio::time::timeout(Duration::from_secs(2), lifecycle)
+        .await
+        .expect("shutdown finishes after persistence is released")
+        .expect("lifecycle task joins");
+    assert!(
+        store.event_kinds().contains(&"node_joined"),
+        "the pending event was drained before shutdown completed"
+    );
+}

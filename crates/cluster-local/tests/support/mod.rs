@@ -23,6 +23,8 @@ struct State {
 #[derive(Clone, Default)]
 pub struct MemoryStore {
     state: Arc<Mutex<State>>,
+    event_write_gate: Arc<Mutex<Option<Arc<tokio::sync::Semaphore>>>>,
+    event_write_started: Arc<tokio::sync::Notify>,
 }
 
 impl MemoryStore {
@@ -52,6 +54,49 @@ impl MemoryStore {
             .iter()
             .map(|e| e.event.kind())
             .collect()
+    }
+
+    /// Stop event persistence until the returned semaphore receives permits.
+    /// Used to prove that cluster shutdown owns and drains the writer rather
+    /// than merely hoping it finishes before the runtime disappears.
+    pub fn block_event_writes(&self) -> Arc<tokio::sync::Semaphore> {
+        let gate = Arc::new(tokio::sync::Semaphore::new(0));
+        *self.event_write_gate.lock().unwrap() = Some(gate.clone());
+        gate
+    }
+
+    pub async fn wait_for_blocked_event_write(&self) {
+        self.event_write_started.notified().await;
+    }
+
+    pub fn seed_jobs_beyond_history_window(&self) -> (JobId, JobId) {
+        let mut state = self.state.lock().unwrap();
+        for id in 1..=203u64 {
+            let spec = cluster_core::JobSpec::Sleep {
+                total_ms: 1,
+                tasks: 1,
+            };
+            let mut job = Job::new(JobId(id), spec, Millis(id));
+            let mut task = Task::new(TaskId(id), job.id, 0, spec.split()[0], Millis(id));
+            match id {
+                1 => {}
+                2 => {
+                    job.state = cluster_core::JobState::Running;
+                    task.state = cluster_core::TaskState::Running;
+                    task.assigned_to = Some(NodeId(99));
+                }
+                _ => {
+                    job.state = cluster_core::JobState::Completed;
+                    job.finished_at = Some(Millis(id));
+                    task.state = cluster_core::TaskState::Completed;
+                }
+            }
+            state.jobs.insert(id, job);
+            state.tasks.insert(id, task);
+        }
+        state.next_job = 203;
+        state.next_task = 203;
+        (JobId(1), JobId(2))
     }
 }
 
@@ -131,12 +176,32 @@ impl JobStore for MemoryStore {
     }
 
     async fn unfinished_jobs(&self) -> StoreResult<Vec<(Job, Vec<Task>)>> {
-        Ok(Vec::new())
+        let state = self.state.lock().unwrap();
+        Ok(state
+            .jobs
+            .values()
+            .filter(|job| !job.state.is_terminal())
+            .map(|job| {
+                let tasks = state
+                    .tasks
+                    .values()
+                    .filter(|task| task.job_id == job.id)
+                    .cloned()
+                    .collect();
+                (job.clone(), tasks)
+            })
+            .collect())
     }
 }
 
 impl EventLog for MemoryStore {
     async fn append(&self, record: &EventRecord) -> StoreResult<()> {
+        let gate = self.event_write_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            self.event_write_started.notify_one();
+            let permit = gate.acquire().await.expect("test semaphore stays open");
+            permit.forget();
+        }
         self.state.lock().unwrap().events.push(record.clone());
         Ok(())
     }

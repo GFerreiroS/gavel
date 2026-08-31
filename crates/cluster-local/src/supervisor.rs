@@ -123,6 +123,7 @@ pub(crate) struct Supervisor<P, S, L, C> {
     reports_tx: mpsc::Sender<NodeReport>,
     reports: mpsc::Receiver<NodeReport>,
     broadcast: broadcast::Sender<EventRecord>,
+    telemetry: std::sync::Arc<crate::telemetry::Telemetry>,
 }
 
 impl<P, S, L, C> Supervisor<P, S, L, C>
@@ -142,6 +143,7 @@ where
         clock: C,
         commands: mpsc::Receiver<Command>,
         broadcast: broadcast::Sender<EventRecord>,
+        telemetry: std::sync::Arc<crate::telemetry::Telemetry>,
     ) -> Self {
         let (reports_tx, reports) = mpsc::channel(256);
         Self {
@@ -163,6 +165,7 @@ where
             reports_tx,
             reports,
             broadcast,
+            telemetry,
         }
     }
 
@@ -341,8 +344,42 @@ where
             }
         };
         let now = self.clock.now();
+        // UI history and execution recovery are different sets. Load the
+        // bounded recent window first, then page every unfinished job even if
+        // it is older than that window.
+        let mut restored: BTreeMap<cluster_core::JobId, (Job, Vec<Task>)> = BTreeMap::new();
         for job in recent {
             let tasks = self.store.tasks_for_job(job.id).await.unwrap_or_default();
+            restored.insert(job.id, (job, tasks));
+        }
+        const PAGE: usize = 200;
+        let mut after = None;
+        loop {
+            let page = match self.store.unfinished_jobs_page(after, PAGE).await {
+                Ok(page) => page,
+                Err(error) => {
+                    tracing::error!(%error, "could not load unfinished jobs for recovery");
+                    break;
+                }
+            };
+            if page.is_empty() {
+                break;
+            }
+            after = page.last().map(|(job, _)| job.id);
+            let full = page.len() == PAGE;
+            for (job, tasks) in page {
+                restored.insert(job.id, (job, tasks));
+            }
+            if !full {
+                break;
+            }
+        }
+        let recovered = restored
+            .values()
+            .filter(|(job, _)| !job.state.is_terminal())
+            .count();
+        self.telemetry.recovered(recovered);
+        for (job, tasks) in restored.into_values() {
             let unfinished = !job.state.is_terminal();
             self.jobs.insert(job.id, job);
             for mut task in tasks {
@@ -358,7 +395,11 @@ where
             }
         }
         if !self.queue.is_empty() {
-            tracing::info!(count = self.queue.len(), "requeued tasks from previous run");
+            tracing::info!(
+                count = self.queue.len(),
+                recovered,
+                "requeued tasks from previous run"
+            );
         }
     }
 
@@ -707,6 +748,7 @@ where
             self.tasks.insert(task.id, task.clone());
             self.persist_task(&task).await;
             self.queue.push_back(task.id);
+            self.telemetry.retried();
             self.emit(ClusterEvent::TaskRequeued { task: task.id })
                 .await;
             return;
@@ -1186,6 +1228,7 @@ where
             tasks_queued: self.queue.len(),
             leader: self.leader,
             gateway: self.gateway,
+            ..ClusterSnapshot::default()
         }
     }
 

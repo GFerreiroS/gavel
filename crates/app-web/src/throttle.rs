@@ -9,11 +9,11 @@
 //!    of service against a one-server deployment, and it arrives at the same
 //!    endpoint.
 //!
-//! Keyed by **username**, not by address. The address is whatever the reverse
-//! proxy in front of us decided to pass along; a header the client controls is
-//! not an identity, and the socket address is the proxy's. The username is in
-//! the request body and cannot be forged into someone else's bucket without
-//! actually attacking that account.
+//! Protection is layered: a username bucket slows attacks on one account, an
+//! origin bucket stops rotating usernames from one socket, and a global window
+//! plus semaphore caps distributed CPU/memory cost. Proxy headers are ignored
+//! unless the operator explicitly enables them behind a proxy that overwrites
+//! those headers.
 //!
 //! The known cost of that choice: an attacker can hold a username at its limit
 //! and keep its owner out for as long as they keep guessing. That is the
@@ -25,9 +25,12 @@
 //! two. See CLAUDE.md §6.
 
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::net::IpAddr;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use cluster_core::Millis;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// Failures a single username may collect inside the window before its
 /// attempts start being refused.
@@ -36,6 +39,9 @@ pub const MAX_FAILURES: u32 = 8;
 /// How long the count takes to clear, and how long a username stays refused
 /// once it is over the limit.
 pub const WINDOW_MS: u64 = 5 * 60 * 1000;
+pub const MAX_ORIGIN_ATTEMPTS: u32 = 20;
+pub const MAX_GLOBAL_ATTEMPTS: u32 = 100;
+pub const MAX_ARGON2_CONCURRENCY: usize = 4;
 
 #[derive(Debug, Clone, Copy)]
 struct Bucket {
@@ -120,6 +126,130 @@ fn expired(bucket: &Bucket, now: Millis) -> bool {
 /// [`app_core::auth::validate_username`], so this is the whole of it.
 fn key(username: &str) -> String {
     username.to_ascii_lowercase()
+}
+
+/// Process-wide protection around every unauthenticated password hash.
+#[derive(Debug)]
+pub struct AuthGate {
+    hashes: Arc<Semaphore>,
+    origins: Mutex<HashMap<IpAddr, Window>>,
+    global: Mutex<Option<Window>>,
+}
+
+impl Default for AuthGate {
+    fn default() -> Self {
+        Self::new(MAX_ARGON2_CONCURRENCY)
+    }
+}
+
+impl AuthGate {
+    pub fn new(max_hashes: usize) -> Self {
+        Self {
+            hashes: Arc::new(Semaphore::new(max_hashes.max(1))),
+            origins: Mutex::new(HashMap::new()),
+            global: Mutex::new(None),
+        }
+    }
+
+    pub fn take(&self, origin: IpAddr, now: Millis) -> bool {
+        let global_ok = take_window(&self.global, now, MAX_GLOBAL_ATTEMPTS);
+        if !global_ok {
+            // Do not retain attacker-chosen origins once the global budget is
+            // exhausted. Otherwise the limit would cap CPU while leaving an
+            // unbounded IP-keyed memory allocation behind it.
+            return false;
+        }
+        let mut origins = self.origins.lock().unwrap_or_else(|e| e.into_inner());
+        origins.retain(|_, window| now.get().saturating_sub(window.started.get()) < WINDOW_MS);
+        let window = origins.entry(origin).or_insert(Window {
+            started: now,
+            attempts: 0,
+        });
+        window.attempts = window.attempts.saturating_add(1);
+        window.attempts <= MAX_ORIGIN_ATTEMPTS
+    }
+
+    /// Immediate backpressure: requests above the memory-hard concurrency
+    /// budget are rejected instead of forming an unbounded wait queue.
+    pub fn try_hash(&self) -> Option<OwnedSemaphorePermit> {
+        Arc::clone(&self.hashes).try_acquire_owned().ok()
+    }
+}
+
+fn take_window(cell: &Mutex<Option<Window>>, now: Millis, maximum: u32) -> bool {
+    let mut guard = cell.lock().unwrap_or_else(|e| e.into_inner());
+    match *guard {
+        Some(mut window) if now.get().saturating_sub(window.started.get()) < WINDOW_MS => {
+            window.attempts = window.attempts.saturating_add(1);
+            *guard = Some(window);
+            window.attempts <= maximum
+        }
+        _ => {
+            *guard = Some(Window {
+                started: now,
+                attempts: 1,
+            });
+            true
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct SseGate {
+    total: AtomicUsize,
+    origins: Mutex<HashMap<IpAddr, usize>>,
+    max_total: usize,
+    max_per_origin: usize,
+}
+
+impl Default for SseGate {
+    fn default() -> Self {
+        Self {
+            total: AtomicUsize::new(0),
+            origins: Mutex::new(HashMap::new()),
+            max_total: 256,
+            max_per_origin: 8,
+        }
+    }
+}
+
+impl SseGate {
+    pub fn enter(self: &Arc<Self>, origin: IpAddr) -> Option<SsePermit> {
+        let previous = self.total.fetch_add(1, Ordering::AcqRel);
+        if previous >= self.max_total {
+            self.total.fetch_sub(1, Ordering::AcqRel);
+            return None;
+        }
+        let mut origins = self.origins.lock().unwrap_or_else(|e| e.into_inner());
+        let count = origins.entry(origin).or_default();
+        if *count >= self.max_per_origin {
+            self.total.fetch_sub(1, Ordering::AcqRel);
+            return None;
+        }
+        *count += 1;
+        Some(SsePermit {
+            gate: self.clone(),
+            origin,
+        })
+    }
+}
+
+pub struct SsePermit {
+    gate: Arc<SseGate>,
+    origin: IpAddr,
+}
+
+impl Drop for SsePermit {
+    fn drop(&mut self) {
+        self.gate.total.fetch_sub(1, Ordering::AcqRel);
+        let mut origins = self.gate.origins.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(count) = origins.get_mut(&self.origin) {
+            *count -= 1;
+            if *count == 0 {
+                origins.remove(&self.origin);
+            }
+        }
+    }
 }
 
 /// New accounts this instance will create in a window, counting attempts
@@ -254,6 +384,59 @@ mod tests {
         }
         assert!(!throttle.allows("alice", at(10)));
         assert!(throttle.allows("bob", at(10)));
+    }
+
+    #[test]
+    fn rotating_usernames_cannot_evade_origin_or_global_limits() {
+        let gate = AuthGate::new(2);
+        let origin = "192.0.2.1".parse().unwrap();
+        for i in 0..MAX_ORIGIN_ATTEMPTS {
+            assert!(gate.take(origin, at(i as u64)));
+        }
+        assert!(!gate.take(origin, at(100)));
+
+        let gate = AuthGate::new(2);
+        for i in 0..MAX_GLOBAL_ATTEMPTS {
+            let ip = std::net::Ipv4Addr::new(198, 51, (i / 250) as u8, (i % 250 + 1) as u8);
+            assert!(gate.take(ip.into(), at(i as u64)));
+        }
+        assert!(!gate.take("203.0.113.9".parse().unwrap(), at(200)));
+        for i in 0..1_000u16 {
+            let ip = std::net::Ipv4Addr::new(203, (i / 250) as u8, 113, (i % 250) as u8);
+            assert!(!gate.take(ip.into(), at(201 + u64::from(i))));
+        }
+        assert!(
+            gate.origins.lock().unwrap().len() <= MAX_GLOBAL_ATTEMPTS as usize,
+            "refused distributed traffic cannot grow the origin map"
+        );
+    }
+
+    #[test]
+    fn memory_hard_hashes_have_a_strict_concurrency_budget() {
+        let gate = AuthGate::new(2);
+        let first = gate.try_hash().unwrap();
+        let second = gate.try_hash().unwrap();
+        assert!(gate.try_hash().is_none());
+        drop(first);
+        assert!(gate.try_hash().is_some());
+        drop(second);
+    }
+
+    #[test]
+    fn sse_slots_are_bounded_per_origin_and_released_on_drop() {
+        let gate = Arc::new(SseGate {
+            total: AtomicUsize::new(0),
+            origins: Mutex::new(HashMap::new()),
+            max_total: 2,
+            max_per_origin: 1,
+        });
+        let first = gate.enter("192.0.2.1".parse().unwrap()).unwrap();
+        assert!(gate.enter("192.0.2.1".parse().unwrap()).is_none());
+        let second = gate.enter("192.0.2.2".parse().unwrap()).unwrap();
+        assert!(gate.enter("192.0.2.3".parse().unwrap()).is_none());
+        drop(first);
+        assert!(gate.enter("192.0.2.1".parse().unwrap()).is_some());
+        drop(second);
     }
 
     #[test]

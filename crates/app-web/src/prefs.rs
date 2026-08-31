@@ -24,7 +24,7 @@ use app_core::market::Region;
 use axum::extract::{Request, State};
 use axum::http::{HeaderMap, HeaderValue, header};
 use axum::middleware::Next;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 
 use crate::session::cookie_value;
 
@@ -126,7 +126,7 @@ struct Choice {
 pub fn slug(raw: &str) -> Option<String> {
     let mut out = String::with_capacity(raw.len());
     for ch in raw.chars() {
-        if ch.is_ascii_alphanumeric() {
+        if ch.is_alphanumeric() {
             out.extend(ch.to_lowercase());
         } else if !out.ends_with('-') {
             out.push('-');
@@ -146,7 +146,15 @@ fn parse_baseline(raw: &str) -> Option<u64> {
 }
 
 pub async fn layer<E: Ports>(State(env): State<E>, mut request: Request, next: Next) -> Response {
-    let query = from_query(request.uri().query());
+    let query = match from_query(request.uri().query()) {
+        Ok(query) => query,
+        Err(()) => {
+            return crate::WebError(app_core::AppError::validation(
+                "The query string is not valid percent-encoded UTF-8.",
+            ))
+            .into_response();
+        }
+    };
     let cookie = cookie_value(request.headers(), MARKET_COOKIE)
         .map(|raw| MarketPrefs::parse_cookie(&raw))
         .unwrap_or_default();
@@ -211,23 +219,58 @@ fn accept_language(headers: &HeaderMap) -> Option<Locale> {
 /// Hand-rolled because this runs on every request and the alternative is
 /// deserialising the whole query twice -- once here and once in the handler
 /// that actually wanted it.
-fn from_query(query: Option<&str>) -> Choice {
+fn from_query(query: Option<&str>) -> Result<Choice, ()> {
     let Some(query) = query else {
-        return Choice::default();
+        return Ok(Choice::default());
     };
+    validate_percent_encoding(query)?;
     let mut choice = Choice::default();
-    for pair in query.split('&') {
-        match pair.split_once('=') {
-            Some(("region", value)) => choice.region = Region::parse(value),
-            Some(("lang", value)) => choice.locale = Locale::parse(value),
-            Some(("baseline", value)) => choice.baseline = parse_baseline(value),
+    let pairs: Vec<(String, String)> = serde_urlencoded::from_str(query).map_err(|_| ())?;
+    for (name, value) in pairs {
+        match name.as_str() {
+            "region" => choice.region = Region::parse(&value),
+            "lang" => choice.locale = Locale::parse(&value),
+            "baseline" => choice.baseline = parse_baseline(&value),
             // `?realm=` with nothing after it is how the page says "all
             // realms", so an empty value is a choice rather than a no-op.
-            Some(("realm", value)) => choice.realm = Some(slug(value)),
+            "realm" => choice.realm = Some(slug(&value)),
             _ => {}
         }
     }
-    choice
+    Ok(choice)
+}
+
+fn validate_percent_encoding(raw: &str) -> Result<(), ()> {
+    let bytes = raw.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'%' {
+            if at + 2 >= bytes.len()
+                || !bytes[at + 1].is_ascii_hexdigit()
+                || !bytes[at + 2].is_ascii_hexdigit()
+            {
+                return Err(());
+            }
+            let high = hex_value(bytes[at + 1]).ok_or(())?;
+            let low = hex_value(bytes[at + 2]).ok_or(())?;
+            decoded.push((high << 4) | low);
+            at += 3;
+        } else {
+            decoded.push(if bytes[at] == b'+' { b' ' } else { bytes[at] });
+            at += 1;
+        }
+    }
+    String::from_utf8(decoded).map(|_| ()).map_err(|_| ())
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -236,7 +279,7 @@ mod tests {
 
     #[test]
     fn a_query_beats_a_cookie() {
-        let choice = from_query(Some("region=kr&lang=ko_KR&baseline=30"));
+        let choice = from_query(Some("region=kr&lang=ko_KR&baseline=30")).unwrap();
         assert_eq!(choice.region, Some(Region::Kr));
         assert_eq!(choice.locale, Some(Locale::KoKr));
         assert_eq!(choice.baseline, Some(30));
@@ -244,7 +287,10 @@ mod tests {
 
     #[test]
     fn an_unknown_value_is_ignored_rather_than_an_error() {
-        assert_eq!(from_query(Some("region=mars&lang=tlh")), Choice::default());
+        assert_eq!(
+            from_query(Some("region=mars&lang=tlh")).unwrap(),
+            Choice::default()
+        );
     }
 
     /// The window is a menu, not a number: `?baseline=99999` would otherwise
@@ -284,7 +330,7 @@ mod tests {
         };
         let choice = MarketPrefs::parse_cookie(&prefs.cookie_value(&RealmChoice(None)));
         assert_eq!(choice.realm, Some(None), "remembered as all realms");
-        assert_eq!(from_query(Some("realm=")).realm, Some(None));
+        assert_eq!(from_query(Some("realm=")).unwrap().realm, Some(None));
     }
 
     /// The bug this scheme replaced: a browser percent-encodes a colon, the
@@ -300,9 +346,30 @@ mod tests {
         assert_eq!(slug("Zul'jin").as_deref(), Some("zul-jin"));
         assert_eq!(slug("  "), None);
         assert_eq!(
-            from_query(Some("region=eu&realm=dentarg-tarren-mill")).realm,
+            from_query(Some("region=eu&realm=dentarg-tarren-mill"))
+                .unwrap()
+                .realm,
             Some(Some("dentarg-tarren-mill".into()))
         );
+    }
+
+    #[test]
+    fn realm_query_is_decoded_once_and_malformed_percent_is_rejected() {
+        for (encoded, expected) in [
+            ("Tarren+Mill", "tarren-mill"),
+            ("Quel%27Thalas", "quel-thalas"),
+            ("Draenor", "draenor"),
+            ("%E9%9B%B7%E6%96%87%E5%BE%B7%E6%96%AF", "雷文德斯"),
+        ] {
+            assert_eq!(
+                from_query(Some(&format!("realm={encoded}"))).unwrap().realm,
+                Some(Some(expected.into())),
+            );
+        }
+        assert!(from_query(Some("realm=Tarren%20Mill")).is_ok());
+        assert!(from_query(Some("realm=bad%2")).is_err());
+        assert!(from_query(Some("realm=bad%GG")).is_err());
+        assert!(from_query(Some("realm=%FF")).is_err());
     }
 
     /// Cookies written before the baseline existed have two fields. They must

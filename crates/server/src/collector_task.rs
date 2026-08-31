@@ -398,27 +398,17 @@ async fn collect_one_realm<E: Ports>(env: &E, realm: &Realm, wanted: &[ItemId]) 
         }) => {
             let (samples, ladders) =
                 summarise_realm(listings, realm.region, realm.id, generated_at);
-            match prices.record_samples(&samples).await {
-                Ok(written) => {
-                    // The ladders after the samples and outside the match on
-                    // them: a realm whose samples all collided has been seen
-                    // before, but a deployment that gained ladder collection
-                    // since then has samples without ladders, and this is what
-                    // fills them in.
-                    let rungs = prices
-                        .record_ladders(realm.region, realm.id, generated_at, &ladders)
-                        .await
-                        .unwrap_or_else(|e| {
-                            tracing::warn!(realm = %realm.name, error = %e,
-                                "storing gear ladders failed");
-                            0
-                        });
+            match prices
+                .record_snapshot(&samples, realm.region, realm.id, generated_at, &ladders)
+                .await
+            {
+                Ok((written, rungs)) => {
                     tracing::debug!(realm = %realm.name, written, rungs,
                         "collected gear prices");
                     Outcome::Collected
                 }
                 Err(e) => {
-                    tracing::warn!(realm = %realm.name, error = %e, "storing gear prices failed");
+                    tracing::warn!(realm = %realm.name, error = %e, "storing gear snapshot failed");
                     Outcome::Failed
                 }
             }

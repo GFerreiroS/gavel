@@ -13,6 +13,7 @@ mod node;
 mod persistence;
 mod remote;
 mod supervisor;
+mod telemetry;
 
 pub use clock::SystemClock;
 pub use cluster::{EventStream, LocalCluster};
