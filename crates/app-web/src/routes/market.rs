@@ -75,6 +75,7 @@ pub async fn index<E: Ports>(
             scope: "Region-wide market",
             tracked_items: count(ItemKind::Consumable),
             live,
+            icon: "flask",
         },
         AuctionCategory {
             href: onward("/wow/auctions/reagents"),
@@ -83,6 +84,7 @@ pub async fn index<E: Ports>(
             scope: "Region-wide market",
             tracked_items: count(ItemKind::Reagent),
             live,
+            icon: "ore",
         },
         AuctionCategory {
             href: onward("/wow/auctions/enchants"),
@@ -91,6 +93,7 @@ pub async fn index<E: Ports>(
             scope: "Region-wide market",
             tracked_items: count(ItemKind::Enchant),
             live,
+            icon: "sparkles",
         },
         AuctionCategory {
             href: onward("/wow/auctions/gems"),
@@ -99,6 +102,7 @@ pub async fn index<E: Ports>(
             scope: "Region-wide market",
             tracked_items: count(ItemKind::Gem),
             live,
+            icon: "gems",
         },
         AuctionCategory {
             href: onward("/wow/auctions/gear"),
@@ -109,6 +113,7 @@ pub async fn index<E: Ports>(
             scope: "Per connected realm",
             tracked_items: count(ItemKind::Boe),
             live,
+            icon: "armor",
         },
         AuctionCategory {
             href: onward("/wow/auctions/recipes"),
@@ -117,6 +122,7 @@ pub async fn index<E: Ports>(
             scope: "Per connected realm",
             tracked_items: count(ItemKind::Recipe),
             live,
+            icon: "scroll",
         },
     ];
 

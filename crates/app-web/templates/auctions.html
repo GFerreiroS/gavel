@@ -61,14 +61,17 @@
   </label>
   <button type="submit">{{ "Apply"|t }}</button>
 </form>
-<small class="hint toolbar-note">
-  {{ "Every price carries a +/− against its own average over the comparison window: −20% means it is a fifth cheaper than usual for the last {} days. A short window follows the market; a long one says whether today is a good day to buy."|t|fill(auctions.baseline_days) }}
-  {% if auctions.picker.single_region %}
-  {{ "This instance only collects one region. Start it with --market-regions eu,us,kr,tw to offer more."|t }}
-  {% else %}
-  {{ "Prices are region-wide and independent of the language, which is set in the top bar."|t }}
-  {% endif %}
-</small>
+<div class="alert alert-info toolbar-note">
+  {% call tips::icon("info") %}
+  <small class="hint">
+    {{ "Every price carries a +/− against its own average over the comparison window: −20% means it is a fifth cheaper than usual for the last {} days. A short window follows the market; a long one says whether today is a good day to buy."|t|fill(auctions.baseline_days) }}
+    {% if auctions.picker.single_region %}
+    {{ "This instance only collects one region. Start it with --market-regions eu,us,kr,tw to offer more."|t }}
+    {% else %}
+    {{ "Prices are region-wide and independent of the language, which is set in the top bar."|t }}
+    {% endif %}
+  </small>
+</div>
 
 {% if auctions.archived %}
 <div class="alert alert-archived" role="status">
@@ -78,17 +81,18 @@
 {% endif %}
 
 <div class="stat-grid">
-  <div class="stat"><span class="label">{{ "Expansion"|t }}</span><span class="value">{{ auctions.expansion }}</span></div>
-  <div class="stat"><span class="label">{{ "Region"|t }}</span><span class="value">{{ auctions.region }}</span></div>
-  <div class="stat"><span class="label">{{ "Tracked items"|t }}</span><span class="value">{{ auctions.tracked_items }}</span></div>
-  <div class="stat"><span class="label">{{ "With data"|t }}</span><span class="value">{{ auctions.samples_held }}</span></div>
-  <div class="stat"><span class="label">{{ "Last snapshot"|t }}</span><span class="value">{{ auctions.last_observed }}</span></div>
+  <div class="stat has-icon">{% call tips::icon("expansion") %}<span class="stat-text"><span class="label">{{ "Expansion"|t }}</span><span class="value">{{ auctions.expansion }}</span></span></div>
+  <div class="stat has-icon">{% call tips::icon("region") %}<span class="stat-text"><span class="label">{{ "Region"|t }}</span><span class="value">{{ auctions.region }}</span></span></div>
+  <div class="stat has-icon">{% call tips::icon("tracked") %}<span class="stat-text"><span class="label">{{ "Tracked items"|t }}</span><span class="value">{{ auctions.tracked_items }}</span></span></div>
+  <div class="stat has-icon">{% call tips::icon("with-data") %}<span class="stat-text"><span class="label">{{ "With data"|t }}</span><span class="value">{{ auctions.samples_held }}</span></span></div>
+  <div class="stat has-icon">{% call tips::icon("snapshot") %}<span class="stat-text"><span class="label">{{ "Last snapshot"|t }}</span><span class="value">{{ auctions.last_observed }}</span></span></div>
 </div>
 
 <div class="card-grid">
   {% for category in auctions.categories %}
   <article class="item-card">
     <header>
+      <span class="category-icon">{% call tips::icon(category.icon) %}</span>
       <div class="item-head-text">
         <h3>{{ category.name|t }}</h3>
         <span class="sub">{{ category.scope|t }}</span>

@@ -37,6 +37,7 @@ pub(crate) trait Deferrable {
     fn card_count(&self) -> usize;
     fn slug(&self) -> &str;
     fn defer_to(&mut self, href: String);
+    fn undefer(&mut self);
 }
 
 impl Deferrable for CardGroup {
@@ -50,6 +51,10 @@ impl Deferrable for CardGroup {
         self.deferred = true;
         self.href = href;
     }
+    fn undefer(&mut self) {
+        self.deferred = false;
+        self.href = String::new();
+    }
 }
 
 impl Deferrable for GearGroup {
@@ -62,6 +67,10 @@ impl Deferrable for GearGroup {
     fn defer_to(&mut self, href: String) {
         self.deferred = true;
         self.href = href;
+    }
+    fn undefer(&mut self) {
+        self.deferred = false;
+        self.href = String::new();
     }
 }
 
@@ -110,8 +119,18 @@ pub(crate) fn defer<G: Deferrable>(
 /// built -- they are rows from the read model, not a reduction -- and throwing
 /// their cards away here rather than not building them keeps one code path
 /// producing the page.
+///
+/// `defer` ran over the *whole* set before this was called, so the wanted
+/// group is still marked deferred -- it was too far into the page to inline,
+/// which is exactly why its own request exists. Answering that request with
+/// the same "not yet, ask me again" placeholder it was given the first time
+/// is what turned "arrives when scrolled to" into "never arrives": every
+/// swap put the placeholder straight back, `hx-trigger="revealed"` saw it
+/// visible again, and asked again. This *is* the answer, so it undefers.
 pub(crate) fn only<G: Deferrable>(groups: Vec<G>, wanted: &str) -> Option<G> {
-    groups.into_iter().find(|g| g.slug() == wanted)
+    let mut group = groups.into_iter().find(|g| g.slug() == wanted)?;
+    group.undefer();
+    Some(group)
 }
 
 /// One group, rendered alone.

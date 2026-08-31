@@ -14,6 +14,11 @@
    the scaling without overriding a single one of Pico's own rules. */
 :root { --pico-font-size: 100%; }
 
+/* --- nav brand -------------------------------------------------------------
+   Pico sizes the brand link like any other nav item, which reads as one more
+   link rather than the app's name. */
+.brand { font-size: 1.5rem; }
+
 /* --- domain colour -------------------------------------------------------
    Item quality is the game's own palette. Players read these hues faster than
    any label, so they are the one place this app overrides Pico's colours
@@ -118,6 +123,13 @@
   border-radius: var(--pico-border-radius);
   background: var(--pico-card-background-color);
 }
+/* An icon beside the label/value pair rather than above it -- `.has-icon`
+   switches the tile to a row instead of forking `.stat` itself, so every
+   other tile that never asked for an icon (panels, gear cells, admin
+   figures) keeps the plain stacked layout. */
+.stat.has-icon { flex-direction: row; align-items: center; gap: .55rem; }
+.stat.has-icon .stat-text { display: flex; flex-direction: column; gap: .15rem; }
+.stat .icon { flex-shrink: 0; color: var(--pico-primary); }
 /* `align-items: start` matters: a flex column stretches its children, which
    pulled the "vs usual" pill out to the full width of the column. An
    inline-block does not opt out of that -- the alignment has to. */
@@ -196,6 +208,9 @@
 .toolbar small { display: block; margin-top: .15rem; }
 /* The hint sits under the row rather than in it. */
 .toolbar-note { display: block; margin: -.35rem 0 var(--pico-block-spacing-vertical); }
+/* An `.alert` already carries its own padding and border, so the negative
+   pull that closes the gap for a bare `<small>` would just overlap it here. */
+.alert.toolbar-note { margin-top: 0; }
 /* What every figure below was measured from: the snapshot it came out of and
    the window it is compared against. Once per page, above the cards. */
 .page-meta { display: block; margin: -.25rem 0 var(--pico-block-spacing-vertical); }
@@ -237,6 +252,25 @@
 }
 .alert-archived { border-left-color: var(--q-legendary); }
 .alert-error { border-left-color: var(--pico-del-color); }
+/* A note rather than a warning: same tile, tinted with the site's own accent
+   instead of a new colour, and the icon sits beside the text rather than
+   above it -- the box is read left to right, not top to bottom. */
+.alert-info {
+  border-left-color: var(--pico-primary);
+  display: flex;
+  align-items: flex-start;
+  gap: .6rem;
+}
+.alert-info .icon { flex-shrink: 0; margin-top: .1rem; color: var(--pico-primary); }
+.alert-info .hint { margin: 0; }
+
+.credit { display: block; font-size: .75em; }
+
+/* --- inline icons ----------------------------------------------------------
+   Heroicons 24x24 outline, `stroke="currentColor"` -- they take whatever
+   colour their container sets. Sized down from the 24px source: at 1.35rem
+   they sit level with a stat's value line instead of dwarfing it. */
+.icon { width: 1.35rem; height: 1.35rem; }
 
 /* --- the language menu ---------------------------------------------------
    Pico gives a nav dropdown `display: inline`, which leaves its menu hanging
@@ -305,6 +339,12 @@ td > .rank-link { margin: 0; }
   border-radius: var(--pico-border-radius);
   flex: none;
 }
+/* The Auction House index's category cards have no item icon to show --
+   there is no one item behind "Consumables" -- so this fills the same slot
+   in the header with a line icon instead, at the same visual weight as the
+   40px raster ones beside it. */
+.category-icon { flex: none; color: var(--pico-primary); }
+.category-icon .icon { width: 2rem; height: 2rem; }
 /* The last line of a card before its button: an expansion's link to its
    prices, a patch's list of the raid tiers it opened.
 
