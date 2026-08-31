@@ -1,0 +1,49 @@
+name: Publish image
+
+# Builds the one image both roles run (Dockerfile: "One image, two roles")
+# and pushes it to GHCR whenever main moves. This is what every deployed
+# machine's Watchtower is watching -- see deploy/README.md. A tag build
+# publishes the same image under its tag too, for a deployment that wants to
+# pin rather than track main.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # Hardcoded lowercase: GHCR image paths must be all-lowercase, and
+          # ${{ github.repository }} carries the repo's actual case
+          # (GFerreiroS/gavel), which docker/build-push-action rejects.
+          images: ghcr.io/gferreiros/gavel
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=short
+            type=semver,pattern={{version}}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

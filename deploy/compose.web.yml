@@ -1,0 +1,95 @@
+# The data/web machine (docs/../CLAUDE.md §16, "Target deployment: one
+# data/web machine and compute workers"). Runs on the Proxmox host that owns
+# the SQLite file. --workers=0: once real worker machines exist, in-process
+# workers would quietly do their work and make scaling look like it did
+# nothing (the root compose.yml carries the same comment).
+#
+# Pulls a prebuilt image instead of `build: .` -- this machine never runs
+# `cargo build`. .github/workflows/publish.yml builds it once, on push to
+# main; Watchtower below is what notices and redeploys.
+#
+# Usage: see deploy/README.md.
+
+name: gavel-web
+
+services:
+  web:
+    image: ghcr.io/gferreiros/gavel:latest
+    pull_policy: always
+    command:
+      - --host=0.0.0.0
+      - --port=3000
+      - --worker-listen=0.0.0.0:3001
+      - --workers=0
+    environment:
+      BLIZZARD_CLIENT_ID: ${BLIZZARD_CLIENT_ID:?set BLIZZARD_CLIENT_ID in .env}
+      BLIZZARD_CLIENT_SECRET: ${BLIZZARD_CLIENT_SECRET:?set BLIZZARD_CLIENT_SECRET in .env}
+      # What a worker must present to join. Same value here and on every
+      # worker machine's .env; this container refuses to start without it.
+      APP_CLUSTER_TOKEN: ${APP_CLUSTER_TOKEN:?set APP_CLUSTER_TOKEN in .env, e.g. openssl rand -hex 32}
+      # Optional and one-shot. Set both for the very first start only, confirm
+      # the log line, then remove them from .env and `docker compose up -d`
+      # again so the cleartext password does not sit in this container's
+      # environment indefinitely.
+      APP_BOOTSTRAP_ADMIN_USERNAME: ${APP_BOOTSTRAP_ADMIN_USERNAME:-}
+      APP_BOOTSTRAP_ADMIN_PASSWORD: ${APP_BOOTSTRAP_ADMIN_PASSWORD:-}
+      APP_LOG: ${APP_LOG:-info,sqlx=warn}
+      APP_SECURE_COOKIES: "true"
+      APP_TRUST_PROXY_HEADERS: "true"
+      APP_MARKET_REGIONS: ${APP_MARKET_REGIONS:-eu}
+    volumes:
+      - data:/data
+    ports:
+      # The app itself is loopback-only; Caddy is what faces the network.
+      - "127.0.0.1:3000:3000"
+      # The worker port. Bind it to this host's PRIVATE inter-VM address, not
+      # 0.0.0.0 -- see deploy/README.md's networking section. Five bytes on
+      # this port with no token was, before APP_CLUSTER_TOKEN existed, the
+      # whole of joining the cluster and taking work (README §10); the token
+      # is still not a substitute for keeping the port off the public side.
+      - "${PRIVATE_ADDR:?set PRIVATE_ADDR in .env to this VM's private-network IP}:3001:3001"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN in .env, e.g. gavel.example.com}
+    restart: unless-stopped
+    depends_on:
+      - web
+
+  # Polls GHCR for a newer digest of whatever image tag the labelled
+  # containers above are running and redeploys them in place, same config,
+  # new image -- this is "if there is a new commit on main, update
+  # yourselves" for this machine. WATCHTOWER_LABEL_ENABLE means it only ever
+  # touches a container carrying the enable label above (web, not caddy or
+  # itself), which matters if this host ever runs anything else.
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_POLL_INTERVAL: "300"
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_ROLLING_RESTART: "true"
+    restart: unless-stopped
+
+volumes:
+  data:
+  caddy_data:
+  caddy_config:

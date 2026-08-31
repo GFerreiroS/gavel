@@ -1,0 +1,43 @@
+# A compute machine (docs/../CLAUDE.md §16). No public port, no volume, no
+# database -- everything a worker needs arrives over the connection it opens
+# to the web/data machine. Same image as compose.web.yml, different command,
+# same one-image-two-roles binary this whole deployment is built around.
+#
+# Usage: see deploy/README.md.
+
+name: gavel-worker
+
+services:
+  worker:
+    image: ghcr.io/gferreiros/gavel:latest
+    pull_policy: always
+    command:
+      - --connect=${WEB_ADDR:?set WEB_ADDR in .env to the web machine's private IP:3001}
+    environment:
+      # Same value as the web machine's APP_CLUSTER_TOKEN, or every worker is
+      # turned away at the accept path before it reaches the registry.
+      APP_CLUSTER_TOKEN: ${APP_CLUSTER_TOKEN:?set APP_CLUSTER_TOKEN in .env, e.g. openssl rand -hex 32}
+      APP_LOG: ${APP_LOG:-info}
+    restart: unless-stopped
+    # `docker compose up -d --scale worker=N` is the one that actually takes
+    # effect for a plain (non-swarm) `up`; this is the fallback default when
+    # --scale is not passed, kept for parity with the root compose.yml.
+    deploy:
+      replicas: 4
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+
+  # Same mechanism as the web machine's: poll GHCR, redeploy the labelled
+  # container(s) in place on a new digest. `--scale` on the next manual
+  # `docker compose up -d` is still how you change *how many* workers run;
+  # Watchtower only changes *which image* they run.
+  watchtower:
+    image: containrrr/watchtower
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_POLL_INTERVAL: "300"
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_ROLLING_RESTART: "true"
+    restart: unless-stopped

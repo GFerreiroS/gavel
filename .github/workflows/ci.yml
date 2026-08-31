@@ -20,3 +20,14 @@ jobs:
         env:
           APP_CLUSTER_TOKEN: ci-only-compose-configuration-token
         run: docker compose --env-file .env.example config --quiet
+      - name: Validate deploy/ Compose configuration
+        env:
+          APP_CLUSTER_TOKEN: ci-only-compose-configuration-token
+          BLIZZARD_CLIENT_ID: ci-only
+          BLIZZARD_CLIENT_SECRET: ci-only
+          PRIVATE_ADDR: 10.0.10.10
+          APP_DOMAIN: example.com
+          WEB_ADDR: 10.0.10.10:3001
+        run: |
+          docker compose -f deploy/compose.web.yml config --quiet
+          docker compose -f deploy/compose.worker.yml config --quiet
