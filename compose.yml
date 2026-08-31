@@ -8,7 +8,7 @@
 # an identity, take work, and are forgotten when they stop. That is why
 # `--scale` works on them and would not work on the web container.
 
-name: wow-auction-tracker
+name: gavel
 
 services:
   web:

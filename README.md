@@ -1,4 +1,4 @@
-# WoW Auction Tracker
+# Gavel
 
 A server-rendered web application in Rust with a work cluster built in. Prices,
 raid consumables and crafting reagents from the Battle.net auction-house API;
@@ -105,7 +105,7 @@ BuildKit can attach an SPDX SBOM and provenance without adding tooling to the
 image:
 
 ```bash
-docker buildx build --sbom=true --provenance=true -t wow-auction-tracker .
+docker buildx build --sbom=true --provenance=true -t gavel .
 ```
 
 Dependencies point inwards. `cluster-core` depends only on `serde`,

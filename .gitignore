@@ -7,3 +7,10 @@
 # database that is not ours to commit.
 /data/bench/
 .env
+
+# Local-only project notes and audit reports -- not meant for the public repo.
+/CLAUDE.md
+/track.txt
+/AUDITORIA_CLAUDE.md
+/AUDITORIA_CODEX.md
+/AUDITORIA_REMEDIATION.md

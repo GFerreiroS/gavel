@@ -1,10 +1,10 @@
-# Spanish (es) translation of the WoW Auction Tracker interface.
+# Spanish (es) translation of the Gavel interface.
 # Generated from locales/messages.pot; maintained by translators.
 msgid ""
 msgstr ""
-"Project-Id-Version: wow-auction-tracker\n"
+"Project-Id-Version: gavel\n"
 "PO-Revision-Date: 2026-08-28 00:00+0200\n"
-"Last-Translator: WoW Auction Tracker contributors\n"
+"Last-Translator: Gavel contributors\n"
 "Language-Team: Spanish\n"
 "Language: es\n"
 "MIME-Version: 1.0\n"

@@ -51,7 +51,7 @@ pub struct WebConfig {
 impl Default for WebConfig {
     fn default() -> Self {
         Self {
-            app_name: "Auction Tracker".to_string(),
+            app_name: "Gavel".to_string(),
             poll_interval_ms: 2_000,
             event_log_limit: 25,
             debug_controls: false,
