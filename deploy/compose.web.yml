@@ -4,6 +4,13 @@
 # workers would quietly do their work and make scaling look like it did
 # nothing (the root compose.yml carries the same comment).
 #
+# No reverse proxy here. If ingress is a VPS running Nginx Proxy Manager (or
+# any proxy) reaching this machine over Tailscale, that VPS is already doing
+# TLS and the reverse-proxy job -- a second hop through a local proxy would
+# just be the same job twice. Both published ports below bind to this VM's
+# Tailscale address, which is also the private link the worker machines use;
+# see deploy/README.md's networking section.
+#
 # Pulls a prebuilt image instead of `build: .` -- this machine never runs
 # `cargo build`. .github/workflows/publish.yml builds it once, on push to
 # main; Watchtower below is what notices and redeploys.
@@ -35,19 +42,25 @@ services:
       APP_BOOTSTRAP_ADMIN_PASSWORD: ${APP_BOOTSTRAP_ADMIN_PASSWORD:-}
       APP_LOG: ${APP_LOG:-info,sqlx=warn}
       APP_SECURE_COOKIES: "true"
+      # Trustworthy here because the only thing that can reach :3000 at all
+      # is whatever holds the Tailscale key for this tailnet -- see the
+      # TAILSCALE_ADDR bind below.
       APP_TRUST_PROXY_HEADERS: "true"
       APP_MARKET_REGIONS: ${APP_MARKET_REGIONS:-eu}
     volumes:
       - data:/data
     ports:
-      # The app itself is loopback-only; Caddy is what faces the network.
-      - "127.0.0.1:3000:3000"
-      # The worker port. Bind it to this host's PRIVATE inter-VM address, not
-      # 0.0.0.0 -- see deploy/README.md's networking section. Five bytes on
-      # this port with no token was, before APP_CLUSTER_TOKEN existed, the
-      # whole of joining the cluster and taking work (README §10); the token
-      # is still not a substitute for keeping the port off the public side.
-      - "${PRIVATE_ADDR:?set PRIVATE_ADDR in .env to this VM's private-network IP}:3001:3001"
+      # Both ports bind to this VM's Tailscale IP, never 0.0.0.0 or a public
+      # interface. That is what keeps :3000 reachable only from the ingress
+      # VPS and :3001 reachable only from a worker machine, both of which
+      # have to hold a key for this tailnet to reach either -- a stronger
+      # bar than a firewall rule on a shared L2 network. Five bytes on :3001
+      # with no token was, before APP_CLUSTER_TOKEN existed, the whole of
+      # joining the cluster and taking work (README §10); the token is a
+      # second lock, not a substitute for keeping the port off the public
+      # side in the first place.
+      - "${TAILSCALE_ADDR:?set TAILSCALE_ADDR in .env to this VM's tailscale0 IP}:3000:3000"
+      - "${TAILSCALE_ADDR:?set TAILSCALE_ADDR in .env to this VM's tailscale0 IP}:3001:3001"
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:3000/healthz"]
@@ -57,27 +70,12 @@ services:
     labels:
       - "com.centurylinklabs.watchtower.enable=true"
 
-  caddy:
-    image: caddy:2-alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    environment:
-      APP_DOMAIN: ${APP_DOMAIN:?set APP_DOMAIN in .env, e.g. gavel.example.com}
-    restart: unless-stopped
-    depends_on:
-      - web
-
   # Polls GHCR for a newer digest of whatever image tag the labelled
-  # containers above are running and redeploys them in place, same config,
-  # new image -- this is "if there is a new commit on main, update
-  # yourselves" for this machine. WATCHTOWER_LABEL_ENABLE means it only ever
-  # touches a container carrying the enable label above (web, not caddy or
-  # itself), which matters if this host ever runs anything else.
+  # container above is running and redeploys it in place, same config, new
+  # image -- this is "if there is a new commit on main, update yourselves"
+  # for this machine. WATCHTOWER_LABEL_ENABLE means it only ever touches a
+  # container carrying the enable label (web, not itself), which matters if
+  # this host ever runs anything else.
   watchtower:
     image: containrrr/watchtower
     volumes:
@@ -91,5 +89,3 @@ services:
 
 volumes:
   data:
-  caddy_data:
-  caddy_config:

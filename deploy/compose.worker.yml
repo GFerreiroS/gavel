@@ -12,7 +12,7 @@ services:
     image: ghcr.io/gferreiros/gavel:latest
     pull_policy: always
     command:
-      - --connect=${WEB_ADDR:?set WEB_ADDR in .env to the web machine's private IP:3001}
+      - --connect=${WEB_ADDR:?set WEB_ADDR in .env to the web machine's tailscale IP:3001}
     environment:
       # Same value as the web machine's APP_CLUSTER_TOKEN, or every worker is
       # turned away at the accept path before it reaches the registry.
