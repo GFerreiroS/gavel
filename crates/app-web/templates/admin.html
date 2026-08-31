@@ -20,6 +20,14 @@
 
 <article>
   <h2>{{ "Releases"|t }}</h2>
+  {% if !admin.archive_problems.is_empty() %}
+  {# Wrong across the catalogues rather than within one, so no catalogue's own
+     panel can carry it: every one involved is coherent on its own and it is
+     the arrangement that is not. #}
+  <ul class="alert">
+    {% for problem in admin.archive_problems %}<li>{{ problem }}</li>{% endfor %}
+  </ul>
+  {% endif %}
   <p class="hint">
     {{ "One catalogue collects at a time. Activating another archives it in the same step, so there is never a moment with two or none. A PTR draft is visible here and nowhere else: it has no prices, because nothing has been collected for it."|t }}
   </p>
@@ -38,6 +46,35 @@
       <p class="muted">
         {{ "{} items · catalogue version {}"|t|fill(release.items)|fill(release.catalog_version) }}
       </p>
+      {# What a review is a review *of*. The item count alone is not it: what
+         an activation changes is which patch and which raid tier the archive
+         starts filing prices under, and those are what a reviewer checks
+         against the patch notes. #}
+      <p class="muted">
+        {% for kind in release.kinds %}{{ kind.0|t }} {{ kind.1 }}{% if !loop.last %} · {% endif %}{% endfor %}
+      </p>
+      <ul class="muted">
+        {% for patch in release.patches %}
+        <li>
+          {{ patch.patch }} <span class="muted">{{ patch.name }} · {{ patch.started }}</span>
+          {# The tier line is rendered either way: "opened no raid" is a thing
+             the reviewer has to be told, not an absence to be inferred. #}
+          {% if patch.tiers.is_empty() %}
+          <span class="muted">· {{ "no raid"|t }}</span>
+          {% else %}
+          {% for tier in patch.tiers %}<span class="muted">· {{ tier }}</span>{% endfor %}
+          {% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% if !release.notes.is_empty() %}
+      {# The catalogue's own reviewer notes, from `catalogs.json`. Shown here
+         and nowhere else: a PTR note is unconfirmed research, and putting one
+         on a public page would be publishing a claim nobody checked. #}
+      <ul class="muted">
+        {% for note in release.notes %}<li>{{ note }}</li>{% endfor %}
+      </ul>
+      {% endif %}
       {% if !release.problems.is_empty() %}
       {# Shown rather than hidden behind a failed click: the button is not
          offered while any of these stands, so the reader needs to know what
@@ -50,8 +87,15 @@
       <form method="post" action="/admin/release" class="switch">
         <input type="hidden" name="csrf_token" value="{{ layout.csrf }}">
         <input type="hidden" name="catalog" value="{{ release.id }}">
+        {# The button says what it does, both halves of it. Activating and
+           archiving are one transaction (§8), so this ends the season that is
+           running -- and a button that does two things while naming one is a
+           button somebody presses by accident. #}
         <button type="submit" class="chip outline">{{ "Activate"|t }}</button>
       </form>
+      {% if let Some(archived) = release.archives %}
+      <p class="muted">{{ "Activating this archives {}, in the same transaction. Its prices stay browsable and stop being collected."|t|fill(archived) }}</p>
+      {% endif %}
       {% endif %}
     </section>
     {% endfor %}

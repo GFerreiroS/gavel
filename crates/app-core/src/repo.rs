@@ -259,6 +259,18 @@ pub trait RealmPriceRepository: Send + Sync + 'static {
         item: ItemId,
     ) -> impl Future<Output = RepoResult<Vec<(RealmId, String, Millis, Ladder)>>> + Send;
 
+    /// The newest ladder of every tracked variant in a region, on every realm.
+    ///
+    /// What the materialiser sweeps, and the reason it is separate from
+    /// [`Self::latest_ladders_for`]: that one answers a page's question about
+    /// one item, and calling it per item on the write path would be one query
+    /// per tracked piece per cycle -- §11b's N+1, on the half of the app where
+    /// it is least visible because no reader is waiting for it.
+    fn latest_ladders_in_region(
+        &self,
+        region: Region,
+    ) -> impl Future<Output = RepoResult<Vec<(RealmId, ItemId, String, Ladder)>>> + Send;
+
     /// Drop realm ladders older than `before`. See
     /// [`PriceRepository::prune_ladders_before`].
     fn prune_ladders_before(&self, before: Millis) -> impl Future<Output = RepoResult<u64>> + Send;
@@ -425,6 +437,15 @@ pub trait ReleaseRepository: Send + Sync + 'static {
     /// Never overwrites one: a state a person set outranks the one the binary
     /// shipped with, or upgrading would silently undo an activation. Returns
     /// how many rows were new.
+    ///
+    /// **A shipped `Active` is the default for an empty database, not a
+    /// claim.** On an instance that is already collecting something, a
+    /// newcomer is seeded as `DraftPtr` and waits for somebody to activate it.
+    /// The alternative was found by running a rollover: the second active row
+    /// hit the partial unique index, seeding returned the conflict, and the
+    /// server refused to start. Nothing was broken -- a person had simply not
+    /// chosen yet -- and §8 makes that choice deliberate for exactly this
+    /// reason.
     fn seed(
         &self,
         defaults: &[(String, CatalogStatus)],

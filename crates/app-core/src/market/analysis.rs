@@ -6,6 +6,7 @@
 //! shipping thousands of rows to a browser to be reduced in JavaScript -- is
 //! not available.
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use cluster_core::Millis;
@@ -15,7 +16,7 @@ use crate::timing::{self, Stage};
 use super::{Copper, PriceSample};
 
 /// A price at a moment: what a chart plots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Point {
     pub at: Millis,
     pub price: Copper,
@@ -23,7 +24,7 @@ pub struct Point {
 }
 
 /// Change over a period.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Trend {
     pub from: Copper,
     pub to: Copper,
@@ -61,7 +62,7 @@ impl Trend {
 ///
 /// The question it answers is "when should I buy", which is the one piece of
 /// analysis the auction house itself will never show you.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Cycle {
     /// Bucket index (0-23 for hours, 0-6 for days, Monday first).
     pub bucket: u8,
@@ -69,7 +70,7 @@ pub struct Cycle {
     pub samples: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ItemAnalysis {
     pub current: Option<Point>,
     pub low: Option<Point>,

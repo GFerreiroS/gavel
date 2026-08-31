@@ -362,6 +362,10 @@ pub const EXTERNAL_STRINGS: &[&str] = &[
     // Relative times (format::ago).
     "{} ago",
     "just now",
+    // An open-ended span on an archive page (routes::archive::span). Built in
+    // Rust for the same reason `{} ago` is: the sentence wraps the date, and
+    // the two cannot be concatenated in the template.
+    "present",
     // Price trends.
     "24h",
     "7d",

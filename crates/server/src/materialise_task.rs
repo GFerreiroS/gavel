@@ -17,6 +17,7 @@ use app_core::market::window::Window;
 use app_core::market::{Catalog, ItemId, PriceSample, Region};
 use app_core::repo::{PriceRepository, ReadModelRepository, RealmPriceRepository, Store};
 use cluster_core::Millis;
+use std::collections::BTreeMap;
 
 /// Markets staged per transaction.
 ///
@@ -52,7 +53,24 @@ const REALM_WINDOW: Window = Window::Days(30);
 /// this returns `()` rather than propagating -- there is nothing for the
 /// caller to do about it that is better than the next cycle trying again.
 pub async fn publish<E: Ports>(env: &E, commodity: &[Region], per_realm: &[Region]) {
-    let Some(catalog) = env.active_catalog() else {
+    // Every catalogue a visitor may see, not only the one being collected.
+    //
+    // Phase 9's third bullet -- "archived pages use their last published
+    // analysis and can rebuild under a new algorithm from the retained
+    // representation" -- is what forced this. Resolving the whole region's
+    // history against the *active* catalogue was wrong in both directions the
+    // moment a second catalogue existed: an archived tier's gear was re-keyed
+    // by a catalogue that has never heard of its tracks, and its patch and
+    // tier windows -- `Window::all_for` reads them off the catalogue -- were
+    // simply not recalculated, so a rebuild under a new algorithm quietly
+    // dropped every archived window it was supposed to reproduce.
+    //
+    // A market is therefore materialised by the catalogue that *owns* its
+    // item, and an item nobody claims falls back to the live catalogue, which
+    // is what the whole region used to do.
+    let owners = env.public_owners();
+    let public = env.public_catalogs();
+    let Some(fallback) = env.active_catalog().or_else(|| public.first().copied()) else {
         return;
     };
     if commodity.is_empty() && per_realm.is_empty() {
@@ -82,8 +100,8 @@ pub async fn publish<E: Ports>(env: &E, commodity: &[Region], per_realm: &[Regio
 
     for (kind, region) in passes {
         let outcome = match kind {
-            "commodity" => commodity_region(env, catalog, region, version, now).await,
-            _ => realm_region(env, catalog, region, version, now).await,
+            "commodity" => commodity_region(env, &owners, fallback, region, version, now).await,
+            _ => realm_region(env, &owners, &public, fallback, region, version, now).await,
         };
         match outcome {
             Ok(report) => {
@@ -134,7 +152,8 @@ struct RegionReport {
 
 async fn commodity_region<E: Ports>(
     env: &E,
-    catalog: &Catalog,
+    owners: &BTreeMap<ItemId, &Catalog>,
+    fallback: &Catalog,
     region: Region,
     version: u64,
     now: Millis,
@@ -149,7 +168,7 @@ async fn commodity_region<E: Ports>(
     // item -- the same reason `history_in_region` exists. Empty for a market
     // nothing has collected a ladder for yet, which is every market on an
     // archive gathered before Phase 7.
-    let ladders: std::collections::BTreeMap<ItemId, app_core::market::Ladder> = env
+    let ladders: BTreeMap<ItemId, app_core::market::Ladder> = env
         .store()
         .prices()
         .latest_ladders(region)
@@ -159,16 +178,36 @@ async fn commodity_region<E: Ports>(
         .collect();
     let no_ladder = app_core::market::Ladder::default();
 
-    let windows = Window::all_for(catalog);
+    // One window list per catalogue rather than per market: they are the same
+    // dozen strings for every item a catalogue owns, and building them 2,042
+    // times would be §11b's linear-scan-inside-a-loop in another costume.
+    let mut windows: BTreeMap<&str, Vec<Window>> = BTreeMap::new();
+    for catalog in owners.values() {
+        windows
+            .entry(catalog.id.as_str())
+            .or_insert_with(|| Window::all_for(catalog));
+    }
+    windows
+        .entry(fallback.id.as_str())
+        .or_insert_with(|| Window::all_for(fallback));
+
     let read_model = env.store().read_model();
 
     let mut markets = 0u64;
     let mut batch: Vec<Materialised> = Vec::with_capacity(BATCH);
     for group in grouped(&history) {
+        // The catalogue that *owns* this item, not whichever one is active:
+        // an archived tier's windows are read off the catalogue that declared
+        // them, and re-keying its gear under the live one is how a rebuild
+        // quietly drops the windows it was meant to reproduce.
+        let catalog = owners.get(&group[0].item).copied().unwrap_or(fallback);
         let key = catalog.market_of(&group[0]);
         let ladder = ladders.get(&key.item()).unwrap_or(&no_ladder);
+        let over = windows
+            .get(catalog.id.as_str())
+            .expect("every owning catalogue has its windows");
         batch.push(materialise::commodity(
-            key, group, ladder, catalog, &windows, now,
+            key, group, ladder, catalog, over, now,
         ));
         if batch.len() >= BATCH {
             markets += read_model.stage(version, &batch).await?;
@@ -188,9 +227,8 @@ async fn commodity_region<E: Ports>(
 
 /// Split a region's history into one slice per market.
 ///
-/// The rows arrive ordered by item, so this is a walk. Commodity markets are
-/// one per item id -- the rank is part of the key but it is derived from the
-/// item, not an axis the rows vary along.
+/// The rows arrive ordered by item, so this is a walk rather than a sort or a
+/// map. Same property `history_in_region` is written to have.
 fn grouped(history: &[PriceSample]) -> impl Iterator<Item = &[PriceSample]> {
     let mut start = 0;
     std::iter::from_fn(move || {
@@ -213,14 +251,17 @@ fn grouped(history: &[PriceSample]) -> impl Iterator<Item = &[PriceSample]> {
 /// One read of the region's window rather than one per item or one per realm:
 /// the page used to ask for one item's history across 92 realms, and the
 /// materialiser asks once for all of them.
+#[allow(clippy::too_many_arguments)]
 async fn realm_region<E: Ports>(
     env: &E,
-    catalog: &Catalog,
+    owners: &BTreeMap<ItemId, &Catalog>,
+    public: &[&Catalog],
+    fallback: &Catalog,
     region: Region,
     version: u64,
     now: Millis,
 ) -> app_core::error::RepoResult<RegionReport> {
-    let Some((from, _)) = REALM_WINDOW.bounds(catalog, now) else {
+    let Some((from, _)) = REALM_WINDOW.bounds(fallback, now) else {
         return Ok(RegionReport {
             markets: 0,
             oldest: None,
@@ -236,7 +277,61 @@ async fn realm_region<E: Ports>(
     let oldest = history.iter().map(|s| s.observed_at).min();
     let newest = history.iter().map(|s| s.observed_at).max();
 
-    let rollups = materialise::rollups(&history, catalog, &REALM_WINDOW);
+    // Split by owning catalogue, then roll each part up under its own.
+    //
+    // Which track a variant belongs to is a catalogue rule, and last season's
+    // bonus ids are in last season's catalogue. Rolling the whole region up
+    // under the live one filed every archived BoE as gear with an unresolved
+    // track -- a market named after nothing, which is precisely what §8's
+    // "group on the track bonus" was written to prevent, one rollover later.
+    //
+    // Partitioning by item is safe because every figure a roll-up derives is
+    // per item: the "newest per realm across every track" rule that decides
+    // whether a variant is still listed never looks across two items.
+    //
+    // Skipped entirely while there is one catalogue, which is every deployment
+    // until its first rollover. The partition moves half a million samples into
+    // fresh vectors, and doing that to arrive at the list we already have would
+    // be a rollover's cost charged to everybody who has not had one.
+    // Every realm's newest ladder, in one query. `None` everywhere on an
+    // archive gathered before Phase 7, which is what makes the depth panel say
+    // so rather than draw an empty market.
+    let ladders: materialise::RealmLadders = env
+        .store()
+        .realm_prices()
+        .latest_ladders_in_region(region)
+        .await?
+        .into_iter()
+        .map(|(realm, item, variant, ladder)| ((realm, item, variant), ladder))
+        .collect();
+
+    let rollups = if public.len() < 2 {
+        materialise::rollups(&history, &ladders, fallback, &REALM_WINDOW)
+    } else {
+        let mut mine: BTreeMap<&str, Vec<app_core::market::RealmSample>> = BTreeMap::new();
+        for sample in history {
+            let owner = owners
+                .get(&sample.item)
+                .map(|c| c.id.as_str())
+                .unwrap_or(fallback.id.as_str());
+            mine.entry(owner).or_default().push(sample);
+        }
+        let mut rollups = Vec::new();
+        for (id, samples) in &mine {
+            let catalog = public
+                .iter()
+                .copied()
+                .find(|c| c.id == *id)
+                .unwrap_or(fallback);
+            rollups.extend(materialise::rollups(
+                samples,
+                &ladders,
+                catalog,
+                &REALM_WINDOW,
+            ));
+        }
+        rollups
+    };
     let read_model = env.store().read_model();
 
     let mut markets = 0u64;

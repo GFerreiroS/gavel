@@ -169,6 +169,36 @@ impl RealmPriceRepository for SqliteRealmPrices {
             .collect())
     }
 
+    async fn latest_ladders_in_region(
+        &self,
+        region: Region,
+    ) -> RepoResult<Vec<(RealmId, ItemId, String, Ladder)>> {
+        // The same shape as `latest_ladders_for` without the item filter, and
+        // the same `max(observed_at)` with bare columns §11b records as a
+        // SQLite promise rather than SQL.
+        let rows = sqlx::query(
+            "SELECT realm_id, item_id, variant, max(observed_at) AS observed_at, steps
+               FROM realm_price_ladders
+              WHERE region = ?
+              GROUP BY realm_id, item_id, variant",
+        )
+        .bind(region.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                (
+                    RealmId(row.get::<i64, _>("realm_id") as u32),
+                    ItemId(row.get::<i64, _>("item_id") as u32),
+                    row.get::<String, _>("variant"),
+                    Ladder::decode(&row.get::<String, _>("steps")),
+                )
+            })
+            .collect())
+    }
+
     async fn prune_ladders_before(&self, before: Millis) -> RepoResult<u64> {
         let result = sqlx::query("DELETE FROM realm_price_ladders WHERE observed_at < ?")
             .bind(before.get() as i64)

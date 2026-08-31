@@ -9,8 +9,8 @@ use crate::auth::{PasswordHasher, TokenSource};
 use crate::item::ItemDetailProvider;
 use crate::market::catalog::CatalogStatus;
 use crate::market::{
-    AlertSink, Catalog, CatalogSet, CommodityProvider, MarketConfig, RealmAuctionProvider,
-    ReleaseStates, release,
+    AlertSink, Archive, Catalog, CatalogItem, CatalogSet, CommodityProvider, ItemId, MarketConfig,
+    RealmAuctionProvider, ReleaseStates, release,
 };
 use crate::metrics::Metrics;
 use crate::repo::Store;
@@ -140,5 +140,45 @@ pub trait Ports: Clone + Send + Sync + 'static {
     /// a `draft_ptr` catalogue is visible.
     fn all_catalogs(&self) -> Vec<&Catalog> {
         release::all(self.catalogs(), self.releases())
+    }
+
+    /// One item and the catalogue that describes it, for anybody.
+    ///
+    /// The same gate as [`Self::public_catalog`], one level down.
+    /// `CatalogSet::index` is the state-blind version, and an item page built
+    /// on it serves a `draft_ptr` catalogue's *candidate item list* to
+    /// whoever guesses an id -- which is how the next tier's contents leak
+    /// before anybody decided to publish them.
+    fn public_item(&self, item: ItemId) -> Option<(&Catalog, &CatalogItem)> {
+        release::public_item(self.catalogs(), self.releases(), item)
+    }
+
+    /// Every item a visitor may see, and the catalogue describing it.
+    ///
+    /// [`Self::public_item`] for a page that needs many of them -- a list of
+    /// alerts, a watchlist -- rather than one lookup per row.
+    fn public_index(&self) -> std::collections::BTreeMap<ItemId, (&Catalog, &CatalogItem)> {
+        release::public_index(self.catalogs(), self.releases())
+    }
+
+    /// Which public catalogue owns each item.
+    ///
+    /// What the materialiser resolves an observation against. One expansion
+    /// can span several catalogues after a tier rollover, and an archived
+    /// one's items must keep being described by the catalogue that has them --
+    /// otherwise a rebuild files last season's gear under a track the live
+    /// catalogue has never heard of.
+    fn public_owners(&self) -> std::collections::BTreeMap<ItemId, &Catalog> {
+        release::public_owners(self.catalogs(), self.releases())
+    }
+
+    /// The public archive: expansion -> patch -> raid tier
+    /// (`docs/market-analysis.md` §8).
+    ///
+    /// Derived from the catalogues on every call rather than cached: it is a
+    /// walk over a handful of `Vec`s, and a cached copy would be one more
+    /// thing an activation has to remember to move.
+    fn archive(&self) -> Archive {
+        release::archive(self.catalogs(), self.releases())
     }
 }

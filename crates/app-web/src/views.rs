@@ -381,6 +381,14 @@ pub struct GearStatsView {
     /// What each item level inside this track is doing, which is the reason
     /// to open this page: the card gave the range, this gives the breakdown.
     pub levels: Vec<GearLevelStat>,
+    /// What a sweep of this market costs, on the chosen realm.
+    ///
+    /// `None` with no realm chosen, and the page says why rather than going
+    /// quiet: a sweep happens in one auction house, so a figure pooled across
+    /// ninety realms would price an order nobody can fill. `None` on a realm
+    /// too until ladder collection has run for it.
+    pub depth: Option<DepthView>,
+
     /// Whose prices these are: a realm's name, or every realm.
     pub scope: Option<String>,
     /// The same realm as a slug, for links out of this page.
@@ -473,6 +481,14 @@ pub struct AdminView {
     pub events: Vec<AdminEvent>,
     /// The kinds an annotation may be filed under, for the form.
     pub event_kinds: Vec<(&'static str, &'static str)>,
+    /// What is wrong *across* the catalogues, which no single one can see.
+    ///
+    /// One catalogue's `problems` are about its own rows; these are about the
+    /// arrangement -- a tier left with no successor by a rollover, whose
+    /// stored window then runs on through the tier that replaced it. Shown at
+    /// the top of the release panel because the fix is an edit to a catalogue
+    /// that looks perfectly coherent on its own.
+    pub archive_problems: Vec<String>,
 }
 
 /// One event, as the administrator sees it.
@@ -522,6 +538,37 @@ pub struct AdminRelease {
     /// What is wrong with it, in the reader's own words. Empty is the normal
     /// case and renders nothing.
     pub problems: Vec<String>,
+    /// The catalogue this one will archive if it is activated.
+    ///
+    /// §8 makes activation and archiving one transaction, so pressing the
+    /// button ends the season that is running. A button that does two things
+    /// and names one of them is a button somebody presses by accident.
+    pub archives: Option<String>,
+    /// The patches and tiers a reviewer is being asked to approve.
+    ///
+    /// §16's Phase 9 wants a PTR catalogue reviewed before it is activated,
+    /// and a review needs something to look at. The item count alone is not
+    /// it: what an activation changes is which patch and which raid tier the
+    /// archive starts filing prices under.
+    pub patches: Vec<AdminPatch>,
+    /// What a reviewer should know before pressing the button, from the
+    /// catalogue's own `notes`. Administrator-only: a PTR note is
+    /// unconfirmed research (§9).
+    pub notes: Vec<String>,
+    /// How many items of each kind, which is what a PTR draft is mostly made
+    /// of and the figure a reviewer checks against the patch notes.
+    pub kinds: Vec<(&'static str, usize)>,
+}
+
+/// One patch of a catalogue under review, with the tiers it declares.
+#[derive(Debug, Clone)]
+pub struct AdminPatch {
+    pub patch: String,
+    pub name: String,
+    pub started: String,
+    /// Rendered whether or not the patch opened a raid: "opened no raid" is a
+    /// thing a reviewer has to be told, not an absence to be inferred.
+    pub tiers: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1484,6 +1531,10 @@ pub struct MarketView {
 #[derive(Debug, Default)]
 pub struct PatchesView {
     pub expansion: String,
+    /// Set when the table has been narrowed to one patch, which is what the
+    /// archive's patch page fetches. The same table, one column -- not a
+    /// second one (§16, Phase 9: nothing is forked for a patch or a tier).
+    pub only: Option<String>,
     pub patches: Vec<PatchColumn>,
     pub rows: Vec<PatchRow>,
 }
@@ -1575,6 +1626,146 @@ pub struct PickerOption {
     pub value: String,
     pub label: String,
     pub selected: bool,
+}
+
+// --- the archive: expansion -> patch -> raid tier (Phase 9) ------------------
+//
+// Four views for four levels, and not one of them holds a statistic of its
+// own. Everything with a price in it is a component this app already has: the
+// patch table is `partials/patches.html`, the tier's gear is the same
+// `gear_group` macro the Gear page calls, and an item's analysis is the item
+// page. §7's rule that a new page is a new *use* of the existing design is
+// the whole design here -- a tier that needed its own card would be a tier
+// that had forked the product.
+
+/// `/wow/archive` -- every expansion a visitor may browse.
+#[derive(Debug, Clone, Default)]
+pub struct ArchiveView {
+    pub expansions: Vec<ArchiveExpansionCard>,
+}
+
+/// One expansion on the archive index.
+#[derive(Debug, Clone)]
+pub struct ArchiveExpansionCard {
+    pub name: String,
+    pub href: String,
+    /// "2026-03-02 — present", already worded.
+    pub span: String,
+    pub patches: usize,
+    pub tiers: usize,
+    /// True while one of its catalogues is still being collected.
+    pub collecting: bool,
+    /// Straight to its prices, for a reader who came for those rather than for
+    /// the history.
+    pub markets_href: String,
+}
+
+/// `/wow/archive/{expansion}` -- one expansion's patches.
+#[derive(Debug, Clone, Default)]
+pub struct ExpansionView {
+    pub name: String,
+    pub span: String,
+    pub collecting: bool,
+    pub markets_href: String,
+    pub patches: Vec<ArchivePatchCard>,
+    pub tiers_total: usize,
+}
+
+/// One patch, with the tiers it opened listed inside it.
+#[derive(Debug, Clone)]
+pub struct ArchivePatchCard {
+    /// The key -- "12.1" -- which is what a URL and a stored window are filed
+    /// under.
+    pub patch: String,
+    pub name: String,
+    pub href: String,
+    pub started: String,
+    /// "—" while it is the current patch.
+    pub until: String,
+    pub ran_days: u64,
+    /// True for the newest patch of a collecting expansion.
+    pub current: bool,
+    pub tiers: Vec<ArchiveTierLink>,
+}
+
+/// One raid tier, wherever it is listed.
+#[derive(Debug, Clone)]
+pub struct ArchiveTierLink {
+    pub name: String,
+    pub href: String,
+    pub opened: String,
+    /// `0` where the game gave the tier no season number, which the template
+    /// renders as nothing rather than as "Season 0".
+    pub season: u8,
+    pub current: bool,
+}
+
+/// `/wow/archive/{expansion}/{patch}` -- what happened in one patch.
+#[derive(Debug, Clone, Default)]
+pub struct ArchivePatchView {
+    pub expansion: String,
+    pub expansion_href: String,
+    pub patch: String,
+    pub name: String,
+    pub started: String,
+    pub until: String,
+    pub ran_days: u64,
+    pub current: bool,
+    pub tiers: Vec<ArchiveTierLink>,
+    pub timeline: Vec<TimelineRow>,
+    /// The patch's own column of the price table, fetched when the reader
+    /// scrolls to it. The same fragment the consumables page defers, narrowed
+    /// to one patch -- not a second table.
+    pub table_href: String,
+    pub region: String,
+}
+
+/// `/wow/archive/{expansion}/{patch}/{tier}` -- one raid tier's market.
+#[derive(Debug, Clone, Default)]
+pub struct ArchiveTierView {
+    pub expansion: String,
+    pub expansion_href: String,
+    pub patch: String,
+    pub patch_href: String,
+    pub name: String,
+    pub opened: String,
+    pub until: String,
+    pub ran_days: u64,
+    pub season: u8,
+    pub current: bool,
+    /// "EU", for a sentence. The lowercase code below is for a link.
+    pub region: String,
+    /// The code the card's own analysis link carries, so a reader who follows
+    /// one lands in the region they were already reading.
+    pub region_code: &'static str,
+    /// Where its bind-on-equip pieces are priced with a realm picker.
+    pub gear_href: String,
+    pub pieces: usize,
+    /// Age of the snapshot the cards below were priced from.
+    pub observed: String,
+    /// The tier's bind-on-equip gear, through the shared card macro.
+    pub groups: Vec<GearGroup>,
+    pub timeline: Vec<TimelineRow>,
+}
+
+/// One event on an archive page's timeline.
+///
+/// Deliberately *not* [`EventRow`]: that answers "what did this market's price
+/// do either side of this event", which is a question about one market. This
+/// answers "what happened during this patch", which has no market in it and
+/// therefore no before and after to print. Sharing the type would have meant
+/// rendering "this window does not reach across the event" on a page with no
+/// window in it.
+#[derive(Debug, Clone)]
+pub struct TimelineRow {
+    pub kind: &'static str,
+    pub title: String,
+    pub when: String,
+    /// Which regions, patch or category it claims to apply to. Printed for the
+    /// same reason the item page prints it: an event scoped to one region is
+    /// not evidence about another.
+    pub scope: String,
+    pub notes: Option<String>,
 }
 
 /// An item tooltip, in the order the game draws one.

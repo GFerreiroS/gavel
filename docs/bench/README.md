@@ -66,6 +66,23 @@ decoded, and response bytes both uncompressed and over the wire.
 connection pool are empty. It does not mean the file is out of the operating
 system's cache, which cannot be arranged without root.
 
+`cargo run -p app-core --example curve` measures what the archive curve loses:
+feed it `sqlite3 <db> "select item_id, levels, total, steps from price_ladders"`
+and it reports the size saved and the error of each depth metric against the
+exact ladder. §16's Phase 7 requires any compaction policy to be benchmarked
+against the real archive, and this is that benchmark. It reads stdin rather
+than a database for the reason immediately below.
+
+**Never open the fixture with `SqliteStore::connect`.** It runs migrations, so
+a scratch program that "just reads" it silently upgrades the file and breaks
+its SHA-256. That happened on 2026-08-31 while measuring the materialisation
+payload; the observation rows were untouched and the read model was empty, so
+the manifest was re-stamped at the newer schema rather than the fixture
+rebuilt -- `data/cluster.db` had kept collecting in the meantime, so rebuilding
+would have produced a larger archive and a baseline that cannot be compared
+with the recorded one. Read a fixture with `sqlite3`, or with a connection that
+does not migrate.
+
 It **verifies the fixture against its manifest** before it starts, and refuses
 one that has drifted. That is not hypothetical: two runs before the working
 copy existed migrated the fixture in place, and the only reason it was caught

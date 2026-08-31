@@ -260,6 +260,18 @@ async fn render_page<E: Ports>(
     )
 }
 
+/// What the patch table is asked for.
+///
+/// `patch` narrows it to one column, which is what the archive's patch page
+/// fetches. A second table would have been the obvious way to give that page
+/// prices, and it would have been the fork §16's Phase 9 forbids -- so this
+/// one grew a filter instead.
+#[derive(Debug, Default, serde::Deserialize)]
+pub struct PatchesQuery {
+    expansion: Option<String>,
+    patch: Option<String>,
+}
+
 /// `GET /partials/patches`
 ///
 /// Fetched when the reader scrolls to it, and answers on its own for a reader
@@ -268,10 +280,11 @@ pub async fn patches<E: Ports>(
     State(env): State<E>,
     Extension(prefs): Extension<MarketPrefs>,
     Extension(cache): Extension<std::sync::Arc<crate::FragmentCache>>,
-    Query(query): Query<ConsumablesQuery>,
+    Query(query): Query<PatchesQuery>,
     headers: HeaderMap,
 ) -> WebResult<axum::response::Response> {
     let id = query.expansion.filter(|id| !id.is_empty());
+    let only = query.patch.filter(|p| !p.is_empty());
     let key = crate::fragment_cache::FragmentKey::new(
         "patches",
         env.store()
@@ -284,14 +297,18 @@ pub async fn patches<E: Ports>(
         // The patch table is not measured against a comparison window, so the
         // window is not part of what it says and must not split its cache.
         0,
-        "",
+        // Which patch, in the slot a category page's group occupies. Leaving
+        // it out would serve one patch's column under another's name -- the
+        // rule §11b states as "anything a cached fragment shows must be in
+        // its key".
+        only.as_deref().unwrap_or(""),
         prefs.locale.code(),
         None,
     );
     crate::fragment_cache::respond(&cache, &headers, key, async {
         Ok(page(
             &PatchesFragment {
-                patches: build_patches(&env, prefs, id.as_deref()).await?,
+                patches: build_patches(&env, prefs, id.as_deref(), only.as_deref()).await?,
             },
             prefs.locale,
         )?
@@ -446,10 +463,20 @@ async fn build_patches<E: Ports>(
     env: &E,
     prefs: MarketPrefs,
     id: Option<&str>,
+    only: Option<&str>,
 ) -> WebResult<PatchesView> {
     let Some(catalog) = select(env, id) else {
         return Err(app_core::AppError::NotFound.into());
     };
+    // A patch this catalogue does not have is a 404, not an empty table. The
+    // archive validates the expansion and then the patch inside it (§16), and
+    // this is the same rule one layer down -- otherwise a guessed key would
+    // render a table of dashes and look like an answer.
+    if let Some(want) = only
+        && !catalog.patches.iter().any(|p| p.patch == want)
+    {
+        return Err(app_core::AppError::NotFound.into());
+    }
     let region = prefs.region;
     let now = env.now();
     let model = env.store().read_model();
@@ -457,6 +484,9 @@ async fn build_patches<E: Ports>(
     let mut columns = Vec::new();
     let mut per_patch: Vec<BTreeMap<ItemId, MarketWindow>> = Vec::new();
     for (patch, _from, _until) in catalog.patch_windows() {
+        if only.is_some_and(|want| want != patch.patch) {
+            continue;
+        }
         columns.push(PatchColumn {
             patch: patch.patch.clone(),
             label: patch.label(),
@@ -490,9 +520,17 @@ async fn build_patches<E: Ports>(
         }
     }
     rows.sort_by(|a, b| a.category.cmp(b.category).then(a.name.cmp(&b.name)));
+    // One patch on its own is a different question -- "what was listed while
+    // 12.1 was live" -- and a row with nothing in that column is not an answer
+    // to it. Across the whole expansion every row says something, so nothing
+    // is dropped there.
+    if only.is_some() {
+        rows.retain(|row| row.cells.iter().any(|cell| cell.has_data));
+    }
 
     Ok(PatchesView {
         expansion: catalog.expansion.clone(),
+        only: only.map(str::to_string),
         patches: columns,
         rows,
     })

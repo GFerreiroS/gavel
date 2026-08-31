@@ -789,6 +789,20 @@ pub struct Catalog {
     /// not divide a market, they are counted within one.
     #[serde(default)]
     pub modifiers: BTreeMap<String, String>,
+    /// What a reviewer should know before activating this, in sentences.
+    ///
+    /// `docs/market-analysis.md` §8 lists notes among what a `draft_ptr`
+    /// carries, and §16's Phase 9 asks for "validation notes" in the admin
+    /// workflow. They live in `catalogs.json` with the rest of the content
+    /// because that is the half that is reviewed in version control: a note
+    /// saying "the Myth track's bonus ids are guessed from the PTR build" is
+    /// exactly the kind of thing a diff should show.
+    ///
+    /// **Administrator-only.** They are shown at `/admin` and nowhere else --
+    /// a PTR note is unconfirmed research, and §9 forbids leaking one onto a
+    /// public annotation.
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 impl Catalog {

@@ -2,12 +2,27 @@
    rows and most visits never reach it. Swapped as `outerHTML`, so the
    container that fetched it is replaced rather than nested. #}
 <article id="patches">
+  {# One table, two questions. Across the expansion it is a column per patch;
+     narrowed to one patch -- which is what the archive's patch page fetches --
+     it is that column beside the expansion's own. A second table would have
+     been the fork Phase 9 forbids, so this one says which it is instead. #}
+  {% if let Some(only) = patches.only %}
+  <h2>{{ "Prices during {}"|t|fill(only) }}</h2>
+  <p class="hint">
+    {{ "Average unit price while {} was live, with the low and high underneath, beside what the same item cost across the whole of {}. Only items with a price recorded in this patch are listed."|t|fill(only)|fill(patches.expansion) }}
+  </p>
+  {% else %}
   <h2>{{ "Across {}"|t|fill(patches.expansion) }}</h2>
   <p class="hint">
     {{ "Average unit price per patch, with the low and high underneath. The last column is the whole expansion, which is what “what did this cost during {}” means once it is over."|t|fill(patches.expansion) }}
   </p>
+  {% endif %}
   {% if patches.patches.is_empty() %}
   <p class="muted">{{ "No patch boundaries recorded for this expansion."|t }}</p>
+  {% else if patches.rows.is_empty() %}
+  {# An archived patch older than the retained history has no rows at all.
+     Said out loud: an empty table reads as a table that failed to load. #}
+  <p class="muted">{{ "No prices were recorded during this patch."|t }}</p>
   {% else %}
   <div class="scroll-x">
   <table class="table patch-table">

@@ -305,7 +305,23 @@ td > .rank-link { margin: 0; }
   border-radius: var(--pico-border-radius);
   flex: none;
 }
-.card-foot { color: var(--pico-muted-color); font-size: .8em; }
+/* The last line of a card before its button: an expansion's link to its
+   prices, a patch's list of the raid tiers it opened.
+
+   Height held, and clamped to two lines. Cards sit in a grid and their rows
+   have to line up (§7): a patch that opened two tiers next to one that opened
+   none put their two Open buttons at different heights, which is the same bug
+   as a `.verdict` that renders on one card and not the next. */
+.card-foot {
+  color: var(--pico-muted-color);
+  font-size: .8em;
+  min-height: 2.6rem;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+}
 /* Pico sizes `role="button"` for page actions; this one sits at the foot of a
    price column, two to a card. */
 .rank-link {

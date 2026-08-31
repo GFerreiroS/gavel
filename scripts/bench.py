@@ -75,6 +75,17 @@ ENDPOINTS = [
     Endpoint("commodity analysis", "/wow/item/237367", "the personalised shell: nav, follow control, no prices"),
     Endpoint("commodity analysis body", "/wow/item/237367/analysis", "five charts and five panels, cached and revalidated"),
     Endpoint("BoE analysis", "/wow/gear/271441/hero", "one track on every realm of a region"),
+    # Phase 9's archive. The first two read no database at all -- the hierarchy
+    # is derived from the catalogues, which are in the binary -- and are timed
+    # so that stays true: a query appearing here is a page that has started
+    # calculating something the catalogue already knows.
+    Endpoint("archive index", "/wow/archive", "every expansion; derived from the catalogues, no database"),
+    Endpoint("archive patch", "/wow/archive/midnight/12.1", "one patch: its tiers and its validated events"),
+    Endpoint(
+        "archive tier",
+        "/wow/archive/midnight/12.1/venomous-abyss",
+        "one raid tier's bind-on-equip market, from the Gear page's own roll-ups",
+    ),
 ]
 
 PROFILES = {

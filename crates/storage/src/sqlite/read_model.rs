@@ -222,6 +222,20 @@ fn rollup_from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<MarketRollup> {
             .ok_or_else(|| corrupt("rollup kind", kind))?,
         track: track_from(&track),
         scope: Scope::parse(row.get::<i64, _>("realm_id") as u32),
+        // `try_get`, like the card query's series: a narrow select that does
+        // not name this column yields `None`, which is what a page drawing no
+        // depth panel wants.
+        depth: row
+            .try_get::<Option<String>, _>("depth")
+            .ok()
+            .flatten()
+            .and_then(|raw| Depth::decode(&raw)),
+        ladder: row
+            .try_get::<Option<String>, _>("ladder")
+            .ok()
+            .flatten()
+            .map(|raw| Ladder::decode(&raw))
+            .unwrap_or_default(),
         window: Window::parse(&window).ok_or_else(|| corrupt("analysis window", window))?,
         observed_at: row
             .get::<Option<i64>, _>("observed_at")
@@ -638,7 +652,7 @@ impl ReadModelRepository for SqliteReadModel {
                     best_hour = excluded.best_hour, best_weekday = excluded.best_weekday,
                     by_hour = excluded.by_hour, by_weekday = excluded.by_weekday,
                     series = excluded.series, ladder = excluded.ladder,
-                    depth = excluded.depth, heatmap = excluded.heatmap,
+                    depth = excluded.depth, ladder = excluded.ladder, heatmap = excluded.heatmap,
                     stock_rho = excluded.stock_rho, stock_pairs = excluded.stock_pairs,
                     drawdown_percent = excluded.drawdown_percent,
                     rise_percent = excluded.rise_percent,
@@ -799,7 +813,7 @@ impl ReadModelRepository for SqliteReadModel {
                     observed_at, snapshots, realms, cheapest_now, cheapest_realm,
                     dearest_realm_now, dearest_realm, median_realm_now, highest_now,
                     cheapest_ever, highest_ever, listings_now, listings_seen,
-                    level_range, levels, modifiers, series,
+                    level_range, levels, modifiers, series, depth, ladder,
                     p05, p25, median, p75, p95, iqr, mad, buckets, swing,
                     rank, valuation, from_median_percent, anomaly,
                     insufficient, insufficient_have, insufficient_need,
@@ -807,7 +821,7 @@ impl ReadModelRepository for SqliteReadModel {
                     spread_p75, spread_p95, spread_iqr, spread_mad, spread_realms)
                  VALUES (?, ?, ?, ?, 'staging', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                          ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                         ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                  ON CONFLICT(region, item_id, track, realm_id, state) DO UPDATE SET
                     version = excluded.version, kind = excluded.kind,
                     window = excluded.window, observed_at = excluded.observed_at,
@@ -822,6 +836,7 @@ impl ReadModelRepository for SqliteReadModel {
                     listings_now = excluded.listings_now, listings_seen = excluded.listings_seen,
                     level_range = excluded.level_range, levels = excluded.levels,
                     modifiers = excluded.modifiers, series = excluded.series,
+                    depth = excluded.depth, ladder = excluded.ladder,
                     p05 = excluded.p05, p25 = excluded.p25, median = excluded.median,
                     p75 = excluded.p75, p95 = excluded.p95, iqr = excluded.iqr,
                     mad = excluded.mad, buckets = excluded.buckets, swing = excluded.swing,
@@ -860,6 +875,8 @@ impl ReadModelRepository for SqliteReadModel {
             .bind(levels_json(&rollup.levels))
             .bind(modifiers_json(&rollup.modifiers))
             .bind(points_json(&rollup.series))
+            .bind(rollup.depth.as_ref().map(|depth| depth.encode()))
+            .bind(rollup.ladder.encode())
             .bind(rollup.distribution.map(|d| d.p05.get() as i64))
             .bind(rollup.distribution.map(|d| d.p25.get() as i64))
             .bind(rollup.distribution.map(|d| d.median.get() as i64))

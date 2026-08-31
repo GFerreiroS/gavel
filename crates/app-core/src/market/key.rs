@@ -41,8 +41,7 @@ use super::{ItemId, RealmId, Region};
 /// Ordered, because a list of markets has to have one order and "whatever the
 /// database returned" is not one. The order is the encoding's order: kind,
 /// then region, then realm, then item, then the discriminant within it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(tag = "market", rename_all = "snake_case")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MarketKey {
     /// Stackable and region-wide: one price for all of EU.
     Commodity {
@@ -234,5 +233,29 @@ impl FromStr for MarketKey {
             return Err(bad());
         }
         Ok(key)
+    }
+}
+
+// --- serde, as the canonical encoding --------------------------------------
+//
+// Not a derive. §16's Phase 1 makes `c:eu:212265:3` a *contract* -- it is what
+// a read-model row, a cache key and a unit of remote work are filed under, and
+// changing it is a migration. A derived representation would be a second
+// encoding of the same thing, free to drift from the one everything else uses,
+// and the drift would land as a market filed under two names.
+//
+// It is also the only form postcard can carry: an internally tagged enum needs
+// `deserialize_any`, which a non-self-describing format does not have.
+
+impl Serialize for MarketKey {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.to_string())
+    }
+}
+
+impl<'de> Deserialize<'de> for MarketKey {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<MarketKey, D::Error> {
+        let raw = <&str as Deserialize>::deserialize(deserializer)?;
+        raw.parse().map_err(serde::de::Error::custom)
     }
 }

@@ -74,11 +74,19 @@ pub async fn page_handler<E: Ports>(
     let events = env.store().market_events().recent(60).await?;
 
     let admin = AdminView {
+        // Across the catalogues rather than within one. `Catalog::problems`
+        // cannot see these: every catalogue involved is coherent on its own,
+        // and it is the arrangement that is wrong.
+        archive_problems: env.archive().problems(),
         events: events
             .iter()
             .map(|event| crate::views::AdminEvent {
                 id: event.id.clone(),
-                kind: event.kind.as_str(),
+                // `label`, not `as_str`: the machine word is the form's and the
+                // column's, and a reader was being shown `raid_opening` in
+                // both languages. Every label here is already in
+                // `EXTERNAL_STRINGS` and already translated (§13).
+                kind: event.kind.label(),
                 title: event.title.clone(),
                 when: event.starts_at.to_utc_string(),
                 scope: super::item::scope_text(&event.scope, prefs.locale),
@@ -141,7 +149,42 @@ pub async fn page_handler<E: Ports>(
 fn release_view<E: Ports>(env: &E, catalog: &Catalog) -> AdminRelease {
     let state = env.catalog_state(catalog);
     let problems = catalog.problems();
+    // What pressing the button ends. §8 makes activation and archiving one
+    // transaction, and a button that does two things while naming one of them
+    // is a button somebody presses by accident.
+    // Its *season*, not its expansion. Both catalogues of a rollover carry the
+    // same expansion name -- that is what makes the archive show one expansion
+    // -- so "activating this archives Midnight" named the thing they have in
+    // common and told the reader nothing.
+    let archives = env
+        .active_catalog()
+        .filter(|active| active.id != catalog.id)
+        .map(|active| active.season_label());
     AdminRelease {
+        archives,
+        notes: catalog.notes.clone(),
+        patches: {
+            let mut patches: Vec<crate::views::AdminPatch> = catalog
+                .patches
+                .iter()
+                .map(|patch| crate::views::AdminPatch {
+                    patch: patch.patch.clone(),
+                    name: patch.name.clone(),
+                    started: patch.started.clone(),
+                    tiers: catalog
+                        .tiers_of_patch(&patch.patch)
+                        .map(|tier| tier.name.clone())
+                        .collect(),
+                })
+                .collect();
+            patches.sort_by(|a, b| b.started.cmp(&a.started));
+            patches
+        },
+        kinds: ItemKind::ALL
+            .into_iter()
+            .map(|kind| (kind.label(), catalog.of_kind(kind).count()))
+            .filter(|(_, count)| *count > 0)
+            .collect(),
         id: catalog.id.clone(),
         expansion: catalog.expansion.clone(),
         season: catalog.season_label(),

@@ -47,11 +47,13 @@ pub async fn tooltip<E: Ports>(
     Path(item_id): Path<u32>,
 ) -> WebResult<Html<String>> {
     let item = ItemId(item_id);
+    // `public_item`, not the state-blind index: a `draft_ptr` catalogue's
+    // candidate item ids are administrator-only (§8), and this route would
+    // otherwise answer with the next tier's item *names* to whoever guessed
+    // one -- and spend the Battle.net budget fetching them.
     let entry = env
-        .catalogs()
-        .index()
-        .get(&item)
-        .map(|(_, entry)| (*entry).clone())
+        .public_item(item)
+        .map(|(_, entry)| entry.clone())
         .ok_or(AppError::NotFound)?;
 
     let (tooltip, freshness) = service(&env)

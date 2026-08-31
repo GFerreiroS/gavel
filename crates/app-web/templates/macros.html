@@ -311,3 +311,141 @@
   {% endif %}
 </section>
 {% endmacro %}
+
+{#
+  What happened during an interval, as a list.
+
+  Used by both archive pages that have a period -- a patch and a raid tier --
+  so there is one of it rather than two that drift (§7). Deliberately *not*
+  the item page's event table: that one prints a price before and after,
+  because it is about one market. This has no market in it, so it prints what
+  happened and what the event claims to apply to, and nothing it cannot say.
+
+  Only validated, public events reach here; the route asks for those and does
+  not filter afterwards.
+#}
+{# The question is inside rather than a parameter: a string passed into a
+   macro is not one the extractor can see, so it shipped untranslated. Both
+   callers ask the same thing anyway -- a patch and a tier are both periods
+   and "what happened during it" is the question about either. #}
+{% macro timeline(rows) %}
+<article class="panel">
+  <header class="panel-head">
+    <h2>{{ "What happened during it?"|t }}</h2>
+  </header>
+  {% if rows.is_empty() %}
+  <p class="muted">{{ "Nothing recorded in this period."|t }}</p>
+  {% else %}
+  <div class="scroll-x">
+    <table>
+      <thead>
+        <tr>
+          <th>{{ "Event"|t }}</th><th>{{ "When"|t }}</th><th>{{ "Applies to"|t }}</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>
+            {{ row.title }} <small class="muted">{{ row.kind|t }}</small>
+            {% if let Some(notes) = row.notes %}<br><small class="muted">{{ notes }}</small>{% endif %}
+          </td>
+          <td class="muted">{{ row.when }}</td>
+          {# The scope is the honest limit on what this is evidence about: a
+             hotfix in EU is not evidence about a US market. #}
+          <td class="muted">{{ row.scope }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="hint">
+    {{ "Times are UTC. Only events an administrator has validated appear here."|t }}
+  </p>
+  {% endif %}
+</article>
+{% endmacro %}
+
+{#
+  What it costs to sweep a market, from a stored ladder.
+
+  Shared by the item page and the per-realm track page, because it is the same
+  question about the same kind of data and §7 does not allow two of it. The
+  *panel* around it differs -- the item page opens one with `panel_head`, the
+  track page with its own heading -- but everything inside is this.
+
+  It is the one panel whose window is `listed right now`: a ladder is a
+  snapshot, and borrowing "the last 7 days" would be a panel claiming a period
+  it does not describe.
+#}
+{% macro depth_body(depth) %}
+  <div class="verdict-row">
+    <div class="stat">
+      <span class="label">{{ "Cheapest one"|t }}</span>
+      <span class="value">{{ depth.cheapest }}</span>
+      <span class="when muted">{{ "{} units over {} prices"|t|fill(depth.total)|fill(depth.levels) }}</span>
+    </div>
+    {# Only where buying more than one is a question. `Target::of` gives a BoE
+       and a recipe a target of 1 -- "there is no quantity question", as the
+       domain puts it -- and for those the two boxes below read "Buying 1, the
+       cheapest one, +0% impact": arithmetic that is correct and says nothing.
+       A figure that cannot be other than trivial is worse than an absent one,
+       because a reader spends attention finding out. #}
+    {% if depth.target > 1 %}
+    <div class="stat">
+      <span class="label">{{ "Buying {}"|t|fill(depth.target) }}</span>
+      {% if depth.complete %}
+      <span class="value">{{ depth.average_unit }}</span>
+      <span class="when muted">{{ "each · {} in total · last unit at {}"|t|fill(depth.total_cost)|fill(depth.clearing_price) }}</span>
+      {% else %}
+      {# §2: a market that cannot fill the order says so, rather than quoting
+         a price for units that are not there. #}
+      <span class="value muted">{{ "only {} listed"|t|fill(depth.filled) }}</span>
+      <span class="when muted">{{ "not enough on the market"|t }}</span>
+      {% endif %}
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Price impact"|t }}</span>
+      <span class="value {% if depth.impact_percent >= 25 %}bad{% endif %}">+{{ depth.impact_percent }}%</span>
+      <span class="when muted">{{ "dearer than the sticker price"|t }}</span>
+    </div>
+    {% endif %}
+    {% if !depth.sparse %}
+    <div class="stat">
+      <span class="label">{{ "Available near the top"|t }}</span>
+      <span class="value">{% if let Some(within) = depth.within_5 %}{{ within }}{% else %}—{% endif %}</span>
+      <span class="when muted">{% if let Some(within) = depth.within_20 %}{{ "within 5% · {} within 20%"|t|fill(within) }}{% endif %}</span>
+    </div>
+    <div class="stat">
+      {# Supply percentiles: units on the shelf, not hours of history. The
+         third kind of percentile on this page, and the panel names which one
+         it is rather than leaving three to be told apart by context. #}
+      <span class="label">{{ "Half the supply by"|t }}</span>
+      <span class="value">{% if let Some(p50) = depth.p50 %}{{ p50 }}{% else %}—{% endif %}</span>
+      <span class="when muted">{% if let Some(p25) = depth.p25 %}{{ "a quarter of it by {}"|t|fill(p25) }}{% endif %}</span>
+    </div>
+    {% endif %}
+  </div>
+
+  {% if depth.sparse %}
+  {# A BoE with four auctions. The percentiles and the liquidity proxies are
+     absent rather than guessed: with four listings, "the cheapest quarter of
+     supply" is a long way of saying "the second one". #}
+  <p class="hint">
+    {{ "Only a handful of these are listed, so the supply percentiles and liquidity figures are not shown: with this few auctions they would dress a guess up as a measurement."|t }}
+  </p>
+  {% endif %}
+
+  {{ depth.chart|safe }}
+
+  {% if !depth.walls.is_empty() %}
+  <p class="hint">
+    <strong>{{ "Held up by few sellers."|t }}</strong>
+    {% for wall in depth.walls %}{{ "{} units at {} ({}%)"|t|fill(wall.quantity)|fill(wall.price)|fill(wall.share_percent) }}{% if !loop.last %} · {% endif %}{% endfor %}
+  </p>
+  {% endif %}
+
+  <p class="hint">
+    {{ "Everything here describes what is listed at this moment. Nothing on this page knows how much of it sells."|t }}
+  </p>
+{% endmacro %}

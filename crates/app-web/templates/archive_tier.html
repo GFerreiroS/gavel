@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% import "macros.html" as tips %}
+{# One raid tier: its bind-on-equip market, drawn with the Gear page's own card
+   macro from the Gear page's own stored roll-ups.
+
+   No realm picker here. The Auction House index owns region, and the realm
+   belongs to the Gear page and to a piece's own analysis page -- §7 does not
+   let a control migrate, and a second realm choice on a third page is how two
+   pages quietly end up showing two different markets. #}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/wow/auctions">{{ "Auction House"|t }}</a></li>
+    <li><a href="/wow/archive">{{ "Archive"|t }}</a></li>
+    <li><a href="{{ tier.expansion_href }}">{{ tier.expansion }}</a></li>
+    <li><a href="{{ tier.patch_href }}">{{ tier.patch }}</a></li>
+    <li>{{ tier.name }}</li>
+  </ul>
+</nav>
+<h1>{{ tier.name }}</h1>
+<p class="hint">
+  {{ "The raid's bind-on-equip pieces, across every realm in {}. A tier is a bind-on-equip catalogue: these are the items it added, and they stop being collected when the tier is archived."|t|fill(tier.region) }}
+</p>
+
+{% if !tier.current %}
+<div class="alert alert-archived" role="status">
+  <strong>{{ "{} is archived."|t|fill(tier.name) }}</strong>
+  {{ "These prices are kept for reference and are no longer collected or updated."|t }}
+</div>
+{% endif %}
+
+<div class="stat-grid">
+  <div class="stat"><span class="label">{{ "Opened"|t }}</span><span class="value">{{ tier.opened }}</span></div>
+  <div class="stat">
+    <span class="label">{{ "Until"|t }}</span>
+    <span class="value">{% if tier.current %}{{ "live"|t }}{% else %}{{ tier.until }}{% endif %}</span>
+  </div>
+  <div class="stat"><span class="label">{{ "Ran for"|t }}</span><span class="value">{{ "{} days"|t|fill(tier.ran_days) }}</span></div>
+  <div class="stat"><span class="label">{{ "Patch"|t }}</span><span class="value"><a href="{{ tier.patch_href }}">{{ tier.patch }}</a></span></div>
+  {# A slot that is sometimes empty still takes its line (§7): a tier the game
+     gave no season number still has the box, saying so. #}
+  <div class="stat">
+    <span class="label">{{ "Season"|t }}</span>
+    <span class="value">{% if tier.season > 0 %}{{ tier.season }}{% else %}—{% endif %}</span>
+  </div>
+  <div class="stat"><span class="label">{{ "Pieces"|t }}</span><span class="value">{{ tier.pieces }}</span></div>
+</div>
+
+<p class="hint page-meta">
+  {{ "Prices from the snapshot {}. An auction carries bonus ids rather than an item level; the upgrade track is the market, and the levels inside it are shown as a range."|t|fill(tier.observed) }}
+  <a href="{{ tier.gear_href }}">{{ "Price these on one realm"|t }} →</a>
+</p>
+
+{% if tier.groups.is_empty() %}
+<p class="muted">{{ "Nothing tracked yet."|t }}</p>
+{% endif %}
+{% for group in tier.groups %}{% call tips::gear_group(group, tier.region_code, "", false) %}{% endfor %}
+
+{% call tips::timeline(tier.timeline) %}
+{% endblock %}

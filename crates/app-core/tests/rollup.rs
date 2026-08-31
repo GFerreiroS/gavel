@@ -42,7 +42,30 @@ fn sample(realm: u32, variant: &str, price: u64, listings: u32, at: Millis) -> R
 }
 
 fn roll(history: &[RealmSample]) -> Vec<app_core::market::MarketRollup> {
-    materialise::rollups(history, &catalog(), &Window::Days(30))
+    materialise::rollups(history, &Default::default(), &catalog(), &Window::Days(30))
+}
+
+fn roll_with(
+    history: &[RealmSample],
+    ladders: &materialise::RealmLadders,
+) -> Vec<app_core::market::MarketRollup> {
+    materialise::rollups(history, ladders, &catalog(), &Window::Days(30))
+}
+
+/// A shelf: prices and the units at each.
+fn ladder(units: &[(u64, u64)]) -> app_core::market::Ladder {
+    app_core::market::Ladder::of(
+        &units
+            .iter()
+            .flat_map(|(price, quantity)| {
+                (0..*quantity).map(move |_| app_core::market::Listing {
+                    item: GEAR,
+                    unit_price: Copper(*price),
+                    quantity: 1,
+                })
+            })
+            .collect::<Vec<_>>(),
+    )
 }
 
 /// Three realms, three prices. A realm's price is its cheapest copy, and the
@@ -354,4 +377,113 @@ fn a_roll_up_ranks_the_price_it_shows() {
         Some(0),
         "today's price is the median of its own history"
     );
+}
+
+// --- market depth, per realm (Phase 7's loose end) ---------------------------
+
+/// A sweep happens in **one** auction house.
+///
+/// So the region-wide roll-up has no depth at all, and says so by having none
+/// rather than by pooling ninety realms' supply into a figure that prices an
+/// order nobody can fill. This is the one place the per-realm and commodity
+/// read models deliberately differ.
+#[test]
+fn depth_is_a_realms_question_and_not_a_regions() {
+    let history = [
+        sample(1403, "12833,13333", 100, 3, AT),
+        sample(1084, "12834,13333", 300, 2, AT),
+    ];
+    let mut ladders = materialise::RealmLadders::new();
+    ladders.insert(
+        (RealmId(1403), GEAR, "12833,13333".into()),
+        ladder(&[(100, 1), (140, 2)]),
+    );
+    ladders.insert(
+        (RealmId(1084), GEAR, "12834,13333".into()),
+        ladder(&[(300, 1)]),
+    );
+    let rollups = roll_with(&history, &ladders);
+
+    let region = rollups
+        .iter()
+        .find(|r| r.scope == Scope::Region && r.track == Some(Track::Champion))
+        .expect("a region roll-up");
+    assert!(region.depth.is_none(), "a region cannot be swept");
+    assert!(region.ladder.steps.is_empty());
+
+    let realm = rollups
+        .iter()
+        .find(|r| r.scope == Scope::Realm(RealmId(1403)) && r.track == Some(Track::Champion))
+        .expect("a realm roll-up");
+    let depth = realm.depth.as_ref().expect("a realm can be swept");
+    assert_eq!(depth.cheapest, Copper(100));
+    assert_eq!(depth.total, 3, "one at 100 and two at 140");
+    assert_eq!(depth.levels, 2);
+    // And the figures come from the ladder the row stores, so the drawn curve
+    // and the printed numbers cannot be two different ladders.
+    assert_eq!(realm.ladder.total(), depth.total);
+    assert_eq!(realm.ladder.cheapest(), Some(depth.cheapest));
+}
+
+/// A track is sold as several variants -- the same piece with a socket, at a
+/// rank no sync has resolved -- and §8 pools those rather than splitting them
+/// into markets nobody could price. They are one shelf to a buyer.
+///
+/// The variants of a *different* track are a different market, and must not
+/// leak into it.
+#[test]
+fn a_tracks_variants_are_one_shelf_and_another_tracks_are_not() {
+    let history = [
+        sample(1403, "12833,13333", 100, 1, AT),
+        sample(1403, "12841,13333", 120, 1, AT),
+        sample(1403, "12825,13332", 40, 1, AT),
+    ];
+    let mut ladders = materialise::RealmLadders::new();
+    // Two variants of Champion, on one realm.
+    ladders.insert(
+        (RealmId(1403), GEAR, "12833,13333".into()),
+        ladder(&[(100, 2)]),
+    );
+    ladders.insert(
+        (RealmId(1403), GEAR, "12841,13333".into()),
+        ladder(&[(120, 3)]),
+    );
+    // And one of Veteran, which is a different market.
+    ladders.insert(
+        (RealmId(1403), GEAR, "12825,13332".into()),
+        ladder(&[(40, 9)]),
+    );
+    let rollups = roll_with(&history, &ladders);
+
+    let champion = rollups
+        .iter()
+        .find(|r| r.scope == Scope::Realm(RealmId(1403)) && r.track == Some(Track::Champion))
+        .and_then(|r| r.depth.as_ref())
+        .expect("Champion on this realm");
+    assert_eq!(
+        champion.total, 5,
+        "both Champion variants pooled, and only those"
+    );
+    assert_eq!(champion.cheapest, Copper(100));
+
+    let veteran = rollups
+        .iter()
+        .find(|r| r.scope == Scope::Realm(RealmId(1403)) && r.track == Some(Track::Veteran))
+        .and_then(|r| r.depth.as_ref())
+        .expect("Veteran on this realm");
+    assert_eq!(veteran.total, 9);
+    assert_eq!(veteran.cheapest, Copper(40));
+}
+
+/// An archive gathered before ladders were collected has none and can never be
+/// given any. The roll-up says so by being absent rather than by being zero.
+#[test]
+fn a_market_with_no_ladder_has_no_depth_rather_than_an_empty_one() {
+    let history = [sample(1403, "12833,13333", 100, 3, AT)];
+    let realm = roll(&history)
+        .into_iter()
+        .find(|r| r.scope == Scope::Realm(RealmId(1403)))
+        .expect("a realm roll-up");
+    assert!(realm.depth.is_none());
+    assert!(realm.ladder.steps.is_empty());
 }

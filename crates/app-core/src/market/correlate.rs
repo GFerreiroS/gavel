@@ -35,6 +35,7 @@
 //! not. It is the same argument §5.4 makes for IQR over range, applied to a
 //! relationship instead of to a spread.
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use cluster_core::Millis;
@@ -53,7 +54,7 @@ use super::engine::Buckets;
 pub const MIN_PAIRS: usize = 20;
 
 /// How strongly two series move together, in rank.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Association {
     /// Spearman's rho, scaled to -100..=100 so it stores and renders as an
     /// integer. Negative means one rises as the other falls.
@@ -63,7 +64,7 @@ pub struct Association {
 }
 
 /// What an association is strong enough to be worth saying.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Strength {
     /// Below the point where the direction means anything.
     None,
@@ -168,7 +169,7 @@ fn ranks(values: &[u64]) -> Vec<f64> {
 /// that fell then rose has a rise; the extremes alone cannot tell those apart,
 /// and "how far did this drop from its own peak" is the question somebody
 /// holding stock is asking.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Swings {
     /// Largest fall from a running peak, as a percentage of that peak.
     pub drawdown_percent: u32,
@@ -216,7 +217,7 @@ impl Swings {
 ///
 /// `None` below [`MIN_PAIRS`] changes: a volatility from four observations is
 /// a statement about four observations.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Stability {
     /// Median absolute change between consecutive observations, as a
     /// percentage of the earlier one.
@@ -263,7 +264,7 @@ pub const MIN_HEATMAP_CELLS: usize = 56;
 /// and "cheapest on Tuesday" do not compose into "cheapest at 04:00 on
 /// Tuesday" -- the whole point of a weekly market rhythm is that the hour and
 /// the day interact, because a reset happens at one hour on one day.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Heatmap {
     /// 168 cells, weekday-major: `cells[weekday * 24 + hour]`. `None` where
     /// that hour of the week was never observed -- a hole, drawn as a hole.
@@ -386,7 +387,7 @@ impl Heatmap {
 /// that the event moved the price -- the wording is `observed after`, and
 /// [`Self::is_supported`] is what stops a comparison from four observations
 /// being rendered as one from four hundred.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BeforeAfter {
     pub before_median: Copper,
     pub after_median: Copper,

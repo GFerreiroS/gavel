@@ -306,6 +306,35 @@ pub(crate) fn query_value(raw: &str) -> String {
     out
 }
 
+/// One name per auction house, and the whole list beside it.
+///
+/// The joined name is unreadable and, worse, ragged: "Die Arguswacht, Die
+/// ewige Wacht, Die Todeskrallen, Das Syndikat, …" wraps to three lines while
+/// "Howling Fjord" takes one, and the card next to it no longer lines up.
+/// Cards sit in a grid and their rows have to agree (§7). So: one realm names
+/// the market -- any of them does, they share it -- and the rest are in the
+/// line's tooltip.
+///
+/// Shared with the archive's tier page, which draws the same cards. §7: a page
+/// that needs what the card does adds to the card rather than forking it, and
+/// that goes for what feeds the card too.
+pub(crate) fn realm_names(realms: &[Realm]) -> BTreeMap<(Region, RealmId), (String, String)> {
+    realms
+        .iter()
+        .map(|r| {
+            let mut members = r.members.clone();
+            members.sort();
+            let short = members.first().cloned().unwrap_or_else(|| r.name.clone());
+            let full = if members.len() > 1 {
+                members.join(", ")
+            } else {
+                String::new()
+            };
+            ((r.region, r.id), (short, full))
+        })
+        .collect()
+}
+
 /// How much of a page to build.
 ///
 /// The shell of a category page -- its title, its controls, the realm
@@ -354,28 +383,7 @@ async fn build<E: Ports>(
         .into_iter()
         .filter(|r| r.region == prefs.region)
         .collect();
-    // One name per auction house, and the whole list beside it.
-    //
-    // The joined name is unreadable and, worse, ragged: "Die Arguswacht, Die
-    // ewige Wacht, Die Todeskrallen, Das Syndikat, …" wraps to three lines
-    // while "Howling Fjord" takes one, and the card next to it no longer lines
-    // up. Cards sit in a grid and their rows have to agree (§7). So: one realm
-    // names the market -- any of them does, they share it -- and the rest are
-    // in the line's tooltip.
-    let named: BTreeMap<(Region, RealmId), (String, String)> = realms
-        .iter()
-        .map(|r| {
-            let mut members = r.members.clone();
-            members.sort();
-            let short = members.first().cloned().unwrap_or_else(|| r.name.clone());
-            let full = if members.len() > 1 {
-                members.join(", ")
-            } else {
-                String::new()
-            };
-            ((r.region, r.id), (short, full))
-        })
-        .collect();
+    let named = realm_names(&realms);
 
     // Resolve the slug against the realms we collect in this region. A slug
     // may name any one of the realms sharing an auction house -- "sargeras"
@@ -638,7 +646,7 @@ pub(crate) fn realm_matches(realm: &Realm, want: &str) -> bool {
         .any(|member| slug(member).as_deref() == Some(want))
 }
 
-fn card(
+pub(crate) fn card(
     entry: &CatalogItem,
     by_item: &HashMap<ItemId, Vec<&MarketRollup>>,
     named: &BTreeMap<(Region, RealmId), (String, String)>,
@@ -815,6 +823,8 @@ mod tests {
 
     fn rollup(track: Option<Track>) -> MarketRollup {
         MarketRollup {
+            depth: None,
+            ladder: Default::default(),
             region: Region::Eu,
             item: ItemId(271_438),
             kind: ItemKind::Boe,

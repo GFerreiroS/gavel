@@ -94,10 +94,16 @@ async fn render<E: Ports>(
     headers: HeaderMap,
 ) -> WebResult<Html<String>> {
     let item = ItemId(item_id);
-    let Some(catalog) = env.active_catalog() else {
-        return Err(app_core::AppError::NotFound.into());
-    };
-    let Some(entry) = catalog.find(item).filter(|e| !e.kind.is_commodity()) else {
+    // Every catalogue a visitor may see, not only the one being collected.
+    // An archived tier's gear has a price history and a track ladder for ever;
+    // resolving against the active catalogue alone made the whole of last
+    // season 404 the moment this one was activated, which is the opposite of
+    // what an archive is (§16, Phase 9). The gate still refuses a `draft_ptr`
+    // catalogue's candidate items.
+    let Some((catalog, entry)) = env
+        .public_item(item)
+        .filter(|(_, entry)| !entry.kind.is_commodity())
+    else {
         return Err(app_core::AppError::NotFound.into());
     };
 
@@ -234,7 +240,44 @@ async fn build<E: Ports>(
     // would be a five-number summary of one number.
     let spread = selected.is_none().then_some(stats.realm_spread).flatten();
 
+    // What a sweep costs here, from the stored roll-up. Both the figures and
+    // the curve come from the same stored ladder, merged once on the write
+    // path -- §15's read path, and the reason this page does no merging of its
+    // own. `None` at region scope, where the question does not apply.
+    let depth = stats.depth.as_ref().map(|depth| crate::views::DepthView {
+        levels: depth.levels,
+        total: depth.total,
+        cheapest: depth.cheapest.to_string(),
+        sparse: depth.sparse,
+        p25: depth.p25.map(|p| p.to_string()),
+        p50: depth.p50.map(|p| p.to_string()),
+        within_5: depth.within_5,
+        within_20: depth.within_20,
+        target: depth.target,
+        filled: depth.fill.filled,
+        complete: depth.fill.complete,
+        total_cost: depth.fill.total_cost.to_string(),
+        average_unit: depth.fill.average_unit.to_string(),
+        clearing_price: depth.fill.clearing_price.to_string(),
+        impact_percent: depth.fill.impact_percent,
+        walls: depth
+            .walls
+            .iter()
+            .map(|wall| crate::views::WallView {
+                price: wall.price.to_string(),
+                quantity: wall.quantity,
+                share_percent: wall.share_percent,
+            })
+            .collect(),
+        chart: chart::depth_chart(
+            &stats.ladder,
+            depth.target,
+            crate::i18n::translate(prefs.locale, "Not enough of the ladder to draw a curve."),
+        ),
+    });
+
     GearStatsView {
+        depth,
         item_id: item.get(),
         name: tooltip
             .as_ref()

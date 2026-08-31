@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{# One expansion's patches, newest first. Each card lists the raid tiers that
+   patch opened -- or says it opened none, which is a fact rather than an
+   omission: 12.0.5 opened no raid, and a card that quietly dropped the row
+   would be a grid that does not line up (§7). #}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/wow/auctions">{{ "Auction House"|t }}</a></li>
+    <li><a href="/wow/archive">{{ "Archive"|t }}</a></li>
+    <li>{{ expansion.name }}</li>
+  </ul>
+</nav>
+<h1>{{ expansion.name }}</h1>
+<p class="hint">{{ expansion.span }}</p>
+
+{% if !expansion.collecting %}
+<div class="alert alert-archived" role="status">
+  <strong>{{ "{} is archived."|t|fill(expansion.name) }}</strong>
+  {{ "These prices are kept for reference and are no longer collected or updated."|t }}
+</div>
+{% endif %}
+
+<div class="stat-grid">
+  <div class="stat"><span class="label">{{ "Patches"|t }}</span><span class="value">{{ expansion.patches.len() }}</span></div>
+  <div class="stat"><span class="label">{{ "Raid tiers"|t }}</span><span class="value">{{ expansion.tiers_total }}</span></div>
+  <div class="stat"><span class="label">{{ "Prices"|t }}</span><span class="value"><a href="{{ expansion.markets_href }}">{{ "Open"|t }} →</a></span></div>
+</div>
+
+{% if expansion.patches.is_empty() %}
+<p class="muted">{{ "No patch boundaries recorded for this expansion."|t }}</p>
+{% else %}
+<div class="card-grid">
+  {% for patch in expansion.patches %}
+  <article class="item-card">
+    <header>
+      <div class="item-head-text">
+        <h3>{{ patch.patch }}</h3>
+        <span class="sub">{{ patch.name }}</span>
+      </div>
+    </header>
+    <div class="rank-cols">
+      <div class="rank-col">
+        <span class="rank-label">{{ "Shipped"|t }}</span>
+        <span class="now">{{ patch.started }}</span>
+      </div>
+      <div class="rank-col">
+        <span class="rank-label">{{ "Until"|t }}</span>
+        <span class="now">{% if patch.current %}<span class="tag ok">{{ "live"|t }}</span>{% else %}{{ patch.until }}{% endif %}</span>
+      </div>
+      <div class="rank-col">
+        <span class="rank-label">{{ "Ran for"|t }}</span>
+        <span class="now">{{ "{} days"|t|fill(patch.ran_days) }}</span>
+      </div>
+    </div>
+    {# The tier row is rendered whether or not there is a tier in it. A line
+       present on one card and absent on the next is what knocks a grid of
+       cards out of step (§7). #}
+    <p class="card-foot">
+      <span class="rank-label">{{ "Raid tiers"|t }}</span><br>
+      {% if patch.tiers.is_empty() %}
+      <span class="muted">{{ "This patch opened no raid."|t }}</span>
+      {% else %}
+      {% for tier in patch.tiers %}
+      <a href="{{ tier.href }}">{{ tier.name }}</a>{% if tier.season > 0 %} <span class="muted">{{ "Season {}"|t|fill(tier.season) }}</span>{% endif %}{% if !loop.last %} · {% endif %}
+      {% endfor %}
+      {% endif %}
+    </p>
+    <a class="rank-link outline secondary" role="button" href="{{ patch.href }}">{{ "Open"|t }} →</a>
+  </article>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

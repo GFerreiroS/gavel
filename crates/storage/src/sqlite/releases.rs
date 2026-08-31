@@ -60,8 +60,53 @@ impl ReleaseRepository for SqliteReleases {
 
     async fn seed(&self, defaults: &[(String, CatalogStatus)], now: Millis) -> RepoResult<u64> {
         let mut tx = self.pool.begin().await.map_err(map_err)?;
+
+        // Is something already collecting? Then a newcomer that ships as
+        // `active` waits to be activated rather than seeding as a second one.
+        //
+        // **This is what stopped the server booting**, and only running a
+        // rollover against a real database found it: a new catalogue shipped
+        // as active on an instance that already had one hit the partial unique
+        // index, `seed` returned the conflict, and startup failed. The index
+        // was right -- two active catalogues must be impossible -- and the
+        // caller was wrong to be asking for one.
+        //
+        // Refusing to start is the harshest failure there is, and it is the
+        // wrong one here: nothing is broken, a person simply has not chosen
+        // yet. §8 makes activation deliberate for exactly this reason, so the
+        // shipped `active` is the default for an *empty* database and a
+        // `draft_ptr` on any other. The administrator then sees it at `/admin`
+        // and presses the button, which archives the one it replaces in the
+        // same transaction.
+        let held: Option<(String,)> =
+            sqlx::query_as("SELECT catalog_id FROM catalog_releases WHERE state = 'active'")
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(map_err)?;
+        // The same question inside the loop: a file shipping two active
+        // catalogues would otherwise seed both on an empty database and hit
+        // the index anyway. A test asserts the file never does, and this is
+        // what makes the test's failure a reviewable state rather than an
+        // instance that will not start.
+        let mut collecting: Option<String> = held.map(|(id,)| id);
+
         let mut written = 0u64;
-        for (catalog, state) in defaults {
+        for (catalog, shipped) in defaults {
+            let state = match (shipped.is_active(), &collecting) {
+                (true, Some(held)) if held != catalog => {
+                    tracing::info!(
+                        catalog = %catalog,
+                        collecting = %held,
+                        "a new catalogue ships as active while another one is collecting: \
+                         seeding it as a PTR draft, for an administrator to activate"
+                    );
+                    CatalogStatus::DraftPtr
+                }
+                _ => *shipped,
+            };
+            if state.is_active() {
+                collecting = Some(catalog.clone());
+            }
             // `DO NOTHING`, not `DO UPDATE`. A state a person set outranks the
             // one the binary shipped with, or an upgrade would silently undo
             // an activation -- and the whole point of moving this out of the

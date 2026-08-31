@@ -141,11 +141,16 @@ pub async fn analysis<E: Ports>(
     .await
 }
 
+/// Which item this is, and which catalogue describes it.
+///
+/// `Ports::public_item` rather than `CatalogSet::index`: the state-blind index
+/// reaches into a `draft_ptr` catalogue, whose item list is candidate research
+/// nobody has published. An item page built on it would answer with the next
+/// tier's contents to whoever guessed an id -- §8's "administrator-only",
+/// broken one level below the catalogue gate that was guarding it.
 fn lookup<E: Ports>(env: &E, item: ItemId) -> Result<(Catalog, CatalogItem), AppError> {
-    env.catalogs()
-        .index()
-        .get(&item)
-        .map(|(c, i)| ((*c).clone(), (*i).clone()))
+    env.public_item(item)
+        .map(|(c, i)| (c.clone(), i.clone()))
         .ok_or(AppError::NotFound)
 }
 
@@ -649,7 +654,11 @@ async fn events_around<E: Ports>(
         let split =
             app_core::market::BeforeAfter::of(observations.iter().copied(), event.starts_at, span);
         rows.push(crate::views::EventRow {
-            kind: event.kind.as_str(),
+            // `label`, not `as_str`: the machine word is the form's and the
+            // column's, and a reader was being shown `raid_opening` in
+            // both languages. Every label here is already in
+            // `EXTERNAL_STRINGS` and already translated (§13).
+            kind: event.kind.label(),
             title: event.title.clone(),
             when: event.starts_at.to_utc_string(),
             scope: scope_text(&event.scope, locale),

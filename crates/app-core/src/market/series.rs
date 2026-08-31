@@ -31,6 +31,7 @@
 //! would invent it in the most misleading possible place.
 
 use cluster_core::Millis;
+use serde::{Deserialize, Serialize};
 
 use super::Copper;
 use super::engine::Buckets;
@@ -55,7 +56,7 @@ pub const RESOLUTION: usize = 96;
 pub const ROLLING_SLOTS: usize = 12;
 
 /// One slot of a chart series.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ChartPoint {
     pub at: Millis,
     /// The observation in this slot. Meaningless when `observed` is false.
@@ -82,7 +83,7 @@ pub struct ChartPoint {
 /// stored string. The alternative was two more columns and a caller that had
 /// to remember to pass them; a series that cannot say what interval it is of
 /// is a series waiting to be drawn against the wrong axis.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ChartSeries {
     pub from: Millis,
     pub until: Millis,
@@ -90,7 +91,7 @@ pub struct ChartSeries {
 }
 
 /// An observation going in: what the reducer needs and nothing more.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Observation {
     pub at: Millis,
     pub price: Copper,
@@ -304,7 +305,7 @@ pub const BINS: usize = 21;
 ///
 /// Over the same equal-duration buckets every other historical statistic uses,
 /// so a bar here counts hours and not observations.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Histogram {
     /// Cheapest and dearest bucket price, which are the axis.
     pub lo: Copper,

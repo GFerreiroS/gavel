@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% import "macros.html" as tips %}
+{# One patch. Everything below the heading is either the catalogue's own
+   metadata, a validated event, or the consumables page's own patch fragment
+   narrowed to this column -- no statistic is calculated here. #}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/wow/auctions">{{ "Auction House"|t }}</a></li>
+    <li><a href="/wow/archive">{{ "Archive"|t }}</a></li>
+    <li><a href="{{ patch.expansion_href }}">{{ patch.expansion }}</a></li>
+    <li>{{ patch.patch }}</li>
+  </ul>
+</nav>
+<h1>{{ patch.patch }} — {{ patch.name }}</h1>
+<p class="hint">
+  {{ "What the market did while this patch was live, in {}. A patch and a raid tier are separate: a patch can open no raid, and a raid can open a week after the patch that contains it."|t|fill(patch.region) }}
+</p>
+
+<div class="stat-grid">
+  <div class="stat"><span class="label">{{ "Shipped"|t }}</span><span class="value">{{ patch.started }}</span></div>
+  <div class="stat">
+    <span class="label">{{ "Until"|t }}</span>
+    <span class="value">{% if patch.current %}{{ "live"|t }}{% else %}{{ patch.until }}{% endif %}</span>
+  </div>
+  <div class="stat"><span class="label">{{ "Ran for"|t }}</span><span class="value">{{ "{} days"|t|fill(patch.ran_days) }}</span></div>
+  <div class="stat"><span class="label">{{ "Raid tiers"|t }}</span><span class="value">{{ patch.tiers.len() }}</span></div>
+</div>
+
+{# The tiers this patch opened. Always rendered, because "it opened none" is
+   something a reader needs told rather than left to infer from an absence. #}
+<article class="panel">
+  <header class="panel-head">
+    <h2>{{ "What did it open?"|t }}</h2>
+  </header>
+  {% if patch.tiers.is_empty() %}
+  <p class="muted">{{ "This patch opened no raid."|t }}</p>
+  {% else %}
+  <div class="card-grid">
+    {% for tier in patch.tiers %}
+    <article class="item-card">
+      <header>
+        <div class="item-head-text">
+          <h3>{{ tier.name }}</h3>
+          <span class="sub">{% if tier.season > 0 %}{{ "Season {}"|t|fill(tier.season) }}{% else %}{{ "Raid tier"|t }}{% endif %}</span>
+        </div>
+      </header>
+      <div class="rank-cols">
+        <div class="rank-col">
+          <span class="rank-label">{{ "Opened"|t }}</span>
+          <span class="now">{{ tier.opened }}</span>
+        </div>
+        <div class="rank-col">
+          <span class="rank-label">{{ "Status"|t }}</span>
+          <span class="now">
+            {% if tier.current %}<span class="tag ok">{{ "live"|t }}</span>
+            {% else %}<span class="tag">{{ "archived"|t }}</span>{% endif %}
+          </span>
+        </div>
+      </div>
+      <a class="rank-link outline secondary" role="button" href="{{ tier.href }}">{{ "Open"|t }} →</a>
+    </article>
+    {% endfor %}
+  </div>
+  {% endif %}
+</article>
+
+{% call tips::timeline(patch.timeline) %}
+
+{# The patch's own column of the price table. The same fragment the consumables
+   page defers to, narrowed to one patch -- fetched when the reader scrolls to
+   it, because it is hundreds of rows and most visits never reach it. #}
+<div id="patches"
+     hx-get="{{ patch.table_href }}"
+     hx-trigger="revealed"
+     hx-swap="outerHTML">
+  <h2>{{ "Prices during {}"|t|fill(patch.patch) }}</h2>
+  <p class="hint" aria-busy="true">{{ "Loading the patch history…"|t }}</p>
+  {# A real URL that answers on its own, for a reader with scripting off. #}
+  <noscript>
+    <p><a href="{{ patch.table_href }}">{{ "Show the patch history"|t }}</a></p>
+  </noscript>
+</div>
+{% endblock %}

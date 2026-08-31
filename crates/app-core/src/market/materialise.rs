@@ -13,6 +13,7 @@
 //! `crates/app-core/tests/characterization.rs` mean something: if a number
 //! moves in this phase, it moved by accident.
 
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 use cluster_core::Millis;
@@ -65,7 +66,7 @@ pub const CHART_POINTS: usize = 120;
 /// card needs beyond its window comparison. One row, so a page that draws six
 /// hundred cards reads six hundred rows rather than reducing six hundred
 /// histories.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MarketState {
     pub key: MarketKey,
     /// The newest observation. `None` for a market that has never been seen,
@@ -188,7 +189,7 @@ impl MarketState {
 /// [`MarketState`] for each of them drags 515 stored chart series across --
 /// megabytes of JSON to render a number and a quantity. Half the remaining
 /// database time on a card page was that.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MarketSummary {
     pub key: MarketKey,
     /// When this market was last seen. Freshness is a fact the page is
@@ -210,7 +211,7 @@ impl MarketSummary {
 }
 
 /// One market over one interval.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MarketWindow {
     pub key: MarketKey,
     pub window: Window,
@@ -270,7 +271,7 @@ impl MarketWindow {
 }
 
 /// Everything one market's history produces.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Materialised {
     pub state: MarketState,
     pub windows: Vec<MarketWindow>,
@@ -571,7 +572,7 @@ use super::realm::{RealmId, RealmSample};
 /// a breakdown of one market rather than several. Levels the catalogue cannot
 /// name are left out rather than shown as zero: the sync script resolves them,
 /// and a level of 0 is a lie.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LevelStat {
     pub item_level: u16,
     /// "Champion 2/6", the catalogue's own wording.
@@ -584,7 +585,7 @@ pub struct LevelStat {
 }
 
 /// How common one socket or tertiary is.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModifierStat {
     pub name: String,
     /// Listings carrying it in the newest snapshot.
@@ -598,7 +599,7 @@ pub struct ModifierStat {
 /// A sentinel rather than a nullable realm: this is half a primary key, and
 /// SQLite treats NULLs in a unique index as distinct, which would let the same
 /// region's roll-up be written twice.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Scope {
     /// Every connected realm in the region.
     Region,
@@ -625,7 +626,7 @@ impl Scope {
 }
 
 /// A region's -- or one realm's -- worth of one per-realm market.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MarketRollup {
     pub region: Region,
     pub item: ItemId,
@@ -692,6 +693,20 @@ pub struct MarketRollup {
     /// share is a share of.
     pub listings_seen: u32,
 
+    /// What it costs to sweep this market, on **one realm**.
+    ///
+    /// `None` at [`Scope::Region`], and that is a statement rather than a gap:
+    /// a sweep happens in one auction house, so pooling ninety realms' supply
+    /// would quote a price for an order nobody can fill. `None` on a realm too
+    /// until ladder collection has run for it -- an archive gathered before
+    /// Phase 7 has no ladders and cannot be given any.
+    pub depth: Option<Depth>,
+    /// The ladder [`Self::depth`] was taken from, merged across the track's
+    /// variants on one realm. Empty at region scope and wherever no ladder has
+    /// been collected. Stored so the drawn curve and the printed figures are
+    /// the same ladder rather than two merges that agree today.
+    pub ladder: Ladder,
+
     /// "279-285", or empty where no level resolves.
     pub level_range: String,
     pub levels: Vec<LevelStat>,
@@ -729,6 +744,8 @@ impl MarketRollup {
             item,
             kind,
             track,
+            depth: None,
+            ladder: Ladder::default(),
             scope: Scope::Region,
             window: Window::All,
             observed_at: None,
@@ -768,7 +785,14 @@ impl MarketRollup {
 /// history, for every (item, track) present. `window` names the interval the
 /// caller already narrowed `history` to; nothing here filters by time, because
 /// the store did it with an index.
-pub fn rollups(history: &[RealmSample], catalog: &Catalog, window: &Window) -> Vec<MarketRollup> {
+pub type RealmLadders = BTreeMap<(RealmId, ItemId, String), Ladder>;
+
+pub fn rollups(
+    history: &[RealmSample],
+    ladders: &RealmLadders,
+    catalog: &Catalog,
+    window: &Window,
+) -> Vec<MarketRollup> {
     let mut grouped: BTreeMap<(Region, ItemId, ItemKind, Option<Track>), Vec<&RealmSample>> =
         BTreeMap::new();
     for sample in history {
@@ -816,6 +840,7 @@ pub fn rollups(history: &[RealmSample], catalog: &Catalog, window: &Window) -> V
             Scope::Region,
             &samples,
             &newest,
+            ladders,
             catalog,
             window,
         ));
@@ -837,6 +862,7 @@ pub fn rollups(history: &[RealmSample], catalog: &Catalog, window: &Window) -> V
                 Scope::Realm(realm),
                 &mine,
                 &newest,
+                ladders,
                 catalog,
                 window,
             ));
@@ -854,9 +880,32 @@ fn roll(
     scope: Scope,
     samples: &[&RealmSample],
     newest: &BTreeMap<(Region, ItemId, RealmId), Millis>,
+    all_ladders: &RealmLadders,
     catalog: &Catalog,
     window: &Window,
 ) -> MarketRollup {
+    // The ladders this market is made of: one realm's, for the variants that
+    // belong to this track. A recipe has no track, so every variant of it is
+    // the same market.
+    let ladders: Vec<&Ladder> = match scope {
+        Scope::Region => Vec::new(),
+        Scope::Realm(realm) => all_ladders
+            .iter()
+            .filter(|((r, i, variant), _)| {
+                *r == realm
+                    && *i == item
+                    && (kind == ItemKind::Recipe || catalog.track_in(variant) == track)
+            })
+            .map(|(_, ladder)| ladder)
+            .collect(),
+    };
+    let target = catalog
+        .find(item)
+        .map(|entry| entry.target())
+        .unwrap_or_else(|| Target::of(kind));
+    // Merged once, here, so the figures and the drawn curve are the same
+    // ladder. Empty at region scope, which is what makes `depth` `None` there.
+    let shelf = Ladder::merged(ladders);
     // "Now" is per realm, because realms are generated on their own schedules
     // and the newest observation overall would silently drop every realm that
     // had not refreshed yet. It is per realm across *every* track of the item,
@@ -924,6 +973,14 @@ fn roll(
         item,
         kind,
         track,
+        // Only on a realm. `roll` is called once for the region and once per
+        // realm, and the region's answer to "what does a sweep cost" is that
+        // the question does not apply there.
+        depth: match scope {
+            Scope::Region => None,
+            Scope::Realm(_) => Depth::of(&shelf, target),
+        },
+        ladder: shelf,
         scope,
         window: window.clone(),
         observed_at: samples.iter().map(|s| s.observed_at).max(),

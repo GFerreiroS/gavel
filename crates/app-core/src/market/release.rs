@@ -128,3 +128,71 @@ pub fn public_all<'a>(catalogs: &'a CatalogSet, states: &ReleaseStates) -> Vec<&
 pub fn all<'a>(catalogs: &'a CatalogSet, states: &ReleaseStates) -> Vec<&'a Catalog> {
     catalogs.ordered_by(|c| state_of(states, c))
 }
+
+/// Which catalogue owns an item, over the catalogues a visitor may see.
+///
+/// **The active one wins.** An item that trades across a rollover -- every
+/// flask does -- is listed by both the archived catalogue and the one that
+/// replaced it, and the live definition is the one a page should read: its
+/// patch list is the longer one, so its `Window::Tier` bounds are the ones
+/// that close at the right moment (`market::archive`). After that, the newest,
+/// which is what `public_all` already orders by.
+pub fn public_owners<'a>(
+    catalogs: &'a CatalogSet,
+    states: &ReleaseStates,
+) -> BTreeMap<super::ItemId, &'a Catalog> {
+    let mut owners = BTreeMap::new();
+    // Reversed, so the *first* catalogue in display order is written last and
+    // therefore wins. Display order is active first, then newest.
+    for catalog in public_all(catalogs, states).into_iter().rev() {
+        for item in &catalog.items {
+            for id in item.item_ids() {
+                owners.insert(id, catalog);
+            }
+        }
+    }
+    owners
+}
+
+/// One item, and the public catalogue that describes it.
+///
+/// **This is the gate the item pages hang on.** `CatalogSet::index` is the
+/// state-blind version and reaches into a `draft_ptr` catalogue, whose item
+/// list is candidate research an administrator has not published: §8 makes it
+/// administrator-only, and a page rendered from it would announce which items
+/// the next tier is expected to carry.
+pub fn public_item<'a>(
+    catalogs: &'a CatalogSet,
+    states: &ReleaseStates,
+    item: super::ItemId,
+) -> Option<(&'a Catalog, &'a super::CatalogItem)> {
+    public_all(catalogs, states)
+        .into_iter()
+        .find_map(|catalog| catalog.find(item).map(|entry| (catalog, entry)))
+}
+
+/// Every item a visitor may see, and the catalogue describing it.
+///
+/// [`public_item`] for a whole page's worth at once. Same gate, same
+/// active-first preference as [`public_owners`].
+pub fn public_index<'a>(
+    catalogs: &'a CatalogSet,
+    states: &ReleaseStates,
+) -> BTreeMap<super::ItemId, (&'a Catalog, &'a super::CatalogItem)> {
+    let mut index = BTreeMap::new();
+    for catalog in public_all(catalogs, states).into_iter().rev() {
+        for item in &catalog.items {
+            for id in item.item_ids() {
+                index.insert(id, (catalog, item));
+            }
+        }
+    }
+    index
+}
+
+/// The public archive hierarchy: expansion -> patch -> raid tier.
+pub fn archive(catalogs: &CatalogSet, states: &ReleaseStates) -> super::Archive {
+    super::Archive::of(public_all(catalogs, states), |c| {
+        state_of(states, c).is_collected()
+    })
+}

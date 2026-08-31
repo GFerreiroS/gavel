@@ -28,6 +28,7 @@
 //! observations and is named [`Swing`] here rather than volatility. IQR and MAD
 //! are what a stable measure of spread looks like.
 
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 use cluster_core::Millis;
@@ -47,7 +48,7 @@ pub const BUCKET_MS: u64 = 60 * 60 * 1000;
 ///
 /// It is also what stops a market that was collected twice in one hour from
 /// counting twice, which raw observations would.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Buckets {
     prices: Vec<u64>,
 }
@@ -146,7 +147,7 @@ impl Buckets {
 }
 
 /// The five-number summary and two robust spreads.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Distribution {
     pub p05: Copper,
     pub p25: Copper,
@@ -196,7 +197,7 @@ impl Distribution {
 /// category do not secretly shift them. What they decide is whether the result
 /// is *reliable*, which is [`Evidence`] below and is shown beside the label
 /// rather than folded into it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Valuation {
     VeryCheap,
     Cheap,
@@ -253,7 +254,7 @@ impl Valuation {
 
 /// Whether a value is far from the body of the distribution, which is a
 /// different question from where it ranks in it (§5.4).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Anomaly {
     /// Inside Tukey's inner fences.
     Ordinary,
@@ -308,7 +309,7 @@ impl Anomaly {
 /// **Swing** if retained." It is retained, under that name, because it is
 /// legible in a way a MAD is not -- and it sits beside the robust measures
 /// rather than instead of them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Swing(pub u32);
 
 impl Swing {
@@ -331,7 +332,7 @@ impl Swing {
 /// fails. Show `Not enough history` and the reason instead." The reason is a
 /// value rather than a sentence so the page can translate it and a test can
 /// assert it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Insufficient {
     /// Fewer buckets than the statistic needs.
     NotEnoughHistory { have: u32, need: u32 },
@@ -440,7 +441,7 @@ impl Gates {
 /// never shown alone", so everything it must be shown with is in the same
 /// value -- rank, distance from the median, and the evidence that decided
 /// whether there is a band at all.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Position {
     /// Percentage of buckets at or below the current price. `None` when there
     /// is not even enough for a median.
@@ -529,7 +530,7 @@ pub const SPARK_SLOTS: usize = 16;
 /// A slot nothing was observed in is [`None`] rather than an interpolation --
 /// §2's rule that unavailable data is never invented, applied to a line that
 /// would otherwise be drawn straight through the gap.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Spark {
     /// One value per slot, oldest first.
     pub slots: Vec<Option<Copper>>,

@@ -101,6 +101,7 @@ dependencies = [
  "argon2",
  "cluster-core",
  "getrandom 0.3.4",
+ "postcard",
  "serde",
  "serde_json",
  "thiserror",
@@ -2152,6 +2153,7 @@ version = "0.1.0"
 dependencies = [
  "app-core",
  "cluster-core",
+ "postcard",
  "serde",
  "serde_json",
  "sqlx",

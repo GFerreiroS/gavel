@@ -6,6 +6,7 @@
 mod account;
 pub(crate) mod admin;
 mod alerts;
+mod archive;
 mod cluster;
 mod debug;
 pub(crate) mod enhancements;
@@ -130,6 +131,17 @@ pub fn router<E: Ports>(env: E, shutdown: crate::Shutdown) -> Router {
         .route("/wow/gear/{item_id}/{track}", get(gear_stats::stats::<E>))
         // A recipe has one version of itself, so it has no item level.
         .route("/wow/recipe/{item_id}", get(gear_stats::recipe_stats::<E>))
+        // The archive: expansion -> patch -> raid tier -> market analysis
+        // (`docs/market-analysis.md` §8). Four levels, and each is validated
+        // inside the one above it, so a real patch key from another expansion
+        // is a 404 rather than a page about the wrong thing.
+        .route("/wow/archive", get(archive::index::<E>))
+        .route("/wow/archive/{expansion}", get(archive::expansion::<E>))
+        .route("/wow/archive/{expansion}/{patch}", get(archive::patch::<E>))
+        .route(
+            "/wow/archive/{expansion}/{patch}/{tier}",
+            get(archive::tier::<E>),
+        )
         // Distinct prefixes so an expansion slug can never shadow an item id.
         .route("/wow/expansion/{id}", get(market::archived_page::<E>))
         .route("/wow/item/{item_id}", get(item::detail::<E>))
@@ -284,6 +296,7 @@ mod tests {
         ("realms.rs", include_str!("realms.rs")),
         ("wow.rs", include_str!("wow.rs")),
         ("pages.rs", include_str!("pages.rs")),
+        ("archive.rs", include_str!("archive.rs")),
     ];
 
     /// A `draft_ptr` catalogue is administrator-only
@@ -299,25 +312,55 @@ mod tests {
     /// leaks.
     #[test]
     fn no_public_route_reaches_past_the_catalogue_gate() {
-        let mut offenders: Vec<&str> = Vec::new();
+        // Both state-blind lookups. `by_id` is the catalogue; `index` is the
+        // same hole one level down, and it was open until Phase 9: the item
+        // page resolved an id against every catalogue including a `draft_ptr`
+        // one, so a guessed id answered with the next tier's candidate items.
+        // `Ports::public_catalog` and `Ports::public_item` are the gates.
+        const BLIND: [(&str, &str); 4] = [
+            ("catalogs().by_id(", "Ports::public_catalog"),
+            ("catalogs.by_id(", "Ports::public_catalog"),
+            ("catalogs().index(", "Ports::public_item"),
+            ("catalogs.index(", "Ports::public_item"),
+        ];
+        // Whitespace stripped before matching, because rustfmt breaks a long
+        // chain across lines and `catalogs()\n.index()` is the same call. The
+        // check missed `tooltip.rs` for exactly that reason -- a route that
+        // was serving a PTR catalogue's item names, under a test that said it
+        // could not.
+        let mut offenders: Vec<String> = Vec::new();
         for (name, source) in PUBLIC_ROUTES {
-            if source.contains("catalogs().by_id(") || source.contains("catalogs.by_id(") {
-                offenders.push(name);
+            let dense: String = source.chars().filter(|c| !c.is_whitespace()).collect();
+            for (needle, gate) in BLIND {
+                if dense.contains(needle) {
+                    offenders.push(format!("{name} calls {needle} instead of {gate}"));
+                }
             }
         }
         assert!(
             offenders.is_empty(),
-            "these call the state-blind lookup instead of `Ports::public_catalog`, \
-             which would serve a PTR catalogue to anybody who guessed its id: {offenders:?}"
+            "these call a state-blind lookup, which serves a PTR catalogue -- or its \
+             candidate item list -- to anybody who guesses an id: {offenders:#?}"
         );
     }
 
-    /// And the check above is only worth having if the string it looks for is
-    /// one that really appears when the rule is broken.
+    /// And the check above is only worth having if the strings it looks for
+    /// are ones that really appear when the rule is broken.
     #[test]
     fn the_gate_check_can_fail() {
-        let broken = "let c = env.catalogs().by_id(&id);";
-        assert!(broken.contains("catalogs().by_id("));
+        for broken in [
+            "let c = env.catalogs().by_id(&id);",
+            "env.catalogs().index().get(&item)",
+            // The spelling rustfmt produces, which is the one that got past
+            // the check when it matched the source as written.
+            "env\n        .catalogs()\n        .index()\n        .get(&item)",
+        ] {
+            let dense: String = broken.chars().filter(|c| !c.is_whitespace()).collect();
+            assert!(
+                dense.contains("catalogs().by_id(") || dense.contains("catalogs().index("),
+                "{broken:?} should trip the check"
+            );
+        }
     }
 
     /// Every route Phase 2 moved onto the read model, which is every route

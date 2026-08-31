@@ -27,6 +27,7 @@ tracing = { workspace = true }
 test-pool = []
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["rt", "macros"] }
+tokio = { workspace = true, features = ["rt", "macros", "rt-multi-thread"] }
+postcard = { workspace = true }
 cluster-core = { workspace = true }
 storage = { path = ".", features = ["test-pool"] }

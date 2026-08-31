@@ -13,6 +13,7 @@
 //! by. Neither is derivable from the other: 30 days is not a patch, and a
 //! patch that ran for six weeks is not 30 days.
 
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 use cluster_core::Millis;
@@ -27,7 +28,7 @@ const DAY_MS: u64 = 24 * HOUR_MS;
 /// `Patch` and `Tier` carry an id rather than a date range: §8 keeps them as
 /// independent keys, and a window that stored "2026-08-11 to 2026-11-03" would
 /// be silently wrong the moment a patch date was corrected.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Window {
     /// A rolling window of whole days, anchored at `now`. The five the cards
     /// offer.

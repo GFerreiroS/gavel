@@ -111,7 +111,7 @@ pub(crate) async fn today<E: Ports>(
         .alerts_since(since, TODAY_LIMIT)
         .await?;
 
-    let index = env.catalogs().index();
+    let index = env.public_index();
     let rows = alerts
         .into_iter()
         .filter(|alert| watched.contains(&(alert.item, alert.region)))
@@ -171,7 +171,7 @@ pub async fn page_handler<E: Ports>(
         None => WatchlistView::default(),
         Some(user) => {
             let watches = env.store().watches().watches(user.id).await?;
-            let index = env.catalogs().index();
+            let index = env.public_index();
 
             // One price read per region represented, not one per followed
             // item: a watchlist of forty items is at most four regions.
@@ -258,9 +258,12 @@ pub async fn toggle<E: Ports>(
 
     let region = Region::parse(&form.region).ok_or(AppError::NotFound)?;
     let item = ItemId(form.item_id);
-    // Only something this instance actually tracks. Otherwise a watchlist
-    // could be filled with ids that will never have a price or a name.
-    if !env.catalogs().index().contains_key(&item) {
+    // Only something this instance actually tracks, and only something this
+    // visitor may see. Otherwise a watchlist could be filled with ids that
+    // will never have a price or a name -- or, through the state-blind index
+    // this used to ask, with a `draft_ptr` catalogue's candidate items, which
+    // is a way of learning they exist.
+    if env.public_item(item).is_none() {
         return Err(AppError::NotFound.into());
     }
 

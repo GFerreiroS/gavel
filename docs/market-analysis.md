@@ -355,6 +355,16 @@ An administrator explicitly activates a PTR catalogue after reviewing it.
 Activation, rather than an unattended calendar date, triggers automatic
 archiving because PTR and release schedules can change.
 
+**A catalogue that opens a new tier carries the expansion's whole tier list.**
+A tier's window ends where the next tier *that catalogue declares* begins,
+because that is the only tier list it has. A catalogue shipping one tier and
+then superseded therefore has a tier window with no end, and it goes on
+absorbing its successor's prices -- a statistic that is wrong rather than
+absent, and the kind nobody notices because it still renders. This is a
+constraint on the data, so it is checked as data: the administrator's release
+panel reports it, naming both tiers and the catalogue the missing one belongs
+in.
+
 Adding a live patch/tier is a data operation. It may require PTR research and
 catalogue review, but it does not require new statistics, routes, templates, or
 calculation code.

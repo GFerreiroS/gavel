@@ -278,3 +278,64 @@ fn a_depth_summary_carries_what_the_panel_shows() {
     assert_eq!(depth.within_20, Some(100));
     assert_eq!(depth.walls.len(), 2);
 }
+
+// --- the archive curve (Phase 7's retention) ---------------------------------
+
+/// The two figures the depth panel prints are band edges, so a curve answers
+/// them **exactly**. Measured on 515 real EU markets: exact on all of them.
+#[test]
+fn a_curve_is_exact_on_the_figures_the_panel_prints() {
+    let ladder = Ladder::of(&[
+        listing(100, 40),  // the cheapest
+        listing(104, 60),  // within 5%
+        listing(118, 200), // within 20%
+        listing(400, 700), // far above both
+    ]);
+    let curve = ladder.compact();
+
+    assert_eq!(curve.cheapest, ladder.cheapest().unwrap());
+    assert_eq!(curve.total, ladder.total());
+    assert_eq!(curve.quantity_within(5), ladder.quantity_within(5));
+    assert_eq!(curve.quantity_within(20), ladder.quantity_within(20));
+}
+
+/// A curve must not answer what the live ladder refused. Sparseness is a
+/// statement about the shelf, and an archive that forgot how many rungs there
+/// were would start quoting percentiles over four listings.
+#[test]
+fn a_curve_keeps_a_sparse_shelf_sparse() {
+    let ladder = Ladder::of(&[listing(100, 1), listing(140, 1), listing(300, 2)]);
+    assert!(ladder.is_sparse());
+    let curve = ladder.compact();
+    assert!(curve.is_sparse());
+    assert_eq!(curve.supply_percentile(50), None);
+    assert_eq!(ladder.supply_percentile(50), None);
+}
+
+/// Within its documented exactness: on a shelf whose supply sits inside the
+/// bands, a percentile lands within a few per cent of the exact answer.
+#[test]
+fn a_curve_places_a_percentile_close_to_the_exact_ladder() {
+    let ladder = Ladder::of(&[
+        listing(1000, 10),
+        listing(1050, 30),
+        listing(1120, 40),
+        listing(1300, 50),
+        listing(1800, 70),
+        listing(2400, 100),
+    ]);
+    let exact = ladder.supply_percentile(50).unwrap().get() as f64;
+    let got = ladder.compact().supply_percentile(50).unwrap().get() as f64;
+    let error = (got - exact).abs() / exact * 100.0;
+    assert!(error < 10.0, "{got} against {exact} is {error:.1}% out");
+}
+
+/// An empty shelf compacts to an empty curve rather than to a curve of zeroes
+/// claiming a price of zero.
+#[test]
+fn an_empty_ladder_has_no_curve() {
+    let curve = Ladder::default().compact();
+    assert_eq!(curve.cheapest, app_core::market::Copper::ZERO);
+    assert_eq!(curve.total, 0);
+    assert_eq!(curve.quantity_within(5), None);
+}

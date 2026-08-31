@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{# The archive index: every expansion, newest first, the one still being
+   collected at the top.
+
+   The same card as the Auction House index -- header, a line under the name,
+   figures in `.rank-col`s, the action at the bottom (§7). An expansion is not
+   an item, but the reader learned this card on whichever page they opened
+   first and every other page has to reward that. #}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/wow/auctions">{{ "Auction House"|t }}</a></li>
+    <li>{{ "Archive"|t }}</li>
+  </ul>
+</nav>
+<h1>{{ "Archive"|t }}</h1>
+<p class="hint">
+  {{ "Every expansion this instance has collected, by patch and by raid tier. An expansion that has stopped collecting keeps everything it recorded: the prices are frozen, not deleted."|t }}
+</p>
+
+{% if archive.expansions.is_empty() %}
+<p class="muted">{{ "No expansions are published yet."|t }}</p>
+{% else %}
+<div class="card-grid">
+  {% for expansion in archive.expansions %}
+  <article class="item-card">
+    <header>
+      <div class="item-head-text">
+        <h3>{{ expansion.name }}</h3>
+        <span class="sub">{{ expansion.span }}</span>
+      </div>
+    </header>
+    <div class="rank-cols">
+      <div class="rank-col">
+        <span class="rank-label">{{ "Patches"|t }}</span>
+        <span class="now">{{ expansion.patches }}</span>
+      </div>
+      <div class="rank-col">
+        <span class="rank-label">{{ "Raid tiers"|t }}</span>
+        <span class="now">{{ expansion.tiers }}</span>
+      </div>
+      <div class="rank-col">
+        <span class="rank-label">{{ "Status"|t }}</span>
+        <span class="now">
+          {% if expansion.collecting %}<span class="tag ok">{{ "live"|t }}</span>
+          {% else %}<span class="tag">{{ "archived"|t }}</span>{% endif %}
+        </span>
+      </div>
+    </div>
+    {# Two ways on, and the prices are the second: a reader who came for what
+       a flask costs should not have to walk the hierarchy to reach it. #}
+    <p class="card-foot">
+      <a href="{{ expansion.markets_href }}">{{ "Prices"|t }}</a>
+    </p>
+    <a class="rank-link outline secondary" role="button" href="{{ expansion.href }}">{{ "Open"|t }} →</a>
+  </article>
+  {% endfor %}
+</div>
+{% endif %}
+{% endblock %}

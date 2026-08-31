@@ -1039,6 +1039,85 @@ async fn activating_the_active_catalogue_changes_nothing() {
     );
 }
 
+/// A release that adds a catalogue shipping as `active` must not stop the
+/// instance from starting.
+///
+/// Found by running a rollover rather than by reading the code: the second
+/// active row hits the partial unique index, `seed` returns the conflict, and
+/// startup fails on it. Refusing to boot is the harshest failure there is and
+/// the wrong one here -- nothing is broken, a person has simply not chosen
+/// yet. So the newcomer waits at `/admin` as a draft.
+#[tokio::test]
+async fn a_newcomer_shipping_as_active_waits_instead_of_breaking_startup() {
+    let store = store().await;
+    let releases = store.releases();
+
+    releases
+        .seed(&[("s2".to_string(), CatalogStatus::Active)], Millis(1_000))
+        .await
+        .expect("the first seed, on an empty database");
+
+    // The next release ships season 3, and ships it active.
+    let seeded = releases
+        .seed(
+            &[
+                ("s2".to_string(), CatalogStatus::Active),
+                ("s3".to_string(), CatalogStatus::Active),
+            ],
+            Millis(2_000),
+        )
+        .await
+        .expect("the second seed must not fail");
+    assert_eq!(seeded, 1, "only the newcomer was written");
+
+    let states = releases.releases().await.unwrap();
+    let state = |id: &str| {
+        states
+            .iter()
+            .find(|r| r.catalog == id)
+            .map(|r| r.state)
+            .unwrap()
+    };
+    assert_eq!(state("s2"), CatalogStatus::Active, "still collecting");
+    assert_eq!(
+        state("s3"),
+        CatalogStatus::DraftPtr,
+        "the newcomer waits for somebody to activate it"
+    );
+
+    // And it activates normally from there, archiving the one it replaces.
+    let done = releases.activate("s3", Millis(3_000)).await.unwrap();
+    assert_eq!(done.archived.as_deref(), Some("s2"));
+}
+
+/// Two active catalogues in one seed is the same hazard on an empty database.
+/// A test asserts the shipped file never does it; this is what makes that
+/// test's failure a reviewable state rather than an instance that will not
+/// start.
+#[tokio::test]
+async fn two_catalogues_shipping_as_active_seed_one_of_them() {
+    let store = store().await;
+    let releases = store.releases();
+    releases
+        .seed(
+            &[
+                ("a".to_string(), CatalogStatus::Active),
+                ("b".to_string(), CatalogStatus::Active),
+            ],
+            Millis(1_000),
+        )
+        .await
+        .expect("seeding must not fail");
+
+    let states = releases.releases().await.unwrap();
+    let active: Vec<&str> = states
+        .iter()
+        .filter(|r| r.state.is_active())
+        .map(|r| r.catalog.as_str())
+        .collect();
+    assert_eq!(active, ["a"], "the first wins; the rest wait");
+}
+
 /// An upgrade must not silently undo an activation. The binary's opinion is
 /// the seed and nothing more.
 #[tokio::test]
@@ -1610,6 +1689,8 @@ async fn only_a_live_candidate_can_be_published() {
 /// apart, and only a row that binds *every* column can catch that.
 fn rollup(item: u32, price: u64) -> MarketRollup {
     MarketRollup {
+        depth: None,
+        ladder: Default::default(),
         region: Region::Eu,
         item: ItemId(item),
         kind: ItemKind::Boe,
