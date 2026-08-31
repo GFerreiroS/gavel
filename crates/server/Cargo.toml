@@ -20,6 +20,8 @@ app-core = { workspace = true }
 app-integrations = { workspace = true }
 app-web = { workspace = true }
 cluster-core = { workspace = true }
+postcard = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
 cluster-local = { workspace = true }
 storage = { workspace = true }
 

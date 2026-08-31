@@ -18,9 +18,10 @@ mod support;
 use std::time::Duration;
 
 use cluster_core::{
-    ClusterControl, Heartbeat, JobSpec, JobState, Millis, NodeCapabilities, NodeId, NodeLoad,
-    NodeMessage, PROTOCOL_VERSION, RejectReason, Role, SupervisorMessage, TaskOutcome, TaskState,
-    decode_frame, encode_frame, frame_len,
+    Artifact, ArtifactStore, ClusterControl, Heartbeat, JobSpec, JobState, Millis,
+    NodeCapabilities, NodeId, NodeLoad, NodeMessage, PROTOCOL_VERSION, RejectReason, Role,
+    SupervisorMessage, TaskOutcome, TaskSpec, TaskState, WireTaskSpec, decode_frame, encode_frame,
+    frame_len,
 };
 use cluster_local::{LocalCluster, LocalClusterConfig, RemoteNode};
 use support::MemoryStore;
@@ -146,7 +147,7 @@ impl FakeWorker {
     }
 
     async fn recv_unbounded(&mut self) -> SupervisorMessage {
-        let mut prefix = [0u8; 2];
+        let mut prefix = [0u8; cluster_core::LENGTH_PREFIX];
         self.socket.read_exact(&mut prefix).await.expect("prefix");
         let len = frame_len(prefix).expect("length");
         let mut body = vec![0u8; len];
@@ -183,6 +184,138 @@ impl FakeWorker {
             }
         })
     }
+}
+
+/// The coordinator's side of an analysis partition, of the kind
+/// `server::analysis_work::Artifacts` is in the real composition root.
+///
+/// It is deliberately dumb -- bytes in, bytes out, filed by partition -- so
+/// that what these tests exercise is the *transport*: the input reaching a
+/// worker across a socket and its result coming back, with nothing in between
+/// that could quietly compute the answer locally.
+#[derive(Debug, Default)]
+struct TestArtifacts {
+    inner: std::sync::Mutex<TestState>,
+}
+
+#[derive(Debug, Default)]
+struct TestState {
+    version: u64,
+    inputs: std::collections::BTreeMap<u32, Vec<u8>>,
+    results: std::collections::BTreeMap<u32, Vec<u8>>,
+    /// How many times each partition's input has been handed out, which is how
+    /// a requeue after a worker died is told from a task that only ran once.
+    handed_out: std::collections::BTreeMap<u32, u32>,
+}
+
+impl TestArtifacts {
+    /// Register `partitions` inputs for one candidate version.
+    fn begin(version: u64, partitions: u32) -> std::sync::Arc<TestArtifacts> {
+        let store = TestArtifacts::default();
+        {
+            let mut held = store.inner.lock().expect("lock");
+            held.version = version;
+            held.inputs = (0..partitions)
+                .map(|p| (p, format!("input for partition {p}").into_bytes()))
+                .collect();
+        }
+        std::sync::Arc::new(store)
+    }
+
+    fn expected(&self, partition: u32) -> Vec<u8> {
+        self.inner.lock().expect("lock").inputs[&partition].clone()
+    }
+
+    fn result(&self, partition: u32) -> Option<Vec<u8>> {
+        self.inner
+            .lock()
+            .expect("lock")
+            .results
+            .get(&partition)
+            .cloned()
+    }
+
+    fn results(&self) -> usize {
+        self.inner.lock().expect("lock").results.len()
+    }
+
+    fn handed_out(&self, partition: u32) -> u32 {
+        self.inner
+            .lock()
+            .expect("lock")
+            .handed_out
+            .get(&partition)
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+impl ArtifactStore for TestArtifacts {
+    fn input(&self, spec: TaskSpec) -> Option<Vec<u8>> {
+        let TaskSpec::Analysis {
+            version, partition, ..
+        } = spec
+        else {
+            return None;
+        };
+        let mut held = self.inner.lock().expect("lock");
+        if held.version != version {
+            return None;
+        }
+        let input = held.inputs.get(&partition).cloned()?;
+        *held.handed_out.entry(partition).or_default() += 1;
+        Some(input)
+    }
+
+    fn produced(&self, spec: TaskSpec, bytes: &[u8]) {
+        let TaskSpec::Analysis {
+            version, partition, ..
+        } = spec
+        else {
+            return;
+        };
+        let mut held = self.inner.lock().expect("lock");
+        if held.version != version {
+            return;
+        }
+        held.results.insert(partition, bytes.to_vec());
+    }
+}
+
+/// Take an assignment and answer it the way a real worker does: verify the
+/// artifact it was handed, then send the result *before* the completion.
+async fn run_partition(worker: &mut FakeWorker, artifacts: &TestArtifacts) -> u32 {
+    let SupervisorMessage::Assign { task, spec } = worker.recv().await else {
+        panic!("expected an assignment");
+    };
+    let WireTaskSpec::Analysis {
+        partition, input, ..
+    } = spec
+    else {
+        panic!("expected an analysis partition, got {spec:?}");
+    };
+    assert_eq!(
+        input.verify(),
+        Some(&artifacts.expected(partition)[..]),
+        "the partition's input crossed the wire intact"
+    );
+
+    worker.send(&NodeMessage::TaskStarted { task }).await;
+    worker
+        .send(&NodeMessage::TaskProduced {
+            task,
+            artifact: Artifact::new(format!("rows for partition {partition}").into_bytes()),
+        })
+        .await;
+    worker
+        .send(&NodeMessage::TaskFinished {
+            task,
+            outcome: TaskOutcome::Completed {
+                output: format!("partition {partition}"),
+            },
+        })
+        .await;
+    partition
 }
 
 /// Start a cluster and return its handle plus the address workers dial.
@@ -444,6 +577,231 @@ async fn a_worker_that_vanishes_mid_task_loses_no_work() {
         !detail.failures.is_empty(),
         "the failure is recorded and visible"
     );
+}
+
+/// **Phase 4's second slice, end to end.** A partition's input crosses a real
+/// socket to a real worker, and the rows it produced come back to the
+/// coordinator's store.
+///
+/// The store here computes nothing, which is the point: if the input did not
+/// arrive or the result did not return, there is no local path that could
+/// quietly cover for it.
+#[tokio::test(flavor = "multi_thread")]
+async fn an_analysis_partition_crosses_the_wire_and_its_result_comes_back() {
+    let artifacts = TestArtifacts::begin(7, 2);
+    let mut config = remote_config(declared(2));
+    config.artifacts = Some(artifacts.clone());
+    let (cluster, address, _store) = start(config).await;
+
+    let mut one = FakeWorker::join(&address, NodeId(1), NodeCapabilities::new(2, 0)).await;
+    let mut two = FakeWorker::join(&address, NodeId(2), NodeCapabilities::new(2, 0)).await;
+    one.heartbeat().await;
+    two.heartbeat().await;
+    wait_for("both workers online", async || {
+        cluster.snapshot().await.nodes_online == 2
+    })
+    .await;
+
+    let job = cluster
+        .submit_job(JobSpec::Analysis {
+            version: 7,
+            algorithm: 2,
+            partitions: 2,
+        })
+        .await
+        .expect("submit");
+
+    let mut ran = vec![
+        run_partition(&mut one, &artifacts).await,
+        run_partition(&mut two, &artifacts).await,
+    ];
+    ran.sort_unstable();
+    assert_eq!(ran, vec![0, 1], "both partitions were placed, once each");
+
+    wait_for("job completes", async || {
+        cluster
+            .job(job)
+            .await
+            .is_some_and(|d| d.job.state == JobState::Completed)
+    })
+    .await;
+
+    for partition in 0..2 {
+        assert_eq!(
+            artifacts.result(partition),
+            Some(format!("rows for partition {partition}").into_bytes()),
+            "the coordinator holds what the worker produced, byte for byte"
+        );
+    }
+}
+
+/// The failure test with an artifact in it: a worker dies holding a partition,
+/// and the version is still complete afterwards.
+///
+/// Two things this asserts that the `Sleep` version cannot. The requeued
+/// attempt is handed **the same input bytes** -- a partition is fetched from
+/// the store afresh for each assignment, so a retry after a death is the same
+/// work rather than whatever the dead worker had. And the dead attempt leaves
+/// **no result**, so a candidate that has lost a worker is incomplete rather
+/// than partially published.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_worker_that_dies_holding_a_partition_loses_only_its_attempt() {
+    let artifacts = TestArtifacts::begin(11, 1);
+    // Generous health timings, for the reason the `Sleep` failure test gives:
+    // the dead worker is detected from its closed socket, and a short timeout
+    // ages the *survivor* out mid-test.
+    let mut config = remote_config(declared(2));
+    config.health.suspect_after_ms = 30_000;
+    config.health.offline_after_ms = 60_000;
+    config.artifacts = Some(artifacts.clone());
+    let (cluster, address, _store) = start(config).await;
+
+    let mut one = FakeWorker::join(&address, NodeId(1), NodeCapabilities::new(2, 0)).await;
+    let mut two = FakeWorker::join(&address, NodeId(2), NodeCapabilities::new(2, 0)).await;
+    one.heartbeat().await;
+    two.heartbeat().await;
+    wait_for("both workers online", async || {
+        cluster.snapshot().await.nodes_online == 2
+    })
+    .await;
+
+    let job = cluster
+        .submit_job(JobSpec::Analysis {
+            version: 11,
+            algorithm: 2,
+            partitions: 1,
+        })
+        .await
+        .expect("submit");
+
+    // Placement is the scheduler's business; whichever worker is chosen dies.
+    let (victim, mut survivor) = {
+        match tokio::time::timeout(Duration::from_secs(5), one.recv()).await {
+            Ok(SupervisorMessage::Assign { task, spec }) => {
+                assert!(matches!(spec, WireTaskSpec::Analysis { .. }));
+                one.send(&NodeMessage::TaskStarted { task }).await;
+                (one, two)
+            }
+            _ => {
+                let SupervisorMessage::Assign { task, spec } = two.recv().await else {
+                    panic!("neither worker was assigned the partition");
+                };
+                assert!(matches!(spec, WireTaskSpec::Analysis { .. }));
+                two.send(&NodeMessage::TaskStarted { task }).await;
+                (two, one)
+            }
+        }
+    };
+
+    assert_eq!(artifacts.handed_out(0), 1, "the input was sent once");
+    assert_eq!(
+        artifacts.results(),
+        0,
+        "a partition that is only running has produced nothing"
+    );
+
+    let dead = victim.id;
+    // Yank the power, exactly as the `Sleep` failure test does.
+    drop(victim);
+    wait_for("the dead worker is seen to be gone", async || {
+        cluster
+            .node(dead)
+            .await
+            .is_some_and(|n| !n.status.accepts_work())
+    })
+    .await;
+
+    // The survivor is handed the same partition, with the same input, and
+    // finishes it.
+    let partition = run_partition(&mut survivor, &artifacts).await;
+    assert_eq!(partition, 0);
+    assert_eq!(
+        artifacts.handed_out(0),
+        2,
+        "the requeued attempt was handed the input again rather than reusing a stale copy"
+    );
+
+    wait_for("job completes despite the dead worker", async || {
+        cluster
+            .job(job)
+            .await
+            .is_some_and(|d| d.job.state == JobState::Completed)
+    })
+    .await;
+
+    let detail = cluster.job(job).await.expect("job");
+    assert_eq!(detail.tasks[0].assigned_to, Some(survivor.id));
+    assert!(detail.tasks[0].attempt >= 2, "recorded as a second attempt");
+    assert!(!detail.failures.is_empty(), "the failure is visible");
+    assert_eq!(
+        artifacts.result(0),
+        Some(b"rows for partition 0".to_vec()),
+        "the surviving worker's rows are the ones held"
+    );
+}
+
+/// A partition of a candidate that has been abandoned is never sent.
+///
+/// The task is refused at the coordinator, reported as a failed attempt and
+/// requeued -- so a worker with nothing that can run it sees no assignment at
+/// all, rather than being handed work whose result would be dropped on arrival.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_partition_of_an_abandoned_candidate_is_never_put_on_the_wire() {
+    // The store holds version 11; the job asks for 12.
+    let artifacts = TestArtifacts::begin(11, 1);
+    let mut config = remote_config(declared(1));
+    config.artifacts = Some(artifacts.clone());
+    let (cluster, address, _store) = start(config).await;
+
+    let worker = FakeWorker::join(&address, NodeId(1), NodeCapabilities::new(2, 0)).await;
+    let id = worker.id;
+    let mut worker = worker;
+    worker.heartbeat().await;
+    wait_for("worker online", async || {
+        cluster
+            .node(id)
+            .await
+            .is_some_and(|n| n.status.accepts_work())
+    })
+    .await;
+
+    let job = cluster
+        .submit_job(JobSpec::Analysis {
+            version: 12,
+            algorithm: 2,
+            partitions: 1,
+        })
+        .await
+        .expect("submit");
+
+    // Every attempt is refused, so the task runs out of them and the job ends.
+    wait_for("the job gives up", async || {
+        cluster
+            .job(job)
+            .await
+            .is_some_and(|d| d.job.state.is_terminal())
+    })
+    .await;
+
+    let detail = cluster.job(job).await.expect("job");
+    assert_eq!(detail.job.state, JobState::Failed);
+    assert!(
+        detail
+            .failures
+            .iter()
+            .all(|f| f.detail.contains("abandoned")),
+        "every attempt says why it could not be sent: {:?}",
+        detail.failures
+    );
+
+    // And the worker was never asked to do any of it.
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), worker.recv_unbounded())
+            .await
+            .is_err(),
+        "nothing was put on the wire for a partition with no input"
+    );
+    assert_eq!(artifacts.results(), 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]

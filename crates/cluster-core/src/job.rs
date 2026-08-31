@@ -22,6 +22,24 @@ pub enum JobSpec {
     Sleep { total_ms: u64, tasks: u16 },
     /// CPU demo: count primes below `upper_bound`, split into ranges.
     Primes { upper_bound: u64, tasks: u16 },
+    /// Materialise one candidate analysis version, partitioned.
+    ///
+    /// **The spec is a reference, not the work.** A partition's input is a
+    /// slice of a region's price history -- 81 KB for 64 commodity markets on
+    /// the real archive -- and this type's own contract is that it fits "in a
+    /// few dozen bytes to be shipped to a worker". So the host registers the
+    /// inputs and the task names one by number; §16's Phase 4 calls that a
+    /// *referenced* artifact, and it is what keeps a task row small and the
+    /// idempotency key printable.
+    ///
+    /// `(version, algorithm, partition)` is that key, and it is the whole
+    /// spec: a duplicate result is the same tuple, and a result for an
+    /// abandoned candidate names a version that is no longer staging.
+    Analysis {
+        version: u64,
+        algorithm: u32,
+        partitions: u16,
+    },
 }
 
 impl JobSpec {
@@ -29,12 +47,17 @@ impl JobSpec {
         match self {
             JobSpec::Sleep { .. } => "sleep",
             JobSpec::Primes { .. } => "primes",
+            JobSpec::Analysis { .. } => "analysis",
         }
     }
 
     pub fn task_count(&self) -> u16 {
         match *self {
-            JobSpec::Sleep { tasks, .. } | JobSpec::Primes { tasks, .. } => tasks.max(1),
+            JobSpec::Sleep { tasks, .. }
+            | JobSpec::Primes { tasks, .. }
+            | JobSpec::Analysis {
+                partitions: tasks, ..
+            } => tasks.max(1),
         }
     }
 
@@ -44,6 +67,11 @@ impl JobSpec {
             JobSpec::Primes { upper_bound, tasks } => {
                 format!("primes below {upper_bound} over {tasks} tasks")
             }
+            JobSpec::Analysis {
+                version,
+                partitions,
+                ..
+            } => format!("materialise analysis {version} over {partitions} partitions"),
         }
     }
 
@@ -74,6 +102,15 @@ impl JobSpec {
                     })
                     .collect()
             }
+            JobSpec::Analysis {
+                version, algorithm, ..
+            } => (0..n)
+                .map(|i| TaskSpec::Analysis {
+                    version,
+                    algorithm,
+                    partition: i as u32,
+                })
+                .collect(),
         }
     }
 }
@@ -82,8 +119,25 @@ impl JobSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
 pub enum TaskSpec {
-    Sleep { millis: u64 },
-    Primes { start: u64, end: u64 },
+    Sleep {
+        millis: u64,
+    },
+    Primes {
+        start: u64,
+        end: u64,
+    },
+    /// One partition of one candidate analysis version.
+    ///
+    /// Small and `Copy`, like every spec here, because it names its input
+    /// rather than carrying it. What it names is registered by the host that
+    /// submitted the job; `cluster-core` neither reads nor understands it,
+    /// which is what lets the market's definitions live in `app-core` while
+    /// the scheduler stays a scheduler (§3).
+    Analysis {
+        version: u64,
+        algorithm: u32,
+        partition: u32,
+    },
 }
 
 impl TaskSpec {
@@ -91,6 +145,9 @@ impl TaskSpec {
         match *self {
             TaskSpec::Sleep { millis } => format!("sleep {millis}ms"),
             TaskSpec::Primes { start, end } => format!("primes in {start}..{end}"),
+            TaskSpec::Analysis {
+                version, partition, ..
+            } => format!("analysis {version} partition {partition}"),
         }
     }
 
@@ -99,6 +156,9 @@ impl TaskSpec {
         match *self {
             TaskSpec::Sleep { millis } => millis,
             TaskSpec::Primes { start, end } => end.saturating_sub(start),
+            // Partitions are sized by measured payload rather than by row
+            // count, so one is as heavy as the next and the hint is flat.
+            TaskSpec::Analysis { .. } => 1,
         }
     }
 }

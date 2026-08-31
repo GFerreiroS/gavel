@@ -16,6 +16,8 @@
 //! the local runtime already used between the supervisor and its simulated
 //! nodes. That is not a coincidence -- it is why this port is small.
 
+use core::fmt;
+
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +29,15 @@ use crate::node::{Heartbeat, NodeCapabilities};
 /// version does not match is rejected at `Hello` rather than being allowed to
 /// half-work. Version 2 made `Hello.node` optional, so a worker can ask to be
 /// given an identity instead of asserting one. Version 3 added the join token.
-pub const PROTOCOL_VERSION: u16 = 3;
+///
+/// **Version 4 carries work that does not fit in a sentence.** A market
+/// analysis partition is tens of kilobytes going out and over a hundred coming
+/// back, measured on the real archive -- so the length prefix went from two
+/// bytes to four (two could not address more than 64 KB whatever the cap said)
+/// and the frame cap from 2 KB to [`MAX_FRAME`]. With it came an artifact
+/// carrying its own length and integrity check, and a `TaskProduced` frame for
+/// results that are bytes rather than a sentence.
+pub const PROTOCOL_VERSION: u16 = 4;
 
 /// Longest join token either side will send or compare.
 ///
@@ -38,12 +48,43 @@ pub const MAX_TOKEN: usize = 256;
 
 /// Largest frame either side will encode or accept, in bytes.
 ///
-/// The biggest realistic message fits several times over, while an invalid
-/// peer still cannot force an unbounded allocation.
-pub const MAX_FRAME: usize = 2048;
+/// **Sized from a measurement, and from the right half of it.** The partition
+/// size was first chosen against the *input* -- 64 markets of price history,
+/// ~81 KB -- and that was the smaller of the two things a partition puts on
+/// the wire. A partition's *result* is 4.5 times its input: 64 markets came
+/// back as 568,469 bytes, because Phase 6 gave every window a 96-slot chart
+/// series and a histogram. Both numbers are on the real archive, with the
+/// 515 real ladders from Phase 7 attached.
+///
+/// So the cap is 256 KiB and the partition is sized to fit inside it *both
+/// ways*: at [`crate::MAX_ARTIFACT`] a worst-case result is 145,705 bytes and
+/// a worst-case input 35,310. See `server::analysis_work` for the sweep.
+///
+/// The original argument for a small cap still holds and is the reason there
+/// is a cap at all: an invalid peer must not be able to force an unbounded
+/// allocation. A quarter of a megabyte is bounded. What it is *not* is small
+/// enough to be free, so a `Heartbeat` still costs twenty-one bytes and only
+/// an artifact frame ever approaches this.
+pub const MAX_FRAME: usize = 256 * 1024;
+
+/// Largest artifact either side will put in a frame, in bytes.
+///
+/// [`MAX_FRAME`] less an envelope, so that "will this fit" can be asked of the
+/// bytes *before* they are encoded. Asking afterwards is the same question one
+/// allocation too late, and it is asked on the path where the answer is no.
+///
+/// A kilobyte is far more envelope than a `TaskProduced` or an `Assign` needs
+/// -- both are a task id, a digest and a length -- and being generous here
+/// costs nothing that the partition size does not already have in hand.
+pub const MAX_ARTIFACT: usize = MAX_FRAME - 1024;
 
 /// Bytes of length prefix in front of every frame.
-pub const LENGTH_PREFIX: usize = 2;
+///
+/// Four since version 4. Two could address 65,535 bytes and no more, so the
+/// frame cap above was not a policy a two-byte prefix could have expressed --
+/// raising the cap without widening the prefix would have been a cap that
+/// silently truncated.
+pub const LENGTH_PREFIX: usize = 4;
 
 /// Worker -> supervisor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +128,17 @@ pub enum NodeMessage {
         token: Option<String>,
     },
     Heartbeat(Heartbeat),
+    /// Bytes this task produced, sent before its completion.
+    ///
+    /// Separate from `TaskFinished` because they are different things: a task
+    /// row keeps an outcome and a sentence, and the analysis it produced
+    /// belongs in the read model, staged and published by the coordinator
+    /// (§15). Folding the artifact into the outcome would persist a partition
+    /// of the read model inside the job history.
+    TaskProduced {
+        task: TaskId,
+        artifact: Artifact,
+    },
     TaskStarted {
         task: TaskId,
     },
@@ -149,26 +201,179 @@ pub enum SupervisorMessage {
 /// match exhaustively with no wildcard arm, so adding a `TaskSpec` variant
 /// without teaching the wire about it is a compile error rather than a
 /// runtime protocol mismatch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WireTaskSpec {
-    Sleep { millis: u64 },
-    Primes { start: u64, end: u64 },
+    Sleep {
+        millis: u64,
+    },
+    Primes {
+        start: u64,
+        end: u64,
+    },
+    /// A materialisation partition, with the input it names.
+    ///
+    /// The *task* still references its input by `(version, algorithm,
+    /// partition)` -- that triple is the idempotency key and it is what a
+    /// result is filed under. The artifact rides with the assignment because a
+    /// worker has no database to fetch it from, which is the whole point of
+    /// §15's "workers receive immutable, bounded inputs".
+    Analysis {
+        version: u64,
+        algorithm: u32,
+        partition: u32,
+        input: Artifact,
+    },
 }
 
-impl From<TaskSpec> for WireTaskSpec {
-    fn from(spec: TaskSpec) -> Self {
-        match spec {
-            TaskSpec::Sleep { millis } => WireTaskSpec::Sleep { millis },
-            TaskSpec::Primes { start, end } => WireTaskSpec::Primes { start, end },
+/// Bytes a task needs, or produced, with a length and an integrity check.
+///
+/// The integrity check is [`digest`] -- FNV-1a, sixty-four bits. **It is not a
+/// security control and must not be read as one**: anyone who can rewrite the
+/// bytes can rewrite the digest beside them, and what keeps a stranger off
+/// this socket is the join token and a private network (§10). What it catches
+/// is the thing that actually happens: a frame reassembled wrongly, a
+/// truncated read, an encoder and a decoder that disagree about a type. Those
+/// fail loudly here instead of becoming a market with plausible numbers in it.
+///
+/// A hand-rolled hash rather than a crate because `cluster-core` depends on
+/// serde, thiserror, postcard and futures-core and nothing else (§3), and an
+/// integrity check is not worth breaking that for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Artifact {
+    pub bytes: Vec<u8>,
+    pub digest: u64,
+}
+
+impl Artifact {
+    pub fn new(bytes: Vec<u8>) -> Artifact {
+        let digest = digest(&bytes);
+        Artifact { bytes, digest }
+    }
+
+    /// The bytes, if they are the bytes that were sent.
+    pub fn verify(&self) -> Option<&[u8]> {
+        (digest(&self.bytes) == self.digest).then_some(&self.bytes[..])
+    }
+}
+
+/// FNV-1a, 64-bit. Small, dependency-free, and adequate for detecting
+/// corruption; see [`Artifact`] for what it is not for.
+pub fn digest(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x1000_0000_01b3);
+    }
+    hash
+}
+
+/// A task that cannot be sent, and which of the two reasons it is.
+///
+/// Both end the same way and that is the point: the transport reports a failed
+/// attempt, the scheduler requeues, and the task lands on a worker that can
+/// take it -- which today means an in-process one. A refusal here costs the
+/// attempt; sending a frame nobody can decode costs the connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NotShippable {
+    pub kind: &'static str,
+    pub why: Unshippable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unshippable {
+    /// The input it references has gone: the candidate was abandoned while the
+    /// task sat in a queue. Refusing here is cheaper than sending 35 KB for a
+    /// result that would be dropped on arrival.
+    InputGone,
+    /// The input is larger than a frame can carry.
+    ///
+    /// Unreachable while the partition size and [`MAX_ARTIFACT`] are the pair
+    /// they are measured to be -- and it is here because that pair is a
+    /// measurement rather than a law. A window added to the analysis moves the
+    /// number; this is what makes that a requeue onto a local worker instead
+    /// of a dropped socket.
+    TooLarge { bytes: usize },
+}
+
+impl fmt::Display for NotShippable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.why {
+            Unshippable::InputGone => write!(
+                f,
+                "a {} task cannot be sent: the input it references is no longer registered, \
+                 so the candidate it belongs to has been abandoned",
+                self.kind
+            ),
+            Unshippable::TooLarge { bytes } => write!(
+                f,
+                "a {} task cannot be sent: its input is {bytes} bytes and a frame carries \
+                 at most {MAX_ARTIFACT}",
+                self.kind
+            ),
         }
     }
 }
 
-impl From<WireTaskSpec> for TaskSpec {
-    fn from(spec: WireTaskSpec) -> Self {
+impl WireTaskSpec {
+    /// Put a task on the wire, fetching whatever input it references.
+    ///
+    /// Fallible for one reason: a task whose input has gone -- the candidate
+    /// was abandoned while this sat in a queue -- must not be sent. Stopping
+    /// here is cheaper than sending 81 KB for a result that would be dropped
+    /// on arrival.
+    pub fn of(spec: TaskSpec, input: Option<Vec<u8>>) -> Result<WireTaskSpec, NotShippable> {
         match spec {
+            TaskSpec::Sleep { millis } => Ok(WireTaskSpec::Sleep { millis }),
+            TaskSpec::Primes { start, end } => Ok(WireTaskSpec::Primes { start, end }),
+            TaskSpec::Analysis {
+                version,
+                algorithm,
+                partition,
+            } => match input {
+                Some(bytes) if bytes.len() > MAX_ARTIFACT => Err(NotShippable {
+                    kind: "analysis",
+                    why: Unshippable::TooLarge { bytes: bytes.len() },
+                }),
+                Some(bytes) => Ok(WireTaskSpec::Analysis {
+                    version,
+                    algorithm,
+                    partition,
+                    input: Artifact::new(bytes),
+                }),
+                None => Err(NotShippable {
+                    kind: "analysis",
+                    why: Unshippable::InputGone,
+                }),
+            },
+        }
+    }
+
+    /// The input this spec carries, if it carries one and it survived the
+    /// journey. `None` from a corrupt artifact, which the worker then reports
+    /// as a failure rather than computing from damaged bytes.
+    pub fn input(&self) -> Option<&[u8]> {
+        match self {
+            WireTaskSpec::Analysis { input, .. } => input.verify(),
+            _ => Some(&[]),
+        }
+    }
+}
+
+impl From<&WireTaskSpec> for TaskSpec {
+    fn from(spec: &WireTaskSpec) -> Self {
+        match *spec {
             WireTaskSpec::Sleep { millis } => TaskSpec::Sleep { millis },
             WireTaskSpec::Primes { start, end } => TaskSpec::Primes { start, end },
+            WireTaskSpec::Analysis {
+                version,
+                algorithm,
+                partition,
+                ..
+            } => TaskSpec::Analysis {
+                version,
+                algorithm,
+                partition,
+            },
         }
     }
 }
@@ -248,7 +453,7 @@ pub fn encode_frame<T: Serialize>(message: &T, out: &mut Vec<u8>) -> Result<(), 
     if body.len() > MAX_FRAME {
         return Err(ProtocolError::FrameTooLarge { size: body.len() });
     }
-    out.extend_from_slice(&(body.len() as u16).to_be_bytes());
+    out.extend_from_slice(&(body.len() as u32).to_be_bytes());
     out.extend_from_slice(&body);
     Ok(())
 }
@@ -261,7 +466,7 @@ pub fn decode_frame<T: DeserializeOwned>(body: &[u8]) -> Result<T, ProtocolError
 /// Read a length prefix, rejecting anything oversized before a single byte of
 /// body is buffered. Both transports call this before allocating.
 pub fn frame_len(prefix: [u8; LENGTH_PREFIX]) -> Result<usize, ProtocolError> {
-    let size = u16::from_be_bytes(prefix) as usize;
+    let size = u32::from_be_bytes(prefix) as usize;
     if size > MAX_FRAME {
         return Err(ProtocolError::FrameTooLarge { size });
     }

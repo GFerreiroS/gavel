@@ -503,8 +503,8 @@ fn calendar_dates_round_trip_through_millis() {
 
 use crate::agent::{Action, Agent};
 use crate::protocol::{
-    NodeMessage, PROTOCOL_VERSION, RejectReason, SupervisorMessage, WireTaskSpec, decode_frame,
-    encode_frame, frame_len,
+    Artifact, LENGTH_PREFIX, MAX_ARTIFACT, MAX_FRAME, NodeMessage, PROTOCOL_VERSION, RejectReason,
+    SupervisorMessage, Unshippable, WireTaskSpec, decode_frame, encode_frame, frame_len,
 };
 
 fn agent() -> Agent {
@@ -757,6 +757,10 @@ fn every_protocol_message_survives_a_round_trip() {
             load: NodeLoad::default(),
             at: Millis(1),
         }),
+        NodeMessage::TaskProduced {
+            task: TaskId(2),
+            artifact: Artifact::new(vec![7u8; 4_096]),
+        },
         NodeMessage::TaskStarted { task: TaskId(2) },
         NodeMessage::TaskFinished {
             task: TaskId(2),
@@ -769,10 +773,15 @@ fn every_protocol_message_survives_a_round_trip() {
     for message in node_messages {
         let mut buf = Vec::new();
         encode_frame(&message, &mut buf).expect("encode");
-        let len = frame_len([buf[0], buf[1]]).expect("length");
-        assert_eq!(len, buf.len() - 2, "the prefix describes the body");
+        let prefix: [u8; LENGTH_PREFIX] = buf[..LENGTH_PREFIX].try_into().expect("prefix");
+        let len = frame_len(prefix).expect("length");
         assert_eq!(
-            decode_frame::<NodeMessage>(&buf[2..]).expect("decode"),
+            len,
+            buf.len() - LENGTH_PREFIX,
+            "the prefix describes the body"
+        );
+        assert_eq!(
+            decode_frame::<NodeMessage>(&buf[LENGTH_PREFIX..]).expect("decode"),
             message
         );
     }
@@ -790,6 +799,19 @@ fn every_protocol_message_survives_a_round_trip() {
             task: TaskId(3),
             spec: WireTaskSpec::Primes { start: 0, end: 10 },
         },
+        SupervisorMessage::Assign {
+            task: TaskId(4),
+            spec: WireTaskSpec::Analysis {
+                version: 12,
+                algorithm: 2,
+                partition: 5,
+                // A realistic partition, not a token one: the frame this
+                // protocol version exists to carry is tens of kilobytes, and a
+                // round trip over four bytes would not have caught the
+                // two-byte length prefix.
+                input: Artifact::new((0..40_000u32).map(|i| i as u8).collect()),
+            },
+        },
         SupervisorMessage::PauseHeartbeat(true),
         SupervisorMessage::InjectFailures(2),
         SupervisorMessage::SetDelay(50),
@@ -799,7 +821,7 @@ fn every_protocol_message_survives_a_round_trip() {
         let mut buf = Vec::new();
         encode_frame(&message, &mut buf).expect("encode");
         assert_eq!(
-            decode_frame::<SupervisorMessage>(&buf[2..]).expect("decode"),
+            decode_frame::<SupervisorMessage>(&buf[LENGTH_PREFIX..]).expect("decode"),
             message
         );
     }
@@ -829,6 +851,269 @@ fn a_heartbeat_frame_stays_within_the_protocol_budget() {
         "a heartbeat frame grew to {} bytes",
         buf.len()
     );
+}
+
+/// A worker that runs a partition, from the assignment to the result.
+///
+/// This is the agent half of Phase 4's wire: a spec `cluster_core` cannot
+/// compute goes to the host-installed handler, with the artifact the
+/// assignment carried, and what it produces is sent **before** the completion.
+/// The order matters -- a coordinator that has seen a task finish has already
+/// been given what it produced, so "completed" is never a moment at which the
+/// result might not have arrived.
+#[test]
+fn a_worker_reports_what_a_partition_produced_before_it_reports_finishing() {
+    /// Echoes its input back with a marker, so the test can tell the artifact
+    /// it received from one it invented.
+    #[derive(Debug)]
+    struct Echo;
+    impl crate::Workload for Echo {
+        fn run(&self, node: NodeId, spec: TaskSpec, input: &[u8]) -> Option<TaskWork> {
+            let TaskSpec::Analysis { partition, .. } = spec else {
+                return None;
+            };
+            let mut artifact = b"out:".to_vec();
+            artifact.extend_from_slice(input);
+            Some(TaskWork::Produced {
+                output: format!("partition {partition} on {node}"),
+                artifact,
+            })
+        }
+    }
+
+    let mut agent = agent().with_workload(std::sync::Arc::new(Echo));
+    agent.handle(welcome(), Millis(0));
+
+    // One `handle`: the agent runs a ready task through its own poll, so the
+    // whole exchange -- started, produced, finished -- comes back at once.
+    let sent = sent(&agent.handle(
+        SupervisorMessage::Assign {
+            task: TaskId(9),
+            spec: WireTaskSpec::Analysis {
+                version: 3,
+                algorithm: 2,
+                partition: 1,
+                input: Artifact::new(b"in".to_vec()),
+            },
+        },
+        Millis(0),
+    ));
+    assert!(matches!(
+        sent.first(),
+        Some(NodeMessage::TaskStarted { task: TaskId(9) })
+    ));
+    match &sent[1] {
+        NodeMessage::TaskProduced { task, artifact } => {
+            assert_eq!(*task, TaskId(9));
+            assert_eq!(
+                artifact.verify(),
+                Some(&b"out:in"[..]),
+                "the handler was given the artifact the assignment carried"
+            );
+        }
+        other => panic!("the result comes first, got {other:?}"),
+    }
+    match &sent[2] {
+        NodeMessage::TaskFinished {
+            task: TaskId(9),
+            outcome: TaskOutcome::Completed { output },
+        } => assert!(output.contains("partition 1"), "{output}"),
+        other => panic!("and the completion after it, got {other:?}"),
+    }
+}
+
+/// A result too large to frame is a **failed** task, not a dropped connection.
+///
+/// The alternative -- letting the transport fail to encode -- costs the socket
+/// and therefore the worker, for a task that only needed to go somewhere else.
+/// Reported as a failure, the scheduler requeues it onto an in-process worker,
+/// where the artifact never leaves memory and no cap applies.
+#[test]
+fn a_result_too_large_to_send_is_reported_rather_than_dropped() {
+    #[derive(Debug)]
+    struct Fat;
+    impl crate::Workload for Fat {
+        fn run(&self, _: NodeId, _: TaskSpec, _: &[u8]) -> Option<TaskWork> {
+            Some(TaskWork::Produced {
+                output: String::from("done"),
+                artifact: vec![0u8; MAX_ARTIFACT + 1],
+            })
+        }
+    }
+
+    let mut agent = agent().with_workload(std::sync::Arc::new(Fat));
+    agent.handle(welcome(), Millis(0));
+    let sent = sent(&agent.handle(
+        SupervisorMessage::Assign {
+            task: TaskId(9),
+            spec: WireTaskSpec::Analysis {
+                version: 3,
+                algorithm: 2,
+                partition: 1,
+                input: Artifact::new(b"in".to_vec()),
+            },
+        },
+        Millis(0),
+    ));
+    assert!(
+        !sent
+            .iter()
+            .any(|m| matches!(m, NodeMessage::TaskProduced { .. })),
+        "nothing that cannot be framed is offered to the encoder"
+    );
+    match sent.last() {
+        Some(NodeMessage::TaskFinished {
+            task: TaskId(9),
+            outcome: TaskOutcome::Failed { detail, .. },
+        }) => assert!(detail.contains(&MAX_ARTIFACT.to_string()), "{detail}"),
+        other => panic!("expected a reported failure, got {other:?}"),
+    }
+}
+
+/// A worker with no handler for a spec says so, rather than reporting a task
+/// that never ran as complete.
+#[test]
+fn a_worker_that_cannot_run_a_spec_fails_it() {
+    let mut agent = agent();
+    agent.handle(welcome(), Millis(0));
+    let sent = sent(&agent.handle(
+        SupervisorMessage::Assign {
+            task: TaskId(9),
+            spec: WireTaskSpec::Analysis {
+                version: 3,
+                algorithm: 2,
+                partition: 1,
+                input: Artifact::new(b"in".to_vec()),
+            },
+        },
+        Millis(0),
+    ));
+    match sent.last() {
+        Some(NodeMessage::TaskFinished {
+            task: TaskId(9),
+            outcome: TaskOutcome::Failed { detail, .. },
+        }) => assert!(detail.contains("cannot run"), "{detail}"),
+        other => panic!("expected a reported failure, got {other:?}"),
+    }
+}
+
+/// The integrity check catches the failure it exists for: bytes that arrived
+/// changed. It is **not** a security control -- anyone who can rewrite the
+/// bytes can rewrite the digest beside them -- and the test is about a
+/// truncated read or an encoder and a decoder that disagree, which is what
+/// would otherwise become a market with plausible numbers in it.
+#[test]
+fn a_damaged_artifact_does_not_pass_for_the_one_that_was_sent() {
+    let mut artifact = Artifact::new(b"one partition of a market analysis".to_vec());
+    assert_eq!(artifact.verify(), Some(&artifact.bytes[..]));
+
+    // One bit, in the middle, of a payload whose length has not changed.
+    artifact.bytes[10] ^= 0b0000_0001;
+    assert!(artifact.verify().is_none(), "a flipped bit is not the same");
+
+    // And a truncation, which is what a short read actually looks like.
+    let mut cut = Artifact::new(vec![3u8; 512]);
+    cut.bytes.truncate(511);
+    assert!(cut.verify().is_none());
+}
+
+/// A task whose input has gone, and a task whose input is too big, are both
+/// refused *before* the wire rather than by it. The transport reports a failed
+/// attempt for either, the scheduler requeues, and the task lands on a worker
+/// that can take it -- which today means an in-process one.
+#[test]
+fn a_task_the_wire_cannot_carry_is_refused_rather_than_sent() {
+    let spec = TaskSpec::Analysis {
+        version: 4,
+        algorithm: 2,
+        partition: 1,
+    };
+
+    let gone = WireTaskSpec::of(spec, None).expect_err("an abandoned candidate has no input");
+    assert_eq!(gone.why, Unshippable::InputGone);
+    assert!(gone.to_string().contains("abandoned"), "{gone}");
+
+    let big = WireTaskSpec::of(spec, Some(vec![0u8; MAX_ARTIFACT + 1]))
+        .expect_err("a partition larger than a frame");
+    assert_eq!(
+        big.why,
+        Unshippable::TooLarge {
+            bytes: MAX_ARTIFACT + 1
+        }
+    );
+
+    // And the size that is measured to be the real one goes.
+    let ok = WireTaskSpec::of(spec, Some(vec![0u8; 145_705])).expect("a worst-case partition");
+    let mut buf = Vec::new();
+    encode_frame(
+        &SupervisorMessage::Assign {
+            task: TaskId(1),
+            spec: ok,
+        },
+        &mut buf,
+    )
+    .expect("a worst-case partition fits a frame");
+    assert!(buf.len() <= MAX_FRAME);
+}
+
+/// The envelope [`MAX_ARTIFACT`] reserves is really enough for one.
+///
+/// It is a subtraction rather than a measurement, so this is what stops it
+/// being a subtraction that turned out to be wrong: an artifact of exactly the
+/// permitted size must encode into a frame the far end will accept, both ways.
+#[test]
+fn an_artifact_of_the_permitted_size_still_fits_its_frame() {
+    let mut buf = Vec::new();
+    encode_frame(
+        &NodeMessage::TaskProduced {
+            task: TaskId(u64::MAX),
+            artifact: Artifact::new(vec![0xAB; MAX_ARTIFACT]),
+        },
+        &mut buf,
+    )
+    .expect("a full-size result fits");
+    assert!(buf.len() <= MAX_FRAME + LENGTH_PREFIX);
+
+    buf.clear();
+    encode_frame(
+        &SupervisorMessage::Assign {
+            task: TaskId(u64::MAX),
+            spec: WireTaskSpec::Analysis {
+                version: u64::MAX,
+                algorithm: u32::MAX,
+                partition: u32::MAX,
+                input: Artifact::new(vec![0xAB; MAX_ARTIFACT]),
+            },
+        },
+        &mut buf,
+    )
+    .expect("a full-size input fits");
+    assert!(buf.len() <= MAX_FRAME + LENGTH_PREFIX);
+}
+
+/// Past the cap, both sides refuse without allocating for it: the encoder
+/// before it writes, and `frame_len` on a declared length before a byte of
+/// body is read.
+#[test]
+fn an_oversized_frame_is_refused_at_both_ends() {
+    let mut buf = Vec::new();
+    let too_big = encode_frame(
+        &NodeMessage::TaskProduced {
+            task: TaskId(1),
+            artifact: Artifact::new(vec![0u8; MAX_FRAME + 1]),
+        },
+        &mut buf,
+    );
+    assert!(matches!(
+        too_big,
+        Err(crate::ProtocolError::FrameTooLarge { .. })
+    ));
+
+    let declared = ((MAX_FRAME + 1) as u32).to_be_bytes();
+    assert!(matches!(
+        frame_len(declared),
+        Err(crate::ProtocolError::FrameTooLarge { .. })
+    ));
 }
 
 #[test]

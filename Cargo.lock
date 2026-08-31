@@ -1843,6 +1843,8 @@ dependencies = [
  "clap",
  "cluster-core",
  "cluster-local",
+ "postcard",
+ "serde",
  "storage",
  "tokio",
  "tracing",

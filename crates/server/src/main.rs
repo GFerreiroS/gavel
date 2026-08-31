@@ -3,6 +3,7 @@
 //! Build the adapters, hand them to the runtime and the router, serve, and
 //! shut down cleanly.
 
+mod analysis_work;
 mod collector_task;
 mod config;
 mod env_file;
@@ -85,7 +86,20 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
     record_boot_configuration(&store, &cli).await;
 
     // One store handle: the runtime persists jobs, events and role assignments.
-    let (cluster, supervisor) = LocalCluster::start(cli.cluster_config(), store.cluster_handle());
+    // The inputs and results of whatever analysis version is being built.
+    //
+    // Both sides of the seam are installed here, because this is the one place
+    // that knows the cluster and the market at once (§3). The *store* is the
+    // coordinator's: it hands out a partition's input and takes back its rows,
+    // whether the worker that ran it was a task in this process or a socket.
+    // The *workload* is every worker's, and it is stateless -- which is what
+    // lets the same one be installed in a `--connect` process that has no
+    // database, no catalogue and no candidate of its own.
+    let artifacts = std::sync::Arc::new(analysis_work::Artifacts::new());
+    let mut cluster_config = cli.cluster_config();
+    cluster_config.workload = Some(std::sync::Arc::new(analysis_work::MarketWorkload::new()));
+    cluster_config.artifacts = Some(artifacts.clone());
+    let (cluster, supervisor) = LocalCluster::start(cluster_config, store.cluster_handle());
     tracing::info!(workers = cli.workers, "worker pool starting");
 
     let characters = RaiderIoClient::new(RaiderIoConfig::default(), clock)
@@ -224,7 +238,11 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
         metrics: Metrics::new(),
     });
 
-    let collector = collector_task::spawn(env.clone());
+    // Whether this process expects workers to dial in, which is the one thing
+    // the boot rebuild cannot work out for itself: a cluster with no nodes yet
+    // and a cluster with no nodes coming look identical from inside.
+    let collector =
+        collector_task::spawn(env.clone(), artifacts.clone(), cli.worker_listen.is_some());
 
     // --- serve ------------------------------------------------------------
     // Told to the handlers that hold a connection open -- the SSE stream --

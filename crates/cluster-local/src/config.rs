@@ -61,6 +61,19 @@ pub struct LocalClusterConfig {
     /// Fill in plausible load/memory numbers for in-process workers. Remote
     /// workers report their own values.
     pub simulate_load: bool,
+    /// What runs a task `cluster_core::workload` cannot compute.
+    ///
+    /// `None` for a cluster that only ever runs the built-in demos. The server
+    /// installs the market materialiser here, which is the one place that
+    /// knows both the cluster and `app-core` (§3) -- and because the worker
+    /// binary is the same binary (§4), a worker process installs the same one.
+    pub workload: Option<std::sync::Arc<dyn cluster_core::Workload>>,
+    /// Where a task's input comes from and where its result goes.
+    ///
+    /// The coordinator's side of the same seam. Installed by the composition
+    /// root beside `workload`; on one machine both point at the same object
+    /// and an artifact never leaves memory.
+    pub artifacts: Option<std::sync::Arc<dyn cluster_core::ArtifactStore>>,
 }
 
 impl Default for LocalClusterConfig {
@@ -78,6 +91,8 @@ impl Default for LocalClusterConfig {
             node_listen: None,
             join_token: None,
             simulate_load: true,
+            workload: None,
+            artifacts: None,
         }
     }
 }

@@ -39,10 +39,13 @@ pub use job::{
 pub use node::{HealthPolicy, Heartbeat, Node, NodeCapabilities, NodeLoad, NodeStatus};
 pub use persist::{ClusterStore, EventLog, JobStore, StoreError, StoreResult};
 pub use protocol::{
-    MAX_FRAME, NodeMessage, PROTOCOL_VERSION, ProtocolError, RejectReason, SupervisorMessage,
-    WireTaskSpec, decode_frame, encode_frame, frame_len, token_accepted,
+    Artifact, LENGTH_PREFIX, MAX_ARTIFACT, MAX_FRAME, NodeMessage, NotShippable, PROTOCOL_VERSION,
+    ProtocolError, RejectReason, SupervisorMessage, Unshippable, WireTaskSpec, decode_frame,
+    encode_frame, frame_len, token_accepted,
 };
 pub use role::{ALL_ROLES, DEGRADATION_PRIORITY, Role, RolePolicies, RolePolicy, RoleSet};
 pub use scheduler::{LeastLoaded, RoundRobin, Scheduler, schedulable};
 pub use time::{Clock, Millis};
-pub use workload::{TaskWork, count_primes, is_prime, primes_output, run_task};
+pub use workload::{
+    ArtifactStore, TaskWork, Workload, count_primes, is_prime, primes_output, run_task,
+};

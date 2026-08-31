@@ -22,7 +22,7 @@
 use crate::ids::{NodeId, TaskId};
 use crate::job::{FailureReason, TaskOutcome, TaskSpec};
 use crate::node::{Heartbeat, NodeCapabilities, NodeLoad};
-use crate::protocol::{NodeMessage, PROTOCOL_VERSION, SupervisorMessage};
+use crate::protocol::{NodeMessage, PROTOCOL_VERSION, SupervisorMessage, WireTaskSpec};
 use crate::time::Millis;
 use crate::workload::{TaskWork, count_primes, primes_output, run_task};
 
@@ -55,6 +55,8 @@ const COMPUTE_SLICE: u64 = 8_000;
 enum Work {
     /// The answer is known; it is only waiting for `ready_at`.
     Ready(String),
+    /// The answer is known and it produced bytes for the coordinator.
+    Produced { output: String, artifact: Vec<u8> },
     /// Still counting, `COMPUTE_SLICE` candidates at a time.
     ///
     /// Carries the worker's identity so that finishing the count never has to
@@ -107,6 +109,13 @@ pub struct Agent {
     /// Shared secret presented in `Hello`. `None` for an in-process worker,
     /// which never crosses a socket and has nothing to prove.
     token: Option<String>,
+    /// What runs a task this crate cannot compute.
+    ///
+    /// Installed by the process that owns the worker -- which is the server
+    /// binary in its `--connect` role (§4), so a remote worker has exactly the
+    /// same handler as an in-process one and "the same code runs in every
+    /// worker" stays a fact rather than an aspiration.
+    workload: Option<std::sync::Arc<dyn crate::Workload>>,
 }
 
 impl Agent {
@@ -137,7 +146,17 @@ impl Agent {
             free_memory_bytes: 0,
             joined: false,
             token: None,
+            workload: None,
         }
+    }
+
+    /// Install the handler for work `cluster_core::workload` cannot compute.
+    ///
+    /// Builder-style so the existing constructors keep their shapes: a worker
+    /// that only ever runs the built-in demos wants nothing to do with this.
+    pub fn with_workload(mut self, workload: std::sync::Arc<dyn crate::Workload>) -> Self {
+        self.workload = Some(workload);
+        self
     }
 
     /// The join token this worker will present.
@@ -208,12 +227,13 @@ impl Agent {
                 self.extra_delay_ms = ms;
                 self.poll(now)
             }
-            SupervisorMessage::Assign { task, spec } => self.accept(task, spec.into(), now),
+            SupervisorMessage::Assign { task, spec } => self.accept(task, &spec, now),
         }
     }
 
     /// Begin a task.
-    fn accept(&mut self, id: TaskId, spec: TaskSpec, now: Millis) -> Vec<Action> {
+    fn accept(&mut self, id: TaskId, wire: &WireTaskSpec, now: Millis) -> Vec<Action> {
+        let spec = TaskSpec::from(wire);
         // Work cannot arrive before `Welcome`, because the coordinator has
         // nowhere to send it until it has a registry entry. If it somehow
         // does, drop it rather than inventing an identity for the result.
@@ -270,9 +290,34 @@ impl Agent {
                     found: 0,
                 },
             ),
-            other => match run_task(node, other) {
-                TaskWork::Done { output } => (0, Work::Ready(output)),
-                TaskWork::Wait { millis, output } => (millis, Work::Ready(output)),
+            other => match run_task(node, other).or_else(|| {
+                // The host's handler, with the artifact the assignment carried.
+                // A corrupt one yields no input and therefore no work, which
+                // becomes the refusal below rather than a market computed from
+                // damaged bytes.
+                let input = wire.input()?;
+                self.workload.as_ref()?.run(node, other, input)
+            }) {
+                Some(TaskWork::Done { output }) => (0, Work::Ready(output)),
+                Some(TaskWork::Wait { millis, output }) => (millis, Work::Ready(output)),
+                Some(TaskWork::Produced { output, artifact }) => {
+                    (0, Work::Produced { output, artifact })
+                }
+                // A spec neither this crate nor the host can run -- a worker
+                // built without the handler, or one whose artifact failed its
+                // integrity check and so had no input to work from. Saying so
+                // is what makes it a requeue onto a worker that can, rather
+                // than a task that never ran being reported as complete.
+                None => {
+                    actions.push(Action::Send(NodeMessage::TaskFinished {
+                        task: id,
+                        outcome: TaskOutcome::Failed {
+                            reason: FailureReason::ExecutionError,
+                            detail: format!("this worker cannot run {}", other.describe()),
+                        },
+                    }));
+                    return actions;
+                }
             },
         };
 
@@ -312,16 +357,54 @@ impl Agent {
         // A finished task is reported before a heartbeat: the result is what
         // the cluster is waiting on.
         if let Some(running) = &self.running
-            && matches!(running.work, Work::Ready(_))
+            && matches!(running.work, Work::Ready(_) | Work::Produced { .. })
             && now >= running.ready_at
         {
             let running = self.running.take().expect("checked just above");
-            let Work::Ready(output) = running.work else {
-                unreachable!("checked just above");
+            // `Err` is a task that ran and cannot be reported, which is a
+            // failure however well the arithmetic went.
+            let outcome = match running.work {
+                Work::Ready(output) => Ok(output),
+                // Too big to frame. Reported as a failure so the scheduler
+                // requeues it onto a worker that can take it -- which today
+                // means an in-process one, where the artifact never leaves
+                // memory and no cap applies.
+                //
+                // Asked of the bytes rather than of the encoded frame because
+                // the encode is where the answer would be one allocation too
+                // late, and because the alternative -- letting the transport
+                // fail to encode -- costs the connection and therefore the
+                // worker, for a task that only needed to go elsewhere.
+                Work::Produced { artifact, .. } if artifact.len() > crate::MAX_ARTIFACT => {
+                    Err(format!(
+                        "this result is {} bytes and a frame carries at most {}",
+                        artifact.len(),
+                        crate::MAX_ARTIFACT
+                    ))
+                }
+                // The artifact goes *before* the completion, so a coordinator
+                // that sees a task finish has already been given what it
+                // produced. The other order would make "completed" a moment at
+                // which the result might not have arrived, which is exactly the
+                // kind of gap a publication would fall into.
+                Work::Produced { output, artifact } => {
+                    actions.push(Action::Send(NodeMessage::TaskProduced {
+                        task: running.id,
+                        artifact: crate::protocol::Artifact::new(artifact),
+                    }));
+                    Ok(output)
+                }
+                Work::Primes { .. } => unreachable!("checked just above"),
             };
             actions.push(Action::Send(NodeMessage::TaskFinished {
                 task: running.id,
-                outcome: TaskOutcome::Completed { output },
+                outcome: match outcome {
+                    Ok(output) => TaskOutcome::Completed { output },
+                    Err(detail) => TaskOutcome::Failed {
+                        reason: FailureReason::ExecutionError,
+                        detail,
+                    },
+                },
             }));
         }
 
@@ -357,7 +440,7 @@ impl Agent {
         let task = self.running.as_ref().map(|r| match r.work {
             // Still computing: come straight back for the next slice.
             Work::Primes { .. } => 0,
-            Work::Ready(_) => r.ready_at.since(now),
+            Work::Ready(_) | Work::Produced { .. } => r.ready_at.since(now),
         });
         match (heartbeat, task) {
             (Some(a), Some(b)) => Some(a.min(b)),

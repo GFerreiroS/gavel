@@ -75,6 +75,12 @@ pub(crate) struct NodeConfig {
     pub capabilities: NodeCapabilities,
     pub heartbeat_interval_ms: u64,
     pub simulate_load: bool,
+    /// What runs a task `cluster_core::workload` cannot. Installed by the
+    /// composition root, which is the only place that knows both the cluster
+    /// and the market (§3).
+    pub workload: Option<std::sync::Arc<dyn cluster_core::Workload>>,
+    /// Where this node's task inputs come from and its results go.
+    pub artifacts: Option<std::sync::Arc<dyn cluster_core::ArtifactStore>>,
 }
 
 /// Spawn a node task and return the handle used to talk to it.
@@ -99,6 +105,8 @@ async fn run_node(
 ) {
     let clock = SystemClock;
     let id = config.id;
+    let workload = config.workload.clone();
+    let artifacts = config.artifacts.clone();
     let mut heartbeat =
         tokio::time::interval(Duration::from_millis(config.heartbeat_interval_ms.max(50)));
     heartbeat.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
@@ -164,8 +172,24 @@ async fn run_node(
                             {
                                 break;
                             }
+                            // Cloned outside the future: the node keeps its
+                            // handler for the next task.
+                            // Cloned outside the future: the node keeps both
+                            // for the next task.
+                            let host = workload.clone();
+                            let store = artifacts.clone();
                             running.spawn(async move {
-                                (task, execute_task(id, spec, delay, fail).await)
+                                let (outcome, produced) =
+                                    execute_task(id, spec, delay, fail, host.as_ref(), store.as_ref())
+                                        .await;
+                                // Delivered here rather than inside the worker,
+                                // so the in-process path and the socket path
+                                // hand a result to the coordinator the same
+                                // way and only the transport differs.
+                                if let (Some(store), Some(bytes)) = (&store, &produced) {
+                                    store.produced(spec, bytes);
+                                }
+                                (task, outcome)
                             });
                         } else {
                             // The supervisor only assigns to idle nodes; if one

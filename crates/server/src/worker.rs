@@ -67,7 +67,21 @@ async fn session(
     // Anonymous: the coordinator hands out identity. A worker that chose its
     // own would collide with itself the moment two replicas started from the
     // same configuration.
-    let mut agent = Agent::anonymous(capabilities, 1_000).with_token(token.map(str::to_string));
+    //
+    // The market handler goes on with it. This process is the *same binary* as
+    // the server (§4), so a remote worker computes a partition with byte-for-
+    // byte the code the coordinator would have used -- which is the property
+    // Phase 4's exit gate is about, and it is true here by construction rather
+    // than by two implementations being kept in step.
+    //
+    // It has no store of its own and needs none: a remote worker holds no
+    // candidate. Its input arrives in the assignment and its result leaves in
+    // a frame, which is the whole of what it is allowed to know.
+    let mut agent = Agent::anonymous(capabilities, 1_000)
+        .with_token(token.map(str::to_string))
+        .with_workload(std::sync::Arc::new(
+            crate::analysis_work::MarketWorkload::new(),
+        ));
 
     let mut out = Vec::with_capacity(256);
     encode_frame(&agent.hello(), &mut out)?;
@@ -83,7 +97,7 @@ async fn session(
     let (frames_tx, mut frames) = tokio::sync::mpsc::channel::<SupervisorMessage>(16);
     let reader = tokio::spawn(async move {
         loop {
-            let mut prefix = [0u8; 2];
+            let mut prefix = [0u8; cluster_core::LENGTH_PREFIX];
             if rd.read_exact(&mut prefix).await.is_err() {
                 break;
             }

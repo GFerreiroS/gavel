@@ -23,11 +23,36 @@ use app_core::service::{Freshness, ItemTooltipService};
 use cluster_core::ClusterControl;
 use cluster_core::Millis;
 
-pub fn spawn<E: Ports>(env: E) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(run(env))
+/// How long the boot rebuild waits for a worker to dial in.
+///
+/// **Found by running it.** A coordinator started with `--workers 0
+/// --worker-listen` has nobody at all for the moment between binding the
+/// socket and the first worker's `Hello`, and the archive rebuild starts in
+/// that moment: it asked whether there was anybody to distribute to, was
+/// correctly told no, and materialised 30,326 markets itself while two worker
+/// processes connected five seconds later and sat idle. Every restart of the
+/// web machine, on the deployment §15 describes.
+///
+/// A few seconds, once, at startup. It is not a fix for a cluster with no
+/// workers -- that case still materialises locally, which is what §16 requires
+/// -- it only stops "nobody has connected *yet*" being read as "nobody is
+/// coming". The regular collection cycle needs none of this: it is half an
+/// hour in, by which time a worker has either joined or is not going to.
+const WORKER_GRACE: Duration = Duration::from_secs(5);
+
+pub fn spawn<E: Ports>(
+    env: E,
+    artifacts: std::sync::Arc<crate::analysis_work::Artifacts>,
+    awaits_workers: bool,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(run(env, artifacts, awaits_workers))
 }
 
-async fn run<E: Ports>(env: E) {
+async fn run<E: Ports>(
+    env: E,
+    artifacts: std::sync::Arc<crate::analysis_work::Artifacts>,
+    awaits_workers: bool,
+) {
     let market = env.market().clone();
     let mut ticker = tokio::time::interval(Duration::from_millis(
         market.collect_interval_ms.max(60_000),
@@ -50,7 +75,7 @@ async fn run<E: Ports>(env: E) {
     }
 
     name_realms(&env).await;
-    backfill(&env).await;
+    backfill(&env, &artifacts, awaits_workers).await;
 
     loop {
         ticker.tick().await;
@@ -70,7 +95,7 @@ async fn run<E: Ports>(env: E) {
         // One version for both halves. Publishing them separately would leave
         // a moment where the consumables page had moved on and the gear page
         // had not, which is exactly what §15 says a reader must never see.
-        crate::materialise_task::publish(&env, &collected, &realms).await;
+        crate::materialise_task::publish(&env, &artifacts, &collected, &realms).await;
         warm_tooltips(&env).await;
         downsample(&env).await;
         prune(&env).await;
@@ -94,7 +119,11 @@ async fn run<E: Ports>(env: E) {
 /// recalculate that market, which for a region that fetches unchanged is
 /// never. An upgrade that quietly serves less than it did is worse than one
 /// that pauses to rebuild, so it rebuilds.
-async fn backfill<E: Ports>(env: &E) {
+async fn backfill<E: Ports>(
+    env: &E,
+    artifacts: &std::sync::Arc<crate::analysis_work::Artifacts>,
+    awaits_workers: bool,
+) {
     let why = match env.store().read_model().published().await {
         Ok(Some(version)) if version.algorithm >= ALGORITHM_VERSION => {
             tracing::info!(
@@ -121,6 +150,10 @@ async fn backfill<E: Ports>(env: &E) {
         }
     };
 
+    if awaits_workers {
+        wait_for_a_worker(env).await;
+    }
+
     let regions = env.market().regions.clone();
     tracing::info!(
         regions = ?regions.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
@@ -130,7 +163,26 @@ async fn backfill<E: Ports>(env: &E) {
     // The previous version stays published throughout, which is the point of
     // staging: a rebuild that takes four seconds is four seconds of the old
     // analysis, not four seconds of an empty site.
-    crate::materialise_task::publish(env, &regions, &regions).await;
+    crate::materialise_task::publish(env, artifacts, &regions, &regions).await;
+}
+
+/// Give a worker [`WORKER_GRACE`] to arrive before deciding there are none.
+///
+/// Only on a deployment that is listening for them -- a coordinator with
+/// in-process workers already has its nodes when this runs, and one with
+/// neither is a server with no cluster and nothing to wait for.
+async fn wait_for_a_worker<E: Ports>(env: &E) {
+    let deadline = tokio::time::Instant::now() + WORKER_GRACE;
+    while tokio::time::Instant::now() < deadline {
+        if !env.cluster().nodes().await.is_empty() {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    tracing::info!(
+        seconds = WORKER_GRACE.as_secs(),
+        "no worker connected in time; materialising the archive here"
+    );
 }
 
 /// Collect every region's commodity snapshot.

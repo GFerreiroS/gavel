@@ -5,17 +5,19 @@
 //! page reads the last complete version with its real timestamp, whatever this
 //! is doing at the time.
 //!
-//! It runs in-process here, called by the collector after a snapshot lands.
-//! Phase 4 moves the pure calculation to remote workers; that changes where
-//! `market::materialise` runs, not what it produces and not who publishes it.
-//! `cargo run` has to keep being the whole story, so the local path is the one
-//! that is written first and stays.
+//! Called by the collector after a snapshot lands. The pure calculation runs
+//! on whatever the cluster has -- an in-process worker, a worker on another
+//! machine, or this task itself when there is nobody -- and that changes only
+//! *where* `market::materialise` runs, never what it produces and never who
+//! publishes it. `cargo run` has to keep being the whole story, so the local
+//! path is the one that stays and the fallback is not an error case.
 
 use app_core::Ports;
 use app_core::market::materialise::{self, ALGORITHM_VERSION, Materialised};
 use app_core::market::window::Window;
-use app_core::market::{Catalog, ItemId, PriceSample, Region};
+use app_core::market::{Catalog, ItemId, Region};
 use app_core::repo::{PriceRepository, ReadModelRepository, RealmPriceRepository, Store};
+use cluster_core::ClusterControl;
 use cluster_core::Millis;
 use std::collections::BTreeMap;
 
@@ -36,6 +38,17 @@ const BATCH: usize = 250;
 /// change what a page covers.
 const REALM_WINDOW: Window = Window::Days(30);
 
+/// How long the coordinator waits for a distributed rebuild before finishing
+/// it itself.
+///
+/// Generous against the measurement: a full commodity materialisation of the
+/// real archive is 0.79 s in one process, so a cluster that has not finished in
+/// a minute is a cluster with a problem rather than a slow one. Giving up is
+/// not abandoning the version -- the local path completes it, which is what
+/// keeps `cargo run` the whole story (§2) and what stops a wedged worker from
+/// costing a publication.
+const CLUSTER_DEADLINE_MS: u64 = 60_000;
+
 /// Recalculate the markets in these regions and publish, in **one** version.
 ///
 /// Commodities and per-realm markets together, deliberately. §15's rule is
@@ -52,7 +65,12 @@ const REALM_WINDOW: Window = Window::Days(30);
 /// where it was. That is the whole point of the staging state, and it is why
 /// this returns `()` rather than propagating -- there is nothing for the
 /// caller to do about it that is better than the next cycle trying again.
-pub async fn publish<E: Ports>(env: &E, commodity: &[Region], per_realm: &[Region]) {
+pub async fn publish<E: Ports>(
+    env: &E,
+    artifacts: &std::sync::Arc<crate::analysis_work::Artifacts>,
+    commodity: &[Region],
+    per_realm: &[Region],
+) {
     // Every catalogue a visitor may see, not only the one being collected.
     //
     // Phase 9's third bullet -- "archived pages use their last published
@@ -100,7 +118,9 @@ pub async fn publish<E: Ports>(env: &E, commodity: &[Region], per_realm: &[Regio
 
     for (kind, region) in passes {
         let outcome = match kind {
-            "commodity" => commodity_region(env, &owners, fallback, region, version, now).await,
+            "commodity" => {
+                commodity_region(env, artifacts, &owners, fallback, region, version, now).await
+            }
             _ => realm_region(env, &owners, &public, fallback, region, version, now).await,
         };
         match outcome {
@@ -150,8 +170,10 @@ struct RegionReport {
     newest: Option<Millis>,
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn commodity_region<E: Ports>(
     env: &E,
+    artifacts: &std::sync::Arc<crate::analysis_work::Artifacts>,
     owners: &BTreeMap<ItemId, &Catalog>,
     fallback: &Catalog,
     region: Region,
@@ -168,7 +190,7 @@ async fn commodity_region<E: Ports>(
     // item -- the same reason `history_in_region` exists. Empty for a market
     // nothing has collected a ladder for yet, which is every market on an
     // archive gathered before Phase 7.
-    let ladders: BTreeMap<ItemId, app_core::market::Ladder> = env
+    let ladders: std::collections::BTreeMap<ItemId, app_core::market::Ladder> = env
         .store()
         .prices()
         .latest_ladders(region)
@@ -176,46 +198,50 @@ async fn commodity_region<E: Ports>(
         .into_iter()
         .map(|(item, _, ladder)| (item, ladder))
         .collect();
-    let no_ladder = app_core::market::Ladder::default();
-
     // One window list per catalogue rather than per market: they are the same
     // dozen strings for every item a catalogue owns, and building them 2,042
     // times would be §11b's linear-scan-inside-a-loop in another costume.
-    let mut windows: BTreeMap<&str, Vec<Window>> = BTreeMap::new();
+    let mut windows: BTreeMap<String, Vec<Window>> = BTreeMap::new();
     for catalog in owners.values() {
         windows
-            .entry(catalog.id.as_str())
+            .entry(catalog.id.clone())
             .or_insert_with(|| Window::all_for(catalog));
     }
     windows
-        .entry(fallback.id.as_str())
+        .entry(fallback.id.clone())
         .or_insert_with(|| Window::all_for(fallback));
 
-    let read_model = env.store().read_model();
+    // Cut into partitions of a measured size. The same cut whichever way the
+    // work is then run, so "the cluster did it" and "this process did it"
+    // cannot be two different partitionings producing two different answers.
+    let owned: BTreeMap<ItemId, std::sync::Arc<Catalog>> = owners
+        .iter()
+        .map(|(item, catalog)| (*item, std::sync::Arc::new((*catalog).clone())))
+        .collect();
+    let spare = std::sync::Arc::new(fallback.clone());
+    let inputs = crate::analysis_work::partition(
+        region,
+        &history,
+        &ladders,
+        |item| owned.get(&item).cloned().unwrap_or_else(|| spare.clone()),
+        |catalog| windows.get(&catalog.id).cloned().unwrap_or_default(),
+        now,
+    );
 
+    let rows = match distribute(env, artifacts, version, inputs).await {
+        Some(rows) => rows,
+        // No cluster capacity, or it did not finish in time. The materialiser
+        // that has always run here finishes the job: §16 requires local
+        // execution to be preserved when there are no remote workers, and this
+        // is that requirement with teeth -- the read path never learns which
+        // way it went.
+        None => local(artifacts, version).await,
+    };
+
+    let read_model = env.store().read_model();
     let mut markets = 0u64;
-    let mut batch: Vec<Materialised> = Vec::with_capacity(BATCH);
-    for group in grouped(&history) {
-        // The catalogue that *owns* this item, not whichever one is active:
-        // an archived tier's windows are read off the catalogue that declared
-        // them, and re-keying its gear under the live one is how a rebuild
-        // quietly drops the windows it was meant to reproduce.
-        let catalog = owners.get(&group[0].item).copied().unwrap_or(fallback);
-        let key = catalog.market_of(&group[0]);
-        let ladder = ladders.get(&key.item()).unwrap_or(&no_ladder);
-        let over = windows
-            .get(catalog.id.as_str())
-            .expect("every owning catalogue has its windows");
-        batch.push(materialise::commodity(
-            key, group, ladder, catalog, over, now,
-        ));
-        if batch.len() >= BATCH {
-            markets += read_model.stage(version, &batch).await?;
-            batch.clear();
-        }
-    }
-    if !batch.is_empty() {
-        markets += read_model.stage(version, &batch).await?;
+    for batch in rows.chunks(BATCH) {
+        markets += read_model.stage(version, batch).await?;
     }
 
     Ok(RegionReport {
@@ -225,25 +251,151 @@ async fn commodity_region<E: Ports>(
     })
 }
 
-/// Split a region's history into one slice per market.
+/// Run this version's partitions on the cluster, and return their rows.
 ///
-/// The rows arrive ordered by item, so this is a walk rather than a sort or a
-/// map. Same property `history_in_region` is written to have.
-fn grouped(history: &[PriceSample]) -> impl Iterator<Item = &[PriceSample]> {
-    let mut start = 0;
-    std::iter::from_fn(move || {
-        if start >= history.len() {
+/// `None` when the cluster cannot or did not do it, which is a signal to
+/// finish locally rather than an error: nothing has been staged yet, so
+/// falling back costs the work again and nothing else.
+async fn distribute<E: Ports>(
+    env: &E,
+    artifacts: &std::sync::Arc<crate::analysis_work::Artifacts>,
+    version: u64,
+    inputs: Vec<crate::analysis_work::Input>,
+) -> Option<Vec<Materialised>> {
+    if inputs.is_empty() {
+        return Some(Vec::new());
+    }
+
+    // Is there anything to distribute *to*? Asked before submitting, because
+    // discovering it afterwards means waiting out the deadline: with
+    // `--workers 0` and no remote worker attached, the job sat unassigned and
+    // every region paid a full minute before falling back -- four minutes to
+    // start a server. §16 asks for local execution to be preserved when there
+    // are no remote workers, and a minute of waiting is tolerating that case
+    // rather than preserving it.
+    let takers = env
+        .cluster()
+        .nodes()
+        .await
+        .into_iter()
+        .filter(|node| {
+            // Alive, and not asked about its roles.
+            //
+            // Starting counts because a node that has just come up will take
+            // the task by the time it is dispatched. The *role* is deliberately
+            // not checked: a worker joins with an empty role set and the
+            // supervisor assigns Compute on a later tick, so requiring it here
+            // sent every rebuild local for the first seconds of a process --
+            // three remote workers connected, and the coordinator materialised
+            // the whole archive itself while they sat idle. Eligibility is the
+            // scheduler's decision and it already makes it; what this asks is
+            // only whether there is anybody at all, and the deadline below is
+            // what covers a cluster whose nodes never become eligible.
+            matches!(
+                node.status,
+                cluster_core::NodeStatus::Healthy | cluster_core::NodeStatus::Starting
+            )
+        })
+        .count();
+    if takers == 0 {
+        tracing::debug!("no compute node is available; materialising here");
+        artifacts.begin(version, ALGORITHM_VERSION, inputs);
+        return None;
+    }
+
+    let partitions = artifacts.begin(version, ALGORITHM_VERSION, inputs);
+
+    let job = match env
+        .cluster()
+        .submit_job(cluster_core::JobSpec::Analysis {
+            version,
+            algorithm: ALGORITHM_VERSION,
+            partitions,
+        })
+        .await
+    {
+        Ok(id) => id,
+        Err(error) => {
+            tracing::info!(%error, "no cluster capacity for the analysis; running it here");
             return None;
         }
-        let item = history[start].item;
-        let mut end = start;
-        while end < history.len() && history[end].item == item {
-            end += 1;
+    };
+
+    let started = std::time::Instant::now();
+    loop {
+        if let Some(rows) = artifacts.collect(version) {
+            tracing::info!(
+                %job, version, partitions,
+                seconds = started.elapsed().as_secs_f32(),
+                "the cluster materialised this version"
+            );
+            return Some(rows);
         }
-        let group = &history[start..end];
-        start = end;
-        Some(group)
-    })
+        if let Some(detail) = env.cluster().job(job).await
+            && detail.job.state.is_terminal()
+        {
+            // Terminal without every partition back is a failed rebuild, not a
+            // partial one. §15's third point: an incomplete candidate stays
+            // unreachable, so this returns nothing and the caller redoes it.
+            let (done, all) = artifacts.done();
+            tracing::warn!(
+                %job, version, done, all, state = ?detail.job.state,
+                "the cluster finished without every partition; falling back"
+            );
+            return None;
+        }
+        if started.elapsed().as_millis() as u64 > CLUSTER_DEADLINE_MS {
+            let (done, all) = artifacts.done();
+            tracing::warn!(%job, version, done, all, "the cluster did not finish in time");
+            return None;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
+/// Materialise every registered partition in this process.
+///
+/// The same function a worker runs, called directly. That is what makes the
+/// local and distributed paths produce the same rows rather than two
+/// implementations that agree today.
+async fn local(
+    artifacts: &std::sync::Arc<crate::analysis_work::Artifacts>,
+    version: u64,
+) -> Vec<Materialised> {
+    let workload = crate::analysis_work::MarketWorkload::new();
+    let (_, all) = artifacts.done();
+    let here = cluster_core::NodeId(0);
+    let store = artifacts.clone();
+    // On the blocking pool: this is the same CPU-bound reduction a worker
+    // does, and doing it on the async runtime would stall every heartbeat in
+    // the process (§5).
+    //
+    // Through the same two ports a worker goes through -- fetch the input,
+    // return the artifact -- rather than reaching into the store directly.
+    // Same code, one transport shorter, which is what makes "local and remote
+    // agree" a property of the design instead of a test that keeps passing.
+    let handle = tokio::task::spawn_blocking(move || {
+        use cluster_core::{ArtifactStore, Workload};
+        for partition in 0..all as u32 {
+            let spec = cluster_core::TaskSpec::Analysis {
+                version,
+                algorithm: ALGORITHM_VERSION,
+                partition,
+            };
+            let Some(input) = store.input(spec) else {
+                continue;
+            };
+            if let Some(cluster_core::TaskWork::Produced { artifact, .. }) =
+                workload.run(here, spec, &input)
+            {
+                store.produced(spec, &artifact);
+            }
+        }
+    });
+    if let Err(error) = handle.await {
+        tracing::warn!(%error, "the local materialiser panicked");
+    }
+    artifacts.collect(version).unwrap_or_default()
 }
 
 /// Roll one region's per-realm markets up, region-wide and per realm.

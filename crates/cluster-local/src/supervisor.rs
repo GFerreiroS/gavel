@@ -372,6 +372,8 @@ where
                 capabilities: entry.node.capabilities,
                 heartbeat_interval_ms: self.config.health.heartbeat_interval_ms,
                 simulate_load: self.config.simulate_load,
+                workload: self.config.workload.clone(),
+                artifacts: self.config.artifacts.clone(),
             },
             self.reports_tx.clone(),
         );

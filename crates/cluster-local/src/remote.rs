@@ -23,8 +23,9 @@ use std::net::SocketAddr;
 use std::time::Duration;
 
 use cluster_core::{
-    Heartbeat, NodeId, NodeMessage, PROTOCOL_VERSION, RejectReason, SupervisorMessage, Task,
-    TaskId, decode_frame, encode_frame, frame_len, token_accepted,
+    FailureReason, Heartbeat, NodeId, NodeMessage, PROTOCOL_VERSION, RejectReason,
+    SupervisorMessage, Task, TaskId, TaskOutcome, WireTaskSpec, decode_frame, encode_frame,
+    frame_len, token_accepted,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
@@ -48,6 +49,7 @@ pub(crate) async fn serve(
     listener: TcpListener,
     commands: mpsc::Sender<Command>,
     token: Option<String>,
+    artifacts: Option<std::sync::Arc<dyn cluster_core::ArtifactStore>>,
 ) {
     let local = listener
         .local_addr()
@@ -73,8 +75,9 @@ pub(crate) async fn serve(
         }
         let commands = commands.clone();
         let token = token.clone();
+        let artifacts = artifacts.clone();
         tokio::spawn(async move {
-            if let Err(e) = connection(socket, peer, commands, token.as_deref()).await {
+            if let Err(e) = connection(socket, peer, commands, token.as_deref(), artifacts).await {
                 tracing::debug!(peer = %peer, error = %e, "node connection ended");
             }
         });
@@ -87,6 +90,7 @@ async fn connection(
     peer: SocketAddr,
     commands: mpsc::Sender<Command>,
     token: Option<&str>,
+    artifacts: Option<std::sync::Arc<dyn cluster_core::ArtifactStore>>,
 ) -> std::io::Result<()> {
     // Frames are small and latency matters: a heartbeat held back by Nagle's
     // algorithm is a node that looks slower than it is.
@@ -231,7 +235,13 @@ async fn connection(
 
             message = inbox.recv() => {
                 let Some(message) = message else { break Ok(()) };
-                let outbound = match message {
+                out.clear();
+                // Each arm fills `out` itself, because the assignment is the
+                // one that can decline to. Encoding after the match, as this
+                // used to, meant a task the wire could not carry was already
+                // recorded as this node's -- assigned to a worker that never
+                // received it, and held until a health timeout noticed.
+                let refused = match message {
                     NodeInbox::Assign(task) => {
                         if let Some(previous) = &assigned {
                             tracing::warn!(
@@ -239,20 +249,59 @@ async fn connection(
                                 "assigning over a task this node had not finished"
                             );
                         }
-                        let outbound = SupervisorMessage::Assign {
-                            task: task.id,
-                            spec: task.spec.into(),
-                        };
-                        assigned = Some(*task);
-                        outbound
+                        // The coordinator fetches the input and puts it in the
+                        // assignment: a worker has no database to fetch it
+                        // from, which is the property that lets it be on
+                        // another machine at all.
+                        let input = artifacts.as_ref().and_then(|a| a.input(task.spec));
+                        match ship(task.id, task.spec, input, &mut out) {
+                            Ok(()) => {
+                                assigned = Some(*task);
+                                None
+                            }
+                            Err(why) => Some((task, why)),
+                        }
                     }
-                    NodeInbox::PauseHeartbeat(paused) => SupervisorMessage::PauseHeartbeat(paused),
-                    NodeInbox::InjectFailures(count) => SupervisorMessage::InjectFailures(count),
-                    NodeInbox::SetDelay(ms) => SupervisorMessage::SetDelay(ms),
+                    // Control frames: a task id and a number, with nothing to
+                    // requeue if the encoder somehow refuses one.
+                    other => {
+                        let control = match other {
+                            NodeInbox::PauseHeartbeat(paused) => {
+                                SupervisorMessage::PauseHeartbeat(paused)
+                            }
+                            NodeInbox::InjectFailures(count) => {
+                                SupervisorMessage::InjectFailures(count)
+                            }
+                            NodeInbox::SetDelay(ms) => SupervisorMessage::SetDelay(ms),
+                            NodeInbox::Assign(_) => unreachable!("matched above"),
+                        };
+                        if encode_frame(&control, &mut out).is_err() {
+                            tracing::error!(node = %id, "could not encode a message for this node");
+                            out.clear();
+                        }
+                        None
+                    }
                 };
-                out.clear();
-                if encode_frame(&outbound, &mut out).is_err() {
-                    tracing::error!(node = %id, "could not encode a message for this node");
+                // A task the wire cannot carry is reported as a failed
+                // attempt, so the scheduler requeues it and it lands on a
+                // worker that can run it -- which today means an in-process
+                // one, where an artifact never leaves memory.
+                if let Some((task, why)) = refused {
+                    tracing::warn!(node = %id, task = %task.id, %why,
+                        "refusing to assign a task this worker cannot be sent");
+                    let _ = reports
+                        .send(NodeReport::TaskFinished {
+                            node: id,
+                            task,
+                            outcome: TaskOutcome::Failed {
+                                reason: FailureReason::ExecutionError,
+                                detail: why,
+                            },
+                        })
+                        .await;
+                    continue;
+                }
+                if out.is_empty() {
                     continue;
                 }
                 if let Err(e) = wr.write_all(&out).await {
@@ -271,6 +320,33 @@ async fn connection(
                     }
                     NodeMessage::TaskStarted { task } => match_task(&assigned, task, id)
                         .map(|task| NodeReport::TaskStarted { node: id, task }),
+                    // The result, before the completion. Delivered to the same
+                    // store the in-process path writes to, so only the
+                    // transport differs and the coordinator cannot tell which
+                    // way a partition arrived.
+                    //
+                    // A corrupt artifact is dropped rather than staged: the
+                    // task then completes with nothing recorded for it, the
+                    // candidate stays incomplete, and the coordinator redoes
+                    // it. A market computed from damaged bytes would render
+                    // perfectly and be wrong, which is the failure this digest
+                    // exists to prevent.
+                    NodeMessage::TaskProduced { task, artifact } => {
+                        if let Some(task) = match_task(&assigned, task, id) {
+                            match (artifact.verify(), &artifacts) {
+                                (Some(bytes), Some(store)) => store.produced(task.spec, bytes),
+                                (None, _) => tracing::warn!(
+                                    node = %id, task = %task.id,
+                                    "discarding a result whose integrity check failed"
+                                ),
+                                (_, None) => tracing::warn!(
+                                    node = %id, task = %task.id,
+                                    "a worker produced a result and nothing is here to take it"
+                                ),
+                            }
+                        }
+                        None
+                    }
                     NodeMessage::TaskFinished { task, outcome } => {
                         let report = match_task(&assigned, task, id)
                             .map(|task| NodeReport::TaskFinished { node: id, task, outcome });
@@ -305,6 +381,25 @@ async fn connection(
     result
 }
 
+/// Put one assignment in `out`, or say why it cannot go.
+///
+/// Two refusals and one ending. `WireTaskSpec::of` declines a task whose input
+/// has gone or is larger than a frame carries; the encode declines what is
+/// somehow larger still. Neither costs the connection: the caller reports a
+/// failed attempt and the scheduler places the task somewhere it fits.
+fn ship(
+    id: TaskId,
+    spec: cluster_core::TaskSpec,
+    input: Option<Vec<u8>>,
+    out: &mut Vec<u8>,
+) -> Result<(), String> {
+    let spec = WireTaskSpec::of(spec, input).map_err(|why| why.to_string())?;
+    encode_frame(&SupervisorMessage::Assign { task: id, spec }, out).map_err(|why| {
+        out.clear();
+        why.to_string()
+    })
+}
+
 /// Resolve a task id reported by a worker against the task it was actually
 /// given. A mismatch means the report is stale -- the task was requeued
 /// elsewhere while the worker was still working on it -- and is dropped here
@@ -325,7 +420,7 @@ async fn reject(wr: &mut OwnedWriteHalf, reason: RejectReason) -> std::io::Resul
 
 /// Read one length-prefixed frame. `None` means the peer closed cleanly.
 async fn read_frame(rd: &mut OwnedReadHalf) -> std::io::Result<Option<NodeMessage>> {
-    let mut prefix = [0u8; 2];
+    let mut prefix = [0u8; cluster_core::LENGTH_PREFIX];
     match rd.read_exact(&mut prefix).await {
         Ok(_) => {}
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
