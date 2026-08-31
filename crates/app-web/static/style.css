@@ -264,6 +264,8 @@
 .alert-info .icon { flex-shrink: 0; margin-top: .1rem; color: var(--pico-primary); }
 .alert-info .hint { margin: 0; }
 
+.credit { display: block; font-size: .75em; }
+
 /* --- inline icons ----------------------------------------------------------
    Heroicons 24x24 outline, `stroke="currentColor"` -- they take whatever
    colour their container sets. Sized down from the 24px source: at 1.35rem
