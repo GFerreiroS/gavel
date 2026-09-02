@@ -91,6 +91,20 @@ Dockerfile            One image for both roles.
 compose.yml           Web + scalable workers on one host.
 ```
 
+### Documents
+
+- [`docs/market-analysis.md`](docs/market-analysis.md) — what the analysis
+  means. The source of truth for statistical semantics, windows, and what the
+  source data may and may not be said to show.
+- [`docs/roadmap.md`](docs/roadmap.md) — planned work, and the decisions behind
+  it. What we are adopting from Project Shatari and TSM, what we are refusing
+  and why, and the storage design that constrains the rest. Nothing in it is
+  implemented yet.
+- [`docs/tier-rollover.md`](docs/tier-rollover.md) — the runbook for taking a
+  new patch or raid tier live as a data change.
+- [`docs/bench/README.md`](docs/bench/README.md) — what each benchmark number
+  is, and what it does not claim.
+
 ### Container provenance and updates
 
 The Dockerfile keeps the readable Debian/Rust tags and pins their multi-arch
