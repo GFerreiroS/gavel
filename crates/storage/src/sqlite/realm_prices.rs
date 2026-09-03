@@ -5,12 +5,14 @@
 //! step towards a query that mixes a commodity's unit price with a gear
 //! buyout.
 
+use std::collections::BTreeMap;
+
 use app_core::error::RepoResult;
 use app_core::market::{Copper, ItemId, Ladder, Realm, RealmId, RealmSample, Region};
 use app_core::repo::RealmPriceRepository;
 use cluster_core::Millis;
 use sqlx::sqlite::SqliteRow;
-use sqlx::{Pool, Row, Sqlite};
+use sqlx::{Pool, Row, Sqlite, Transaction};
 
 use super::{corrupt, map_err};
 
@@ -40,6 +42,35 @@ fn sample_from_row(row: &SqliteRow) -> RepoResult<RealmSample> {
     })
 }
 
+/// Resolve the storage-only dictionary key while keeping the domain boundary
+/// expressed as the stable, full bonus-list string.
+async fn variant_id(
+    tx: &mut Transaction<'_, Sqlite>,
+    cache: &mut BTreeMap<String, i64>,
+    variant: &str,
+) -> RepoResult<i64> {
+    if let Some(id) = cache.get(variant) {
+        return Ok(*id);
+    }
+
+    sqlx::query(
+        "INSERT INTO market_variants (variant) VALUES (?)
+         ON CONFLICT(variant) DO NOTHING",
+    )
+    .bind(variant)
+    .execute(&mut **tx)
+    .await
+    .map_err(map_err)?;
+
+    let id = sqlx::query_scalar("SELECT variant_id FROM market_variants WHERE variant = ?")
+        .bind(variant)
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(map_err)?;
+    cache.insert(variant.to_owned(), id);
+    Ok(id)
+}
+
 /// The newest row per (item, realm, variant), for a whole region or one realm.
 ///
 /// The newest row for every market, which is what a price page is.
@@ -60,13 +91,15 @@ fn sample_from_row(row: &SqliteRow) -> RepoResult<RealmSample> {
 /// adapter would reject the query outright rather than answer it differently,
 /// which is the failure mode to want.
 const LATEST: &str = "
-    SELECT item_id, region, realm_id, variant, MAX(observed_at) AS observed_at,
-           min_price, median_price, max_price, listings
-      FROM realm_price_samples
-     WHERE region = ?";
+    SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+           MAX(samples.observed_at) AS observed_at,
+           samples.min_price, samples.median_price, samples.max_price, samples.listings
+      FROM realm_price_samples AS samples
+      JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+     WHERE samples.region = ?";
 
 /// Closes [`LATEST`], grouping by what makes a market a market.
-const BY_MARKET: &str = " GROUP BY item_id, realm_id, variant";
+const BY_MARKET: &str = " GROUP BY samples.item_id, samples.realm_id, samples.variant_id";
 
 impl RealmPriceRepository for SqliteRealmPrices {
     async fn record_snapshot(
@@ -78,19 +111,21 @@ impl RealmPriceRepository for SqliteRealmPrices {
         ladders: &[(ItemId, String, Ladder)],
     ) -> RepoResult<(u64, u64)> {
         let mut tx = self.pool.begin().await.map_err(map_err)?;
+        let mut variants = BTreeMap::new();
         let mut sample_rows = 0u64;
         for sample in samples {
+            let variant_id = variant_id(&mut tx, &mut variants, &sample.variant).await?;
             sample_rows += sqlx::query(
                 "INSERT INTO realm_price_samples
-                   (item_id, region, realm_id, variant, observed_at,
+                   (item_id, region, realm_id, variant_id, observed_at,
                     min_price, median_price, max_price, listings)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(item_id, region, realm_id, variant, observed_at) DO NOTHING",
+                 ON CONFLICT(item_id, region, realm_id, variant_id, observed_at) DO NOTHING",
             )
             .bind(sample.item.get() as i64)
             .bind(sample.region.as_str())
             .bind(sample.realm.get() as i64)
-            .bind(&sample.variant)
+            .bind(variant_id)
             .bind(sample.observed_at.get() as i64)
             .bind(sample.min_price.get() as i64)
             .bind(sample.median_price.get() as i64)
@@ -103,15 +138,16 @@ impl RealmPriceRepository for SqliteRealmPrices {
         }
         let mut ladder_rows = 0u64;
         for (item, variant, ladder) in ladders.iter().filter(|(_, _, ladder)| !ladder.is_empty()) {
+            let variant_id = variant_id(&mut tx, &mut variants, variant).await?;
             ladder_rows += sqlx::query(
                 "INSERT OR IGNORE INTO realm_price_ladders
-                   (item_id, region, realm_id, variant, observed_at, levels, total, steps)
+                   (item_id, region, realm_id, variant_id, observed_at, levels, total, steps)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(item.get() as i64)
             .bind(region.as_str())
             .bind(realm.get() as i64)
-            .bind(variant)
+            .bind(variant_id)
             .bind(observed_at.get() as i64)
             .bind(ladder.levels() as i64)
             .bind(ladder.total() as i64)
@@ -131,19 +167,21 @@ impl RealmPriceRepository for SqliteRealmPrices {
             return Ok(0);
         }
         let mut tx = self.pool.begin().await.map_err(map_err)?;
+        let mut variants = BTreeMap::new();
         let mut written = 0u64;
         for sample in samples {
+            let variant_id = variant_id(&mut tx, &mut variants, &sample.variant).await?;
             let result = sqlx::query(
                 "INSERT INTO realm_price_samples
-                   (item_id, region, realm_id, variant, observed_at,
+                   (item_id, region, realm_id, variant_id, observed_at,
                     min_price, median_price, max_price, listings)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(item_id, region, realm_id, variant, observed_at) DO NOTHING",
+                 ON CONFLICT(item_id, region, realm_id, variant_id, observed_at) DO NOTHING",
             )
             .bind(sample.item.get() as i64)
             .bind(sample.region.as_str())
             .bind(sample.realm.get() as i64)
-            .bind(&sample.variant)
+            .bind(variant_id)
             .bind(sample.observed_at.get() as i64)
             .bind(sample.min_price.get() as i64)
             .bind(sample.median_price.get() as i64)
@@ -169,20 +207,22 @@ impl RealmPriceRepository for SqliteRealmPrices {
             return Ok(0);
         }
         let mut tx = self.pool.begin().await.map_err(map_err)?;
+        let mut variants = BTreeMap::new();
         let mut written = 0u64;
         for (item, variant, ladder) in ladders {
             if ladder.is_empty() {
                 continue;
             }
+            let variant_id = variant_id(&mut tx, &mut variants, variant).await?;
             let result = sqlx::query(
                 "INSERT OR IGNORE INTO realm_price_ladders
-                   (item_id, region, realm_id, variant, observed_at, levels, total, steps)
+                   (item_id, region, realm_id, variant_id, observed_at, levels, total, steps)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(item.get() as i64)
             .bind(region.as_str())
             .bind(realm.get() as i64)
-            .bind(variant)
+            .bind(variant_id)
             .bind(observed_at.get() as i64)
             .bind(ladder.levels() as i64)
             .bind(ladder.total() as i64)
@@ -202,10 +242,12 @@ impl RealmPriceRepository for SqliteRealmPrices {
         item: ItemId,
     ) -> RepoResult<Vec<(RealmId, String, Millis, Ladder)>> {
         let rows = sqlx::query(
-            "SELECT realm_id, variant, max(observed_at) AS observed_at, steps
-               FROM realm_price_ladders
-              WHERE region = ? AND item_id = ?
-              GROUP BY realm_id, variant",
+            "SELECT ladders.realm_id, variants.variant,
+                    max(ladders.observed_at) AS observed_at, ladders.steps
+               FROM realm_price_ladders AS ladders
+               JOIN market_variants AS variants ON variants.variant_id = ladders.variant_id
+              WHERE ladders.region = ? AND ladders.item_id = ?
+              GROUP BY ladders.realm_id, ladders.variant_id",
         )
         .bind(region.as_str())
         .bind(item.get() as i64)
@@ -233,10 +275,12 @@ impl RealmPriceRepository for SqliteRealmPrices {
         // the same `max(observed_at)` with bare columns §11b records as a
         // SQLite promise rather than SQL.
         let rows = sqlx::query(
-            "SELECT realm_id, item_id, variant, max(observed_at) AS observed_at, steps
-               FROM realm_price_ladders
-              WHERE region = ?
-              GROUP BY realm_id, item_id, variant",
+            "SELECT ladders.realm_id, ladders.item_id, variants.variant,
+                    max(ladders.observed_at) AS observed_at, ladders.steps
+               FROM realm_price_ladders AS ladders
+               JOIN market_variants AS variants ON variants.variant_id = ladders.variant_id
+              WHERE ladders.region = ?
+              GROUP BY ladders.realm_id, ladders.item_id, ladders.variant_id",
         )
         .bind(region.as_str())
         .fetch_all(&self.pool)
@@ -265,7 +309,7 @@ impl RealmPriceRepository for SqliteRealmPrices {
     }
 
     async fn latest(&self, region: Region, realm: RealmId) -> RepoResult<Vec<RealmSample>> {
-        let sql = format!("{LATEST} AND realm_id = ?{BY_MARKET}");
+        let sql = format!("{LATEST} AND samples.realm_id = ?{BY_MARKET}");
         let rows = sqlx::query(&sql)
             .bind(region.as_str())
             .bind(realm.get() as i64)
@@ -293,11 +337,13 @@ impl RealmPriceRepository for SqliteRealmPrices {
         // Ordered by market and then by time, which is what the materialiser
         // groups on and what the window index already holds.
         let rows = sqlx::query(
-            "SELECT item_id, region, realm_id, variant, observed_at,
-                    min_price, median_price, max_price, listings
-               FROM realm_price_samples
-              WHERE region = ? AND observed_at >= ?
-              ORDER BY item_id, realm_id, variant, observed_at",
+            "SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+                    samples.observed_at, samples.min_price, samples.median_price,
+                    samples.max_price, samples.listings
+               FROM realm_price_samples AS samples
+               JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+              WHERE samples.region = ? AND samples.observed_at >= ?
+              ORDER BY samples.item_id, samples.realm_id, samples.variant_id, samples.observed_at",
         )
         .bind(region.as_str())
         .bind(since.get() as i64)
@@ -315,11 +361,14 @@ impl RealmPriceRepository for SqliteRealmPrices {
         since: Millis,
     ) -> RepoResult<Vec<RealmSample>> {
         let rows = sqlx::query(
-            "SELECT item_id, region, realm_id, variant, observed_at,
-                    min_price, median_price, max_price, listings
-               FROM realm_price_samples
-              WHERE item_id = ? AND region = ? AND realm_id = ? AND observed_at >= ?
-              ORDER BY observed_at",
+            "SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+                    samples.observed_at, samples.min_price, samples.median_price,
+                    samples.max_price, samples.listings
+               FROM realm_price_samples AS samples
+               JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+              WHERE samples.item_id = ? AND samples.region = ?
+                    AND samples.realm_id = ? AND samples.observed_at >= ?
+              ORDER BY samples.observed_at",
         )
         .bind(item.get() as i64)
         .bind(region.as_str())
@@ -338,11 +387,13 @@ impl RealmPriceRepository for SqliteRealmPrices {
         since: Millis,
     ) -> RepoResult<Vec<RealmSample>> {
         let rows = sqlx::query(
-            "SELECT item_id, region, realm_id, variant, observed_at,
-                    min_price, median_price, max_price, listings
-               FROM realm_price_samples
-              WHERE item_id = ? AND region = ? AND observed_at >= ?
-              ORDER BY observed_at",
+            "SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+                    samples.observed_at, samples.min_price, samples.median_price,
+                    samples.max_price, samples.listings
+               FROM realm_price_samples AS samples
+               JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+              WHERE samples.item_id = ? AND samples.region = ? AND samples.observed_at >= ?
+              ORDER BY samples.observed_at",
         )
         .bind(item.get() as i64)
         .bind(region.as_str())
@@ -372,9 +423,9 @@ impl RealmPriceRepository for SqliteRealmPrices {
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         sqlx::query(
             "INSERT INTO realm_price_samples
-                 (item_id, region, realm_id, variant, observed_at,
+                 (item_id, region, realm_id, variant_id, observed_at,
                   min_price, median_price, max_price, listings)
-             SELECT item_id, region, realm_id, variant,
+             SELECT item_id, region, realm_id, variant_id,
                     (observed_at / 86400000) * 86400000,
                     MIN(min_price),
                     CAST(AVG(median_price) AS INTEGER),
@@ -382,8 +433,8 @@ impl RealmPriceRepository for SqliteRealmPrices {
                     CAST(AVG(listings) AS INTEGER)
                FROM realm_price_samples
               WHERE observed_at < ?
-              GROUP BY item_id, region, realm_id, variant, (observed_at / 86400000)
-             ON CONFLICT(item_id, region, realm_id, variant, observed_at) DO UPDATE SET
+              GROUP BY item_id, region, realm_id, variant_id, (observed_at / 86400000)
+             ON CONFLICT(item_id, region, realm_id, variant_id, observed_at) DO UPDATE SET
                     min_price    = excluded.min_price,
                     median_price = excluded.median_price,
                     max_price    = excluded.max_price,

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
+import subprocess
 import sys
 import textwrap
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 OUTPUT = REPO / "docs" / "bench" / "query-plans.md"
+SYNTHETIC_FIXTURE = Path("target/bench/market-synthetic.db")
 
 
 @dataclass(frozen=True)
@@ -97,13 +99,15 @@ QUERIES = [
     Query(
         name="per-realm latest, whole region",
         source="crates/storage/src/sqlite/realm_prices.rs",
-        anchor="SELECT item_id, region, realm_id, variant, MAX(observed_at) AS observed_at",
+        anchor="SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,",
         sql="""
-            SELECT item_id, region, realm_id, variant, MAX(observed_at) AS observed_at,
-                   min_price, median_price, max_price, listings
-              FROM realm_price_samples
-             WHERE region = ?
-             GROUP BY item_id, realm_id, variant
+            SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+                   MAX(samples.observed_at) AS observed_at, samples.min_price,
+                   samples.median_price, samples.max_price, samples.listings
+              FROM realm_price_samples AS samples
+              JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+             WHERE samples.region = ?
+             GROUP BY samples.item_id, samples.realm_id, samples.variant_id
         """,
         params=(REGION,),
         why="the gear and recipe pages: 18k markets rebuilt to draw nine cards",
@@ -113,11 +117,13 @@ QUERIES = [
         source="crates/storage/src/sqlite/realm_prices.rs",
         anchor="const BY_MARKET",
         sql="""
-            SELECT item_id, region, realm_id, variant, MAX(observed_at) AS observed_at,
-                   min_price, median_price, max_price, listings
-              FROM realm_price_samples
-             WHERE region = ? AND realm_id = ?
-             GROUP BY item_id, realm_id, variant
+            SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+                   MAX(samples.observed_at) AS observed_at, samples.min_price,
+                   samples.median_price, samples.max_price, samples.listings
+              FROM realm_price_samples AS samples
+              JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+             WHERE samples.region = ? AND samples.realm_id = ?
+             GROUP BY samples.item_id, samples.realm_id, samples.variant_id
         """,
         params=(REGION, REALM),
         why="the same pages once a realm is chosen",
@@ -125,13 +131,15 @@ QUERIES = [
     Query(
         name="per-realm history, one item across a region",
         source="crates/storage/src/sqlite/realm_prices.rs",
-        anchor="WHERE item_id = ? AND region = ? AND observed_at >= ?",
+        anchor="WHERE samples.item_id = ? AND samples.region = ?",
         sql="""
-            SELECT item_id, region, realm_id, variant, observed_at,
-                   min_price, median_price, max_price, listings
-              FROM realm_price_samples
-             WHERE item_id = ? AND region = ? AND observed_at >= ?
-             ORDER BY observed_at
+            SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+                   samples.observed_at, samples.min_price, samples.median_price,
+                   samples.max_price, samples.listings
+              FROM realm_price_samples AS samples
+              JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+             WHERE samples.item_id = ? AND samples.region = ? AND samples.observed_at >= ?
+             ORDER BY samples.observed_at
         """,
         params=(REALM_ITEM, REGION, SINCE),
         why="the BoE analysis page: one track on every realm of a region",
@@ -190,7 +198,10 @@ def render(database: Path, db: sqlite3.Connection) -> str:
         "moved -- CLAUDE.md §11b's rule is to check the plan, and a plan nobody",
         "wrote down is a plan nobody can compare against.",
         "",
-        f"Fixture: `{database}`  ",
+        f"Fixture: `{database}`",
+        "The deterministic synthetic fixture is generated on demand for this"
+        " check; query-plan shape is reproducible, while latency remains a"
+        " real-archive measurement.",
         f"`sqlite_stat1` present: **{'yes' if statistics else 'no'}**"
         " -- the planner guesses without it, and guessed four times slower on"
         " every category page.",
@@ -217,9 +228,32 @@ def render(database: Path, db: sqlite3.Connection) -> str:
     return "\n".join(out)
 
 
+def ensure_synthetic_fixture(database: Path) -> None:
+    """Build CI's deterministic query-plan fixture when it is absent.
+
+    The real, sanitised archive is the authority for timing. It is deliberately
+    not committed, so using it as the default made `--check` depend on whoever
+    happened to have one locally. Query plans need stable schema and statistics,
+    which the seeded synthetic fixture supplies reproducibly.
+    """
+    if database != SYNTHETIC_FIXTURE or database.exists():
+        return
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "scripts" / "bench-fixture.py"),
+            "synthetic",
+            "--output",
+            str(database),
+        ],
+        cwd=REPO,
+        check=True,
+    )
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--database", default="data/bench/market-realistic.db")
+    parser.add_argument("--database", default=str(SYNTHETIC_FIXTURE))
     parser.add_argument("--output", default=str(OUTPUT))
     parser.add_argument(
         "--check",
@@ -236,10 +270,13 @@ def main(argv: list[str]) -> int:
         return 2
 
     database = Path(args.database)
+    ensure_synthetic_fixture(database)
     if not database.exists():
         raise SystemExit(
             f"no fixture at {database}."
-            " Build one: python3 scripts/bench-fixture.py sanitize"
+            " Build the deterministic default: python3 scripts/bench-fixture.py"
+            " synthetic --output target/bench/market-synthetic.db"
+            "; or pass a real sanitised archive with --database."
         )
     db = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
     text = render(database, db)

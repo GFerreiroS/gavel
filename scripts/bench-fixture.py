@@ -63,8 +63,16 @@ COPIED = {
     "wow_token_prices",
     # The commodity archive: region-wide prices, one row per item/region/hour.
     "price_samples",
+    # Commodity price ladders are source observations, not a derived page model.
+    "price_ladders",
     # The per-realm archive: gear and recipes, one row per market per snapshot.
     "realm_price_samples",
+    # Per-realm ladders are the source observations beside those summaries.
+    "realm_price_ladders",
+    # The storage-only dictionary that resolves each per-realm variant id.
+    # It is market source data: without it the copied per-realm rows lose their
+    # bonus-list identities.
+    "market_variants",
     # Which connected realms exist, what they are called, and what they join.
     # Not personal, and the realm picker is unusable without it.
     "realms",
@@ -97,6 +105,7 @@ EMPTIED = {
     "sequences": "operations",
     "node_roles": "operations",
     "admins": "who administers this instance",
+    "admin_bootstrap": "whether this deployment consumed its one-shot administrator bootstrap",
     "kv": "boot configuration; a deployment's settings, not the market",
     "_sqlx_migrations": "written by the migration run itself, not copied",
     "catalog_releases": "which catalogue this deployment activated; the seed rebuilds it",
@@ -104,6 +113,7 @@ EMPTIED = {
     "analysis_versions": "derived: this deployment's calculation history",
     "market_current": "derived: rebuilt from the observations on first start",
     "market_windows": "derived: rebuilt from the observations on first start",
+    "market_rollup": "derived: rebuilt from the per-realm observations on first start",
 }
 
 # The tooltip cache is copied, but only the item tooltips: a category page's
@@ -351,7 +361,7 @@ def market_counts(db: sqlite3.Connection) -> dict[str, int]:
     ).fetchone()[0]
     realm = db.execute(
         "SELECT count(*) FROM ("
-        " SELECT DISTINCT item_id, region, realm_id, variant FROM realm_price_samples)"
+        " SELECT DISTINCT item_id, region, realm_id, variant_id FROM realm_price_samples)"
     ).fetchone()[0]
     return {"commodity": commodity, "realm_variant": realm, "total": commodity + realm}
 
@@ -451,6 +461,7 @@ def synthetic(args: argparse.Namespace) -> None:
     now = (args.now // 3_600_000) * 3_600_000
     counts = {
         "realms": seed_realms(db, rng),
+        "market_variants": seed_market_variants(db),
         "price_samples": seed_commodities(db, rng, now),
         "realm_price_samples": seed_realm_prices(db, rng, now),
         "cache": seed_tooltips(db, rng, now),
@@ -555,6 +566,12 @@ def seed_commodities(db: sqlite3.Connection, rng: random.Random, now: int) -> in
 
 
 def seed_realm_prices(db: sqlite3.Connection, rng: random.Random, now: int) -> int:
+    variant_ids = {
+        variant: variant_id
+        for variant_id, variant in db.execute(
+            "SELECT variant_id, variant FROM market_variants"
+        )
+    }
     rows = []
     for region in REGIONS:
         realms = [1000 + index for index in range(REALM_COUNT[region])]
@@ -583,7 +600,7 @@ def seed_realm_prices(db: sqlite3.Connection, rng: random.Random, now: int) -> i
                                 item,
                                 region,
                                 realm,
-                                variant,
+                                variant_ids[variant],
                                 now - (HOURS - 1 - hour) * 3_600_000,
                                 minimum,
                                 median,
@@ -592,12 +609,20 @@ def seed_realm_prices(db: sqlite3.Connection, rng: random.Random, now: int) -> i
                             )
                         )
     db.executemany(
-        "INSERT INTO realm_price_samples (item_id, region, realm_id, variant,"
+        "INSERT INTO realm_price_samples (item_id, region, realm_id, variant_id,"
         " observed_at, min_price, median_price, listings, max_price)"
         " VALUES (?,?,?,?,?,?,?,?,?)",
         rows,
     )
     return len(rows)
+
+
+def seed_market_variants(db: sqlite3.Connection) -> int:
+    db.executemany(
+        "INSERT INTO market_variants (variant) VALUES (?)",
+        ((variant,) for variant in VARIANTS),
+    )
+    return len(VARIANTS)
 
 
 def seed_tooltips(db: sqlite3.Connection, rng: random.Random, now: int) -> int:
