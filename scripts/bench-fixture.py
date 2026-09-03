@@ -69,6 +69,10 @@ COPIED = {
     "realm_price_samples",
     # Per-realm ladders are the source observations beside those summaries.
     "realm_price_ladders",
+    # The append-only evidence that a connected realm was actually fetched.
+    # Region-wide commodity snapshots are deliberately not recorded in 0030:
+    # §16 measured only 13.3% unchanged commodity observations.
+    "collection_snapshots",
     # The storage-only dictionary that resolves each per-realm variant id.
     # It is market source data: without it the copied per-realm rows lose their
     # bonus-list identities.
