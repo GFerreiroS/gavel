@@ -947,6 +947,25 @@ impl ReadModelRepository for SqliteReadModel {
         rows.iter().map(rollup_from_row).collect()
     }
 
+    async fn item_rollups(&self, region: Region, item: ItemId) -> RepoResult<Vec<MarketRollup>> {
+        // `market_rollup`'s WITHOUT ROWID primary key begins `(region,
+        // item_id)`, so this is a narrow index range even though it returns
+        // every track and realm for the item. The region row (`realm_id = 0`)
+        // deliberately stays in the result: it is the evidence denominator
+        // for the per-realm table.
+        let rows = sqlx::query(
+            "SELECT * FROM market_rollup
+              WHERE state = 'published' AND region = ? AND item_id = ?
+              ORDER BY track, realm_id",
+        )
+        .bind(region.as_str())
+        .bind(item.get() as i64)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(rollup_from_row).collect()
+    }
+
     async fn rollup(
         &self,
         region: Region,
