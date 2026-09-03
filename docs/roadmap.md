@@ -655,3 +655,87 @@ whatever item 0 reports.
 - **Ledger granularity for commodities.** `realm_id = 0` as the sentinel for a
   region-wide snapshot mirrors `market_rollup`'s existing convention, but it is
   worth confirming against the read paths before the migration is written.
+
+---
+
+## 16. Storage cost: measured
+
+Section 4.6 asked for a 48-hour measurement before committing to the ledger
+design. This is that measurement, taken from a production snapshot on
+2026-09-03. It is **33.1 hours**, not 48 — the gate in `scripts/change-rate.py`
+refuses partial windows, so these numbers were taken with a direct query
+instead. Treat them as one weekday sample, not a settled constant.
+
+The snapshot is **474 MB over 33.1 h**: 343 MB/day, **10 GB/month, 122 GB/year**.
+
+### 16.1 Where the bytes are
+
+| Object | MB | % |
+|---|---|---|
+| `market_rollup` | 128.3 | 27.1 |
+| `realm_price_ladders` | 66.1 | 14.0 |
+| `realm_price_samples` | 53.7 | 11.3 |
+| `market_windows` | 39.9 | 8.4 |
+| `idx_realm_prices_item` | 34.9 | 7.4 |
+| `idx_realm_prices_window` | 34.9 | 7.4 |
+| `idx_realm_prices_latest` | 34.9 | 7.4 |
+| `idx_realm_price_ladders_age` | 34.9 | 7.4 |
+| `price_ladders` | 21.3 | 4.5 |
+| everything else | 24.7 | 5.2 |
+
+**The four realm indexes are 139.6 MB — 29.5% of the database, more than any
+single table.** That is the least examined line in this table and the one with
+the least justification recorded anywhere.
+
+### 16.2 The change rate §4.6 asked for
+
+Consecutive observations per market, over 38,793 realm markets and 2,038
+commodity markets:
+
+| Series | Compared | Unchanged | Rate |
+|---|---|---|---|
+| Realm samples (min/median/max price + listings) | 1,103,876 | 849,860 | **77.0%** |
+| Realm ladders (`steps`) | 1,103,876 | 836,893 | **75.8%** |
+| Commodities (unit prices + quantity + listings) | 64,586 | 8,593 | **13.3%** |
+
+§15 asked whether the realm rate would land near 90% or near 40%. It is **77%**
+— closer to the optimistic end. §4's design holds and is worth building.
+
+§15 also guessed commodity ladders "change nearly every hour — likely". That is
+confirmed: **86.7% of commodity observations differ from the one before**.
+Change detection is nearly worthless there. But commodities are only 23.6 MB
+total, so this does not matter, and it removes the case for the lossy
+commodity reduction §15 floated. **Do not build it.**
+
+### 16.3 What to do, cheapest first
+
+1. **Audit the four realm indexes (139.6 MB, 29.5%).** Before compressing
+   anything, find out whether all four are earned. `idx_realm_price_ladders_age`
+   is a single column (`observed_at`) yet costs the same 34.9 MB as the
+   three-column indexes. Dropping one unused index is 7.4% of the database for
+   no code change and no data loss. `scripts/query-plans.py` already exists to
+   prove which are load-bearing.
+2. **§4 change detection.** Applied to `realm_price_samples` + `realm_price_ladders`
+   and their indexes (259.4 MB combined), a 77% unchanged rate removes roughly
+   **200 MB — 42% of the database**, taking the yearly projection from 122 GB to
+   about **71 GB**. This remains the single largest win and §14's ordering stands.
+3. **§7 `variant_id` (already merged).** Those four indexes carry a TEXT
+   `variant` in the snapshot above. §7 replaced it with an integer key, so part
+   of the 139.6 MB is already recovered — but the snapshot predates it, so the
+   saving is **unmeasured**. Re-measure after §7 reaches production rather than
+   assuming it.
+4. **`market_rollup.series` (~48 MB of the 128 MB).** 29,096 rows at ~1.7 KB of
+   JSON series each. It is a derived read model and fully regenerable, so it is
+   the safest thing to shrink. Options, in order of preference: shorten the
+   retained series, deduplicate identical series, or compress the column.
+   Nothing here changes what the read model can answer.
+5. **`realm_price_samples` and `realm_price_ladders` have exactly the same row
+   count (1,142,669) — they are 1:1.** Two tables, two sets of indexes, one
+   logical observation. Merging them is worth costing out, but it collides
+   head-on with §4, which rebuilds both. Sequence it after §4, never beside it.
+
+### 16.4 What not to do
+
+Hot/cold partitioning (§4.7) stays shelved. At 71 GB/year post-§4 the trigger
+condition (~50 GiB) is roughly a year out, and §4 must land first anyway
+because it changes the growth rate the trigger is measured against.

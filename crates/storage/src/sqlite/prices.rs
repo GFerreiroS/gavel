@@ -9,7 +9,7 @@ use super::{corrupt, map_err};
 
 #[derive(Clone)]
 pub struct SqlitePrices {
-    pool: Pool<Sqlite>,
+    pub(super) pool: Pool<Sqlite>,
 }
 
 impl SqlitePrices {

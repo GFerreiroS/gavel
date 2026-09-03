@@ -12,8 +12,10 @@ mod realm_prices;
 mod releases;
 mod sessions;
 mod settings;
+mod tsm;
 mod users;
 mod watches;
+mod wow_token;
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -35,6 +37,7 @@ pub use realm_prices::SqliteRealmPrices;
 pub use releases::SqliteReleases;
 pub use sessions::SqliteSessions;
 pub use settings::SqliteSettings;
+pub use tsm::SqliteTsm;
 pub use users::SqliteUsers;
 pub use watches::SqliteWatches;
 
@@ -120,6 +123,7 @@ pub struct SqliteStore {
     kv: SqliteKv,
     prices: SqlitePrices,
     realm_prices: SqliteRealmPrices,
+    tsm: SqliteTsm,
     settings: SqliteSettings,
     watches: SqliteWatches,
     releases: SqliteReleases,
@@ -204,6 +208,7 @@ impl SqliteStore {
             kv: SqliteKv::new(pool.clone()),
             prices: SqlitePrices::new(pool.clone()),
             realm_prices: SqliteRealmPrices::new(pool.clone()),
+            tsm: SqliteTsm::new(pool.clone()),
             settings: SqliteSettings::new(pool.clone()),
             releases: SqliteReleases::new(pool.clone()),
             market_events: SqliteMarketEvents::new(pool.clone()),
@@ -292,6 +297,7 @@ impl Store for SqliteStore {
     type Kv = SqliteKv;
     type Prices = SqlitePrices;
     type RealmPrices = SqliteRealmPrices;
+    type Tsm = SqliteTsm;
     type Settings = SqliteSettings;
     type Watches = SqliteWatches;
     type Releases = SqliteReleases;
@@ -324,6 +330,9 @@ impl Store for SqliteStore {
     }
     fn realm_prices(&self) -> &Self::RealmPrices {
         &self.realm_prices
+    }
+    fn tsm(&self) -> &Self::Tsm {
+        &self.tsm
     }
     fn releases(&self) -> &Self::Releases {
         &self.releases

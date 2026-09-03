@@ -22,6 +22,7 @@ pub mod realm;
 pub mod release;
 pub mod series;
 pub mod stats;
+pub mod tsm;
 pub mod window;
 
 use std::fmt;
@@ -56,6 +57,7 @@ pub use series::{ChartPoint, ChartSeries, Histogram, Observation};
 pub use window::Window;
 
 pub use stats::{PriceStats, summarise};
+pub use tsm::{TsmCommoditySample, TsmContrast, TsmRegionDaily};
 
 /// A WoW item id. Distinct from our own ids so the two cannot be confused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
