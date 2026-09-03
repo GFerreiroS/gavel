@@ -129,6 +129,11 @@ pub struct Cli {
     #[arg(long, env = "APP_SERVER_TIMING", default_value_t = false, action = clap::ArgAction::Set)]
     pub server_timing: bool,
 
+    /// Render TSM-derived values in public pages. Collection and the internal
+    /// contrast test still run while this is off.
+    #[arg(long, env = "APP_SHOW_TSM_DATA", default_value_t = false, action = clap::ArgAction::Set)]
+    pub show_tsm_data: bool,
+
     /// Mark cookies `Secure`. Requires HTTPS; off for local plain-HTTP dev.
     #[arg(long, env = "APP_SECURE_COOKIES", default_value_t = false, action = clap::ArgAction::Set)]
     pub secure_cookies: bool,
@@ -297,6 +302,7 @@ impl Cli {
             poll_interval_ms: self.poll_ms,
             debug_controls: self.debug_controls,
             server_timing: self.server_timing,
+            show_tsm_data: self.show_tsm_data,
             secure_cookies: self.secure_cookies,
             trust_proxy_headers: self.trust_proxy_headers,
             upstream_cache_ttl_ms: self.cache_ttl_secs * 1_000,

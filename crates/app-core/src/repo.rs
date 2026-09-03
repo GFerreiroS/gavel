@@ -17,7 +17,7 @@ use crate::market::materialise::{
 use crate::market::window::Window;
 use crate::market::{
     Alert, ItemId, Ladder, MarketEvent, MarketKey, PriceSample, Realm, RealmId, RealmSample,
-    Region, WindowStats,
+    Region, TsmCommoditySample, TsmContrast, TsmRegionDaily, WindowStats,
 };
 
 // Job and event persistence are cluster concepts, so their ports live in
@@ -275,6 +275,38 @@ pub trait PriceRepository: Send + Sync + 'static {
     /// depth data to prove which analyses survive it -- so until then this is
     /// a plain window with an honest name, not a compaction.
     fn prune_ladders_before(&self, before: Millis) -> impl Future<Output = RepoResult<u64>> + Send;
+}
+
+/// TSM's independent commodity and completed-sales figures.
+///
+/// This stays apart from [`PriceRepository`]: these tables are source data,
+/// not variants of our own auction measurements.
+pub trait TsmRepository: Send + Sync + 'static {
+    fn record_region_daily(
+        &self,
+        samples: &[TsmRegionDaily],
+    ) -> impl Future<Output = RepoResult<u64>> + Send;
+
+    fn record_commodity_samples(
+        &self,
+        samples: &[TsmCommoditySample],
+    ) -> impl Future<Output = RepoResult<u64>> + Send;
+
+    /// Whether this upstream snapshot is already present. TSM offers no
+    /// conditional request mechanism; `updatedAt` is its replacement.
+    fn has_commodity_snapshot(
+        &self,
+        region: Region,
+        observed_at: Millis,
+    ) -> impl Future<Output = RepoResult<bool>> + Send;
+
+    /// Compare a TSM snapshot only where all local samples in its ±90-minute
+    /// alignment window held the same minimum price.
+    fn contrast(
+        &self,
+        region: Region,
+        observed_at: Millis,
+    ) -> impl Future<Output = RepoResult<Vec<TsmContrast>>> + Send;
 }
 
 /// Per-realm auction history: gear, which is not a commodity.
@@ -789,6 +821,7 @@ pub trait Store: Send + Sync + 'static {
     type Kv: KeyValueStore;
     type Prices: PriceRepository;
     type RealmPrices: RealmPriceRepository;
+    type Tsm: TsmRepository;
     type Settings: SettingsRepository;
     type Watches: WatchRepository;
     type Releases: ReleaseRepository;
@@ -804,6 +837,8 @@ pub trait Store: Send + Sync + 'static {
     fn prices(&self) -> &Self::Prices;
     /// Gear prices, which are per connected realm.
     fn realm_prices(&self) -> &Self::RealmPrices;
+    /// Independent TSM data; never merged into our own price archive.
+    fn tsm(&self) -> &Self::Tsm;
     /// What the tracker collects.
     fn settings(&self) -> &Self::Settings;
     /// Which items each person asked to be told about.
