@@ -422,6 +422,11 @@ fn clipped_price_max(observed: &[&ChartPoint]) -> u64 {
 /// from a three-day market, and drawing the band implies that a pattern
 /// exists to read. Fifteen days is the minimum before the band makes a claim
 /// worth reading.
+///
+/// This gate is specific to *daily* granularity. An hourly chart over 7 days
+/// uses sub-day slots (each slot covers ~1.75 h) and is not a daily series:
+/// it has enough independent observations to make a shape legible. Pass
+/// `daily: false` to bypass this gate for hourly windows.
 const CHART_MIN_DAYS: u64 = 15;
 const MILLIS_PER_DAY: u64 = 86_400_000;
 
@@ -451,11 +456,21 @@ fn right_y_axis(svg: &mut String, lo: f64, hi: f64, step: f64, unit: Unit) {
 /// how tightly" -- and the two together are what make a spike *legible as a
 /// spike* instead of as the market having moved.
 ///
+/// `daily` controls whether the §12 minimum-window gate applies. Pass `true`
+/// for daily-granularity series (daily rollups); pass `false` for hourly or
+/// short-window series, which have enough sub-day observations to draw a
+/// meaningful shape even under 15 days.
+///
 /// **A gap is drawn as a gap.** A slot nothing was collected in breaks the
 /// line and the band; §15's rule that unavailable data is never invented
 /// applies most sharply to a chart, which will happily draw a confident
 /// straight line across a week nobody looked at.
-pub fn band_chart(series: &ChartSeries, current: Option<Copper>, empty_note: &str) -> String {
+pub fn band_chart(
+    series: &ChartSeries,
+    current: Option<Copper>,
+    empty_note: &str,
+    daily: bool,
+) -> String {
     let observed: Vec<&ChartPoint> = series.points.iter().filter(|p| p.observed).collect();
     if let Err(reason) = chart_admission(series) {
         return refused_chart(empty_note, reason);
@@ -465,11 +480,14 @@ pub fn band_chart(series: &ChartSeries, current: Option<Copper>, empty_note: &st
     // snapshot count: six snapshots in two days is thin in a different way
     // from six snapshots spread over three weeks -- the band would be claiming
     // a trend across a window that is almost entirely extrapolation.
-    let span_days = series.until.get().saturating_sub(series.from.get()) / MILLIS_PER_DAY;
-    if span_days < CHART_MIN_DAYS {
-        return placeholder(&format!(
-            "{empty_note} ({span_days} of {CHART_MIN_DAYS} days)"
-        ));
+    // The gate is scoped to daily granularity; hourly charts bypass it.
+    if daily {
+        let span_days = series.until.get().saturating_sub(series.from.get()) / MILLIS_PER_DAY;
+        if span_days < CHART_MIN_DAYS {
+            return placeholder(&format!(
+                "{empty_note} ({span_days} of {CHART_MIN_DAYS} days)"
+            ));
+        }
     }
 
     let (min_t, max_t) = (
@@ -1515,7 +1533,8 @@ mod tests {
             points,
         };
 
-        let out = band_chart(&series, None, "no data yet");
+        // daily=false: only the snapshot gate is relevant here.
+        let out = band_chart(&series, None, "no data yet", false);
 
         assert!(
             !out.contains("<svg"),
@@ -1532,11 +1551,15 @@ mod tests {
         );
     }
 
-    /// §12 daily-series gate: a window shorter than 15 days must be refused
-    /// even when it has enough snapshots.
+    /// §12 daily-series gate: a daily-granularity series spanning fewer than
+    /// 15 days must be refused even when it has enough snapshots.
+    ///
+    /// The gate is specific to daily series (`daily=true`). An hourly series
+    /// of the same span must still render -- see
+    /// `band_chart_hourly_short_series_renders`.
     #[test]
-    fn band_chart_refuses_fewer_than_15_days() {
-        // 8 snapshots (> 6), but only 7 days.
+    fn band_chart_daily_refuses_fewer_than_15_days() {
+        // 8 snapshots (> 6), but only 7 days, and this is a daily series.
         let from = Millis(0);
         let until = Millis(7 * MILLIS_PER_DAY);
         let span = until.get() - from.get();
@@ -1566,11 +1589,12 @@ mod tests {
             points,
         };
 
-        let out = band_chart(&series, None, "too short");
+        // daily=true: the 15-day gate must fire.
+        let out = band_chart(&series, None, "too short", true);
 
         assert!(
             !out.contains("<svg"),
-            "a 7-day series must not draw an SVG even with enough snapshots"
+            "a daily 7-day series must not draw an SVG even with enough snapshots"
         );
         assert!(
             out.contains("too short"),
@@ -1583,8 +1607,57 @@ mod tests {
         );
     }
 
-    /// Both gates passed: a series spanning 20 days with 10 snapshots must
-    /// produce an SVG.
+    /// §12 daily gate is scoped to daily granularity: a short *hourly* series
+    /// must still render even when the window spans fewer than 15 days.
+    ///
+    /// A 7-day hourly chart has sub-day slots (~1.75 h each) and can make a
+    /// meaningful shape; refusing it would break the 7-day baseline window.
+    #[test]
+    fn band_chart_hourly_short_series_renders() {
+        // 8 snapshots (> 6), 7 days, hourly granularity (daily=false).
+        let from = Millis(0);
+        let until = Millis(7 * MILLIS_PER_DAY);
+        let span = until.get() - from.get();
+        let mut points = vec![
+            ChartPoint {
+                ..ChartPoint::default()
+            };
+            96
+        ];
+        for i in 0..8usize {
+            let slot = i * 11;
+            points[slot] = ChartPoint {
+                at: Millis(from.get() + (slot as u64 * span) / 96),
+                price: Copper(100_000),
+                median: Copper(100_000),
+                p25: Copper(80_000),
+                p75: Copper(120_000),
+                quantity: 50,
+                listings: 5,
+                observed: true,
+            };
+        }
+        let series = ChartSeries {
+            from,
+            until,
+            points,
+        };
+
+        // daily=false: the 15-day gate must NOT fire.
+        let out = band_chart(&series, None, "no data", false);
+
+        assert!(
+            out.contains("<svg"),
+            "a 7-day hourly series must render an SVG regardless of the daily gate"
+        );
+        assert!(
+            out.contains("axis-price") && out.contains("axis-stock"),
+            "dual-axis labels must appear in the SVG"
+        );
+    }
+
+    /// Both gates passed: a daily series spanning 20 days with 10 snapshots
+    /// must produce an SVG.
     #[test]
     fn band_chart_draws_when_both_gates_pass() {
         let from = Millis(0);
@@ -1616,7 +1689,8 @@ mod tests {
             points,
         };
 
-        let out = band_chart(&series, None, "no data");
+        // daily=true: 20 days >= 15, so this passes the daily gate too.
+        let out = band_chart(&series, None, "no data", true);
 
         assert!(
             out.contains("<svg"),

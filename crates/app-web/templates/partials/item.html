@@ -92,7 +92,7 @@
   {% endif %}
   {{ analysis.price_chart|safe }}
   <p class="hint">
-    {{ "Blue is price on the left axis: its filled area is each observation, with the P25–P75 band and rolling median over it. Orange is listed units on the right axis. A break is an interval nothing was collected in, not a price of zero."|t }}
+    {{ "The left axis tracks price: the filled band is P25–P75, the solid line is the rolling median, and the faint line is each observation. The right axis tracks units listed — what is on the shelf, not what sold. A drop in supply with a falling price can mean somebody undercutting an empty market. A break in either series is an interval nothing was collected in, not a price of zero."|t }}
   </p>
 </article>
 

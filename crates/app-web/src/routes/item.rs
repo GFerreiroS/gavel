@@ -270,6 +270,9 @@ async fn build<E: Ports>(
             locale,
             "Not enough history yet — the chart appears after a few collections.",
         ),
+        // All current windows use 96-slot hourly resolution; the §12 15-day
+        // minimum applies only to daily-granularity rollups.
+        false,
     );
 
     let distribution_chart = chart::histogram_chart(
