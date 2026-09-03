@@ -823,6 +823,19 @@ pub trait ReadModelRepository: Send + Sync + 'static {
         scope: Scope,
     ) -> impl Future<Output = RepoResult<Vec<MarketRollup>>> + Send;
 
+    /// The published regional roll-up and every per-realm roll-up for one
+    /// item, ordered by track and scope.
+    ///
+    /// The regional rows carry `realms_listing` out of `realms_collected`;
+    /// the realm rows are the breakdown a caller can compare or sort. Both
+    /// shapes arrive from one published read, while their observation
+    /// timestamps still make a partially refreshed materialisation explicit.
+    fn item_rollups(
+        &self,
+        region: Region,
+        item: ItemId,
+    ) -> impl Future<Output = RepoResult<Vec<MarketRollup>>> + Send;
+
     /// One roll-up: one item's track, in a region or on a realm.
     fn rollup(
         &self,

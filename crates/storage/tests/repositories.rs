@@ -2198,6 +2198,66 @@ async fn a_rolled_up_market_round_trips() {
     assert_eq!(back, original);
 }
 
+/// An item detail needs both the evidence-bearing regional row and each realm
+/// behind it. Keeping them in one indexed read is also the input shape Deals
+/// will need later; neither caller needs to reduce the archive.
+#[tokio::test]
+async fn item_rollups_return_regional_evidence_and_every_realm() {
+    let store = store().await;
+    let model = store.read_model();
+    let version = model.begin(2, Millis(10)).await.unwrap();
+
+    let mut regional = rollup(212_265, 5_000);
+    regional.scope = Scope::Region;
+    regional.realms_listing = 2;
+    regional.realms_collected = 3;
+
+    let first = rollup(212_265, 5_000);
+    let mut second = rollup(212_265, 7_000);
+    second.scope = Scope::Realm(RealmId(1404));
+    let unrelated = rollup(212_266, 9_000);
+
+    model
+        .stage_rollups(
+            version,
+            &[regional.clone(), first.clone(), second.clone(), unrelated],
+        )
+        .await
+        .unwrap();
+    model
+        .publish(version, (Some(Millis(0)), Some(Millis(1_000))), Millis(20))
+        .await
+        .unwrap();
+
+    let rows = model
+        .item_rollups(Region::Eu, ItemId(212_265))
+        .await
+        .unwrap();
+    assert_eq!(rows, vec![regional, first, second]);
+    assert_eq!(rows[0].scope, Scope::Region);
+    assert_eq!(rows[0].realms_listing, 2);
+    assert_eq!(rows[0].realms_collected, 3);
+
+    let plan = sqlx::query(
+        "EXPLAIN QUERY PLAN
+         SELECT * FROM market_rollup
+         WHERE state = 'published' AND region = ? AND item_id = ?
+         ORDER BY track, realm_id",
+    )
+    .bind(Region::Eu.as_str())
+    .bind(212_265_i64)
+    .fetch_all(store.pool())
+    .await
+    .expect("query plan");
+    let detail: Vec<String> = plan.into_iter().map(|row| row.get(3)).collect();
+    assert!(
+        detail
+            .iter()
+            .any(|step| step.contains("SEARCH market_rollup USING PRIMARY KEY")),
+        "expected the (region, item_id, track, realm_id, state) primary key: {detail:?}"
+    );
+}
+
 /// The refusal survives the round trip too, with its two numbers.
 ///
 /// A band and a reason are stored in different columns, and a reason is the
