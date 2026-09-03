@@ -192,3 +192,19 @@ changed for a reader, separated from what merely moved.
 Replace `docs/bench/baseline.json` only deliberately, and say in the commit
 message what moved and why. It is the thing a regression is measured against;
 a baseline quietly refreshed is a regression quietly accepted.
+
+## Measuring observation changes
+
+Before designing the §4 observation ledger, measure 48 complete hours from a
+live archive without opening it through `SqliteStore`:
+
+```bash
+python3 scripts/change-rate.py /path/to/cluster.db
+python3 scripts/change-rate.py /path/to/cluster.db --json > change-rate.json
+```
+
+The script opens a `mode=ro` SQLite URI, defaults to comparing ladder steps,
+and refuses incomplete hours for configured realms and known commodity regions
+or missing ladders rather than reporting a partial rate. Use
+`--no-include-ladders` only to reproduce the sample-fields-only comparison
+from the roadmap.
