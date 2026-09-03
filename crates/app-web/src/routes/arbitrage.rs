@@ -128,25 +128,16 @@ async fn render<E: Ports>(
             Scope::Realm(id) => Some((id, row)),
         })
         .map(|(id, row)| {
-            let insufficient = match row.position.and_then(|position| position.insufficient) {
-                Some(app_core::market::Insufficient::NotEnoughHistory { .. }) | None => {
-                    Some("Not enough history")
-                }
-                Some(app_core::market::Insufficient::TooManyGaps { .. }) => Some("Too many gaps"),
-            };
-            ArbitrageRealmRow {
-                realm: names
+            realm_view(
+                row,
+                names
                     .get(&id)
                     .cloned()
                     .unwrap_or_else(|| format!("Realm {id}")),
-                price: price(row.cheapest_now),
-                listings: row.listings_now,
-                observed: row
-                    .observed_at
+                row.observed_at
                     .map(|at| crate::format::ago(prefs.locale, now.since(at)))
                     .unwrap_or_else(|| "—".into()),
-                insufficient,
-            }
+            )
         })
         .collect();
     realms.sort_by(|a, b| a.realm.cmp(&b.realm));
@@ -188,4 +179,167 @@ async fn render<E: Ports>(
         },
         prefs.locale,
     )
+}
+
+/// Turn one published realm roll-up into the exact row the template renders.
+///
+/// A missing position is not a healthy position: it means there is no
+/// collected evidence for this row. Conversely, a position with no
+/// insufficiency is explicitly healthy and must leave its current price
+/// visible.
+fn realm_view(row: &MarketRollup, realm: String, observed: String) -> ArbitrageRealmRow {
+    let insufficient = match row.position {
+        None => Some("No observations yet."),
+        Some(position) => match position.insufficient {
+            Some(app_core::market::Insufficient::NotEnoughHistory { .. }) => {
+                Some("Not enough history")
+            }
+            Some(app_core::market::Insufficient::TooManyGaps { .. }) => Some("Too many gaps"),
+            None => None,
+        },
+    };
+
+    ArbitrageRealmRow {
+        realm,
+        // A snapshot with no listings has no current price. Guard against a
+        // malformed stored zero here rather than rendering a free item.
+        price: (row.listings_now > 0)
+            .then_some(row.cheapest_now)
+            .flatten()
+            .map(|price| price.to_string())
+            .unwrap_or_else(|| "—".into()),
+        listings: row.listings_now,
+        observed,
+        insufficient,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use app_core::WebConfig;
+    use app_core::locale::Locale;
+    use app_core::market::engine::{Anomaly, Insufficient, Position};
+    use axum::http::Uri;
+
+    use super::*;
+
+    fn healthy_position() -> Position {
+        Position {
+            rank: Some(50),
+            valuation: None,
+            insufficient: None,
+            from_median_percent: Some(0),
+            anomaly: Anomaly::Ordinary,
+        }
+    }
+
+    fn rollup(position: Option<Position>, listings: u32, price: Option<Copper>) -> MarketRollup {
+        let mut row = MarketRollup::empty(
+            app_core::market::Region::Eu,
+            ItemId(271_438),
+            ItemKind::Boe,
+            Some(Track::Champion),
+        );
+        row.scope = Scope::Realm(RealmId(1403));
+        row.position = position;
+        row.listings_now = listings;
+        row.cheapest_now = price;
+        row
+    }
+
+    fn panel() -> PanelHead {
+        PanelHead {
+            question: "How does each realm compare?",
+            window: "latest snapshot".into(),
+            units: "gold per item",
+            coverage: Some("1 of 1 realms listing".into()),
+            freshness: Some("just now".into()),
+        }
+    }
+
+    fn rendered_realm(row: MarketRollup) -> String {
+        let page = ArbitragePage {
+            layout: Layout::new(
+                &WebConfig::default(),
+                Locale::EnUs,
+                "Realm arbitrage",
+                "/wow/auctions",
+                &Uri::from_static("/wow/arbitrage/271438/champion"),
+                None,
+                String::new(),
+            ),
+            arbitrage: ArbitrageView {
+                name: "Test item".into(),
+                track: "Champion".into(),
+                section_href: "/wow/auctions/gear".into(),
+                summary_panel: panel(),
+                table_panel: panel(),
+                has_data: false,
+                cheapest: "—".into(),
+                typical: "—".into(),
+                dearest: "—".into(),
+                cheapest_realm: "—".into(),
+                dearest_realm: "—".into(),
+                realms: vec![realm_view(&row, "Test realm".into(), "just now".into())],
+            },
+        };
+        page.render().expect("arbitrage template renders")
+    }
+
+    #[test]
+    fn a_healthy_realm_renders_its_price() {
+        let html = rendered_realm(rollup(Some(healthy_position()), 1, Some(Copper(123_456))));
+
+        assert!(html.contains("<td class=\"number\">12g 34s</td>"));
+        assert!(!html.contains("No observations yet."));
+    }
+
+    #[test]
+    fn a_realm_without_enough_history_withholds_its_price() {
+        let html = rendered_realm(rollup(
+            Some(Position {
+                insufficient: Some(Insufficient::NotEnoughHistory { have: 4, need: 72 }),
+                ..healthy_position()
+            }),
+            1,
+            Some(Copper(123_456)),
+        ));
+
+        assert!(html.contains("Not enough history"));
+        assert!(!html.contains("12g 34s"));
+    }
+
+    #[test]
+    fn a_realm_with_too_many_gaps_withholds_its_price() {
+        let html = rendered_realm(rollup(
+            Some(Position {
+                insufficient: Some(Insufficient::TooManyGaps {
+                    coverage: 20,
+                    need: 80,
+                }),
+                ..healthy_position()
+            }),
+            1,
+            Some(Copper(123_456)),
+        ));
+
+        assert!(html.contains("Too many gaps"));
+        assert!(!html.contains("12g 34s"));
+    }
+
+    #[test]
+    fn an_unobserved_realm_withholds_its_price() {
+        let html = rendered_realm(rollup(None, 1, Some(Copper(123_456))));
+
+        assert!(html.contains("No observations yet."));
+        assert!(!html.contains("12g 34s"));
+    }
+
+    #[test]
+    fn a_realm_with_zero_listings_never_looks_free() {
+        let html = rendered_realm(rollup(Some(healthy_position()), 0, Some(Copper::ZERO)));
+
+        assert!(html.contains("<td class=\"number\">—</td>"));
+        assert!(!html.contains(">0c<"));
+    }
 }
