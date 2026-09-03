@@ -5,7 +5,8 @@ a query or the statistics change, and say in the commit message what
 moved -- CLAUDE.md §11b's rule is to check the plan, and a plan nobody
 wrote down is a plan nobody can compare against.
 
-Fixture: `data/bench/market-realistic.db`  
+Fixture: `target/bench/market-synthetic.db`
+The deterministic synthetic fixture is generated on demand for this check; query-plan shape is reproducible, while latency remains a real-archive measurement.
 `sqlite_stat1` present: **yes** -- the planner guesses without it, and guessed four times slower on every category page.
 
 Two phrases are worth grepping for. `USE TEMP B-TREE FOR ORDER BY`

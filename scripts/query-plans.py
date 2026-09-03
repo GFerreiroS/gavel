@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import sqlite3
+import subprocess
 import sys
 import textwrap
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 OUTPUT = REPO / "docs" / "bench" / "query-plans.md"
+SYNTHETIC_FIXTURE = Path("target/bench/market-synthetic.db")
 
 
 @dataclass(frozen=True)
@@ -196,7 +198,10 @@ def render(database: Path, db: sqlite3.Connection) -> str:
         "moved -- CLAUDE.md §11b's rule is to check the plan, and a plan nobody",
         "wrote down is a plan nobody can compare against.",
         "",
-        f"Fixture: `{database}`  ",
+        f"Fixture: `{database}`",
+        "The deterministic synthetic fixture is generated on demand for this"
+        " check; query-plan shape is reproducible, while latency remains a"
+        " real-archive measurement.",
         f"`sqlite_stat1` present: **{'yes' if statistics else 'no'}**"
         " -- the planner guesses without it, and guessed four times slower on"
         " every category page.",
@@ -223,9 +228,32 @@ def render(database: Path, db: sqlite3.Connection) -> str:
     return "\n".join(out)
 
 
+def ensure_synthetic_fixture(database: Path) -> None:
+    """Build CI's deterministic query-plan fixture when it is absent.
+
+    The real, sanitised archive is the authority for timing. It is deliberately
+    not committed, so using it as the default made `--check` depend on whoever
+    happened to have one locally. Query plans need stable schema and statistics,
+    which the seeded synthetic fixture supplies reproducibly.
+    """
+    if database != SYNTHETIC_FIXTURE or database.exists():
+        return
+    subprocess.run(
+        [
+            sys.executable,
+            str(REPO / "scripts" / "bench-fixture.py"),
+            "synthetic",
+            "--output",
+            str(database),
+        ],
+        cwd=REPO,
+        check=True,
+    )
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--database", default="data/bench/market-realistic.db")
+    parser.add_argument("--database", default=str(SYNTHETIC_FIXTURE))
     parser.add_argument("--output", default=str(OUTPUT))
     parser.add_argument(
         "--check",
@@ -242,10 +270,13 @@ def main(argv: list[str]) -> int:
         return 2
 
     database = Path(args.database)
+    ensure_synthetic_fixture(database)
     if not database.exists():
         raise SystemExit(
             f"no fixture at {database}."
-            " Build one: python3 scripts/bench-fixture.py sanitize"
+            " Build the deterministic default: python3 scripts/bench-fixture.py"
+            " synthetic --output target/bench/market-synthetic.db"
+            "; or pass a real sanitised archive with --database."
         )
     db = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
     text = render(database, db)

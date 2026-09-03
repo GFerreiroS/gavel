@@ -25,7 +25,9 @@ CREATE TABLE realm_price_samples_new (
     observed_at  INTEGER NOT NULL,
     min_price    INTEGER NOT NULL,
     median_price INTEGER NOT NULL,
-    max_price    INTEGER NOT NULL,
+    -- Retain migration 0005's default for legacy writers which did not yet
+    -- provide a dearest-listing value.
+    max_price    INTEGER NOT NULL DEFAULT 0,
     listings     INTEGER NOT NULL,
     PRIMARY KEY (item_id, region, realm_id, variant_id, observed_at)
 ) WITHOUT ROWID;

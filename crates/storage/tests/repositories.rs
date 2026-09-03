@@ -976,7 +976,8 @@ async fn variant_dictionary_migration_is_lossless() {
         "CREATE TABLE realm_price_samples (
             item_id INTEGER NOT NULL, region TEXT NOT NULL, realm_id INTEGER NOT NULL,
             variant TEXT NOT NULL, observed_at INTEGER NOT NULL, min_price INTEGER NOT NULL,
-            median_price INTEGER NOT NULL, max_price INTEGER NOT NULL, listings INTEGER NOT NULL,
+            median_price INTEGER NOT NULL, max_price INTEGER NOT NULL DEFAULT 0,
+            listings INTEGER NOT NULL,
             PRIMARY KEY (item_id, region, realm_id, variant, observed_at)
         ) WITHOUT ROWID;
         CREATE TABLE realm_price_ladders (
@@ -1067,11 +1068,25 @@ async fn variant_dictionary_migration_is_lossless() {
         ]
     );
 
-    let ladders: Vec<(String, String)> = sqlx::query_as(
-        "SELECT variants.variant, ladders.steps
+    #[derive(Debug, PartialEq, sqlx::FromRow)]
+    struct LadderRow {
+        item_id: i64,
+        region: String,
+        realm_id: i64,
+        variant: String,
+        observed_at: i64,
+        levels: i64,
+        total: i64,
+        steps: String,
+    }
+
+    let ladders: Vec<LadderRow> = sqlx::query_as(
+        "SELECT ladders.item_id, ladders.region, ladders.realm_id, variants.variant,
+                ladders.observed_at, ladders.levels, ladders.total, ladders.steps
            FROM realm_price_ladders AS ladders
            JOIN market_variants AS variants ON variants.variant_id = ladders.variant_id
-          ORDER BY variants.variant",
+          ORDER BY ladders.item_id, ladders.region, ladders.realm_id,
+                   variants.variant, ladders.observed_at",
     )
     .fetch_all(&pool)
     .await
@@ -1079,9 +1094,38 @@ async fn variant_dictionary_migration_is_lossless() {
     assert_eq!(
         ladders,
         vec![
-            ("12833,13333".into(), "100:1,150:1".into()),
-            ("socket,13333".into(), "250:1".into()),
+            LadderRow {
+                item_id: 10,
+                region: "eu".into(),
+                realm_id: 1403,
+                variant: "12833,13333".into(),
+                observed_at: 1000,
+                levels: 2,
+                total: 2,
+                steps: "100:1,150:1".into(),
+            },
+            LadderRow {
+                item_id: 10,
+                region: "eu".into(),
+                realm_id: 1403,
+                variant: "socket,13333".into(),
+                observed_at: 2000,
+                levels: 1,
+                total: 1,
+                steps: "250:1".into(),
+            },
         ]
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT dflt_value FROM pragma_table_info('realm_price_samples')
+              WHERE name = 'max_price'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("max_price schema"),
+        Some("0".into()),
+        "migration 0005's compatibility default survives the table rebuild"
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM market_variants")
