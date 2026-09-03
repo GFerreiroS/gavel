@@ -739,3 +739,12 @@ commodity reduction §15 floated. **Do not build it.**
 Hot/cold partitioning (§4.7) stays shelved. At 71 GB/year post-§4 the trigger
 condition (~50 GiB) is roughly a year out, and §4 must land first anyway
 because it changes the growth rate the trigger is measured against.
+
+### 16.5 Index audit results
+
+Audit of the four 34.9 MB realm indexes (measured pre-§7 `variant_id`; true savings today are smaller but unmeasured):
+
+- `idx_realm_prices_item` and `idx_realm_prices_window` were dropped. Both are strictly redundant. `realm_price_samples` is a `WITHOUT ROWID` table, meaning secondary indexes include the full 5-column primary key. `idx_realm_prices_item` matches the primary key's leading columns, while `idx_realm_prices_window` merely swaps `item_id` and `region` (which are queried together). Queries degrade to an identical skip-scan on the primary key with no plan change.
+- `idx_realm_prices_latest` and `idx_realm_price_ladders_age` were kept. They are used exclusively by the background history prune (`DELETE ... WHERE observed_at < ?`). Dropping either degrades its respective delete to a full table scan. Both remain oversized (carrying the full primary key) but are earned.
+
+**Recovered:** 69.8 MB (pre-§7).
