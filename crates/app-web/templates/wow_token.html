@@ -29,15 +29,11 @@
   </div>
 </div>
 
-<article class="viz-root panel">
-  <header class="panel-head">
-    <h2>{{ "Price history"|t }}</h2>
-    <p class="panel-terms">
-      <span class="term"><span class="term-label">{{ "Units"|t }}</span>{{ "gold"|t }}</span>
-      <span class="term"><span class="term-label">{{ "Region"|t }}</span>{{ region }}</span>
-    </p>
-  </header>
+{# This is one standalone history chart, rather than an analysis panel: the
+   stat grid above supplies its current region, price, freshness and count. #}
+<section class="viz-root">
+  <h2>{{ "Price history"|t }}</h2>
   {{ chart|safe }}
   <p class="hint">{{ "Prices are recorded from Blizzard's WoW Token endpoint for this region."|t }}</p>
-</article>
+</section>
 {% endblock %}

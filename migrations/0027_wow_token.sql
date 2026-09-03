@@ -6,6 +6,3 @@ CREATE TABLE wow_token_prices (
     price       INTEGER NOT NULL,
     PRIMARY KEY (region, observed_at)
 ) WITHOUT ROWID;
-
-CREATE INDEX idx_wow_token_prices_region_time
-    ON wow_token_prices(region, observed_at DESC);

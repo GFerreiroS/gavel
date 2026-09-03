@@ -73,14 +73,31 @@ async fn run<E: Ports>(
 ) where
     E::Clock: Clone,
 {
+    // The token endpoint is independent of collecting the auction house.  A
+    // JoinSet keeps both tasks under this returned handle: aborting the
+    // collector during shutdown drops the set and aborts both children.
+    let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(run_market(env.clone(), artifacts, awaits_workers));
+    if let Some(client) = tokens {
+        tasks.spawn(run_tokens(env, client));
+    }
+    while let Some(result) = tasks.join_next().await {
+        if let Err(error) = result {
+            tracing::warn!(%error, "collector task ended unexpectedly");
+        }
+    }
+}
+
+async fn run_market<E: Ports>(
+    env: E,
+    artifacts: std::sync::Arc<crate::analysis_work::Artifacts>,
+    awaits_workers: bool,
+) {
     let market = env.market().clone();
     let mut ticker = tokio::time::interval(Duration::from_millis(
         market.collect_interval_ms.max(60_000),
     ));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let mut token_ticker = tokio::time::interval(TOKEN_INTERVAL);
-    token_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
     match env.active_catalog() {
         Some(catalog) => tracing::info!(
             regions = ?market.regions.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
@@ -100,42 +117,47 @@ async fn run<E: Ports>(
     backfill(&env, &artifacts, awaits_workers).await;
 
     loop {
-        tokio::select! {
-            _ = ticker.tick() => {
-                // Only the regions whose snapshot actually moved. A `NotModified`
-                // does no analysis work, which is CLAUDE.md §16's Phase 2 in one line:
-                // the upstream said nothing changed, so nothing needs recalculating.
-                let collected = collect_once(&env).await;
-                // A cycle that fetched no realm has nothing to roll up. When any realm
-                // moved the whole region is recalculated, because the roll-up a card
-                // reads is *across* realms: one realm's new price changes what the
-                // region's cheapest copy is.
-                let realms = if collect_realms(&env).await {
-                    env.market().regions.clone()
-                } else {
-                    Vec::new()
-                };
-                // One version for both halves. Publishing them separately would leave
-                // a moment where the consumables page had moved on and the gear page
-                // had not, which is exactly what §15 says a reader must never see.
-                crate::materialise_task::publish(&env, &artifacts, &collected, &realms).await;
-                warm_tooltips(&env).await;
-                downsample(&env).await;
-                prune(&env).await;
-                prune_ladders(&env).await;
-            }
-            _ = token_ticker.tick() => collect_tokens(&env, tokens.as_ref()).await,
-        }
+        ticker.tick().await;
+        // Only the regions whose snapshot actually moved. A `NotModified`
+        // does no analysis work, which is CLAUDE.md §16's Phase 2 in one line:
+        // the upstream said nothing changed, so nothing needs recalculating.
+        let collected = collect_once(&env).await;
+        // A cycle that fetched no realm has nothing to roll up. When any realm
+        // moved the whole region is recalculated, because the roll-up a card
+        // reads is *across* realms: one realm's new price changes what the
+        // region's cheapest copy is.
+        let realms = if collect_realms(&env).await {
+            env.market().regions.clone()
+        } else {
+            Vec::new()
+        };
+        // One version for both halves. Publishing them separately would leave
+        // a moment where the consumables page had moved on and the gear page
+        // had not, which is exactly what §15 says a reader must never see.
+        crate::materialise_task::publish(&env, &artifacts, &collected, &realms).await;
+        warm_tooltips(&env).await;
+        downsample(&env).await;
+        prune(&env).await;
+        prune_ladders(&env).await;
     }
 }
 
-async fn collect_tokens<E: Ports>(env: &E, client: Option<&BlizzardWowToken<E::Clock>>)
+async fn run_tokens<E: Ports>(env: E, client: BlizzardWowToken<E::Clock>)
 where
     E::Clock: Clone,
 {
-    let Some(client) = client else {
-        return;
-    };
+    let mut ticker = tokio::time::interval(TOKEN_INTERVAL);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        ticker.tick().await;
+        collect_tokens(&env, &client).await;
+    }
+}
+
+async fn collect_tokens<E: Ports>(env: &E, client: &BlizzardWowToken<E::Clock>)
+where
+    E::Clock: Clone,
+{
     for region in &env.market().regions {
         match client.price(*region).await {
             Ok(token) => match env.store().prices().record(&token).await {

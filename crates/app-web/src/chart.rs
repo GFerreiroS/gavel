@@ -153,6 +153,8 @@ pub struct Series<'a> {
     pub points: &'a [Point],
     /// Index into [`SERIES`].
     pub slot: usize,
+    /// Whether the tooltip should describe the points' stock dimension.
+    pub show_stock: bool,
 }
 
 /// The chart's own stylesheet, emitted inside every chart.
@@ -315,7 +317,7 @@ pub fn line_chart(series: &[Series<'_>], unit: Unit, empty_note: &str) -> String
                     let _ = writeln!(tip, "{}: {}", s.label, unit.value(sp.price.get()));
                 }
             }
-            if unit == Unit::Gold {
+            if unit == Unit::Gold && first.show_stock {
                 let _ = write!(tip, "stock: {}", p.quantity);
             }
             let _ = write!(
@@ -533,6 +535,7 @@ pub fn stock_chart(series: &ChartSeries, empty_note: &str) -> String {
             label: "units listed",
             points: &points,
             slot: 0,
+            show_stock: false,
         }],
         Unit::Count,
         empty_note,
@@ -1068,6 +1071,7 @@ mod tests {
                 label: "p",
                 points: &pts,
                 slot: 0,
+                show_stock: true,
             }],
             Unit::Gold,
             "empty",
@@ -1079,6 +1083,22 @@ mod tests {
         assert!(svg.contains("viewBox=\"0 0 760 260\""));
         assert!(svg.contains("<path"), "the series was not drawn");
         assert!(svg.contains("<title>"), "hover tooltips are missing");
+    }
+
+    #[test]
+    fn a_price_series_without_stock_omits_the_stock_tooltip() {
+        let pts = points(&[100, 200]);
+        let svg = line_chart(
+            &[Series {
+                label: "WoW Token",
+                points: &pts,
+                slot: 0,
+                show_stock: false,
+            }],
+            Unit::Gold,
+            "empty",
+        );
+        assert!(!svg.contains("stock:"));
     }
 
     /// A chart must not depend on the app stylesheet.
@@ -1094,6 +1114,7 @@ mod tests {
                 label: "Rank 1",
                 slot: 0,
                 points: &points(&[100, 200, 150, 300]),
+                show_stock: true,
             }],
             Unit::Gold,
             "no data",
@@ -1189,6 +1210,7 @@ mod tests {
                 label: "p",
                 points: &pts,
                 slot: 0,
+                show_stock: true,
             }],
             Unit::Gold,
             "not enough yet",

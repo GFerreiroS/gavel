@@ -51,6 +51,7 @@ pub async fn page_handler<E: Ports>(
             label: "WoW Token",
             points: &points,
             slot: 0,
+            show_stock: false,
         }],
         Unit::Gold,
         crate::i18n::translate(

@@ -415,6 +415,7 @@ fn draw_series(
             label: &label,
             points: &points,
             slot: 0,
+            show_stock: true,
         }],
         unit,
         "Not enough history yet \u{2014} the chart appears after a few collections.",
