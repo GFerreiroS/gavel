@@ -131,34 +131,64 @@ QUERIES = [
     Query(
         name="per-realm history, one item across a region",
         source="crates/storage/src/sqlite/realm_prices.rs",
-        anchor="WHERE samples.item_id = ? AND samples.region = ?",
+        anchor="WHERE snapshots.region = ? AND snapshots.observed_at >= ? AND samples.item_id = ?",
         sql="""
-            SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
-                   samples.observed_at, samples.min_price, samples.median_price,
-                   samples.max_price, samples.listings
-              FROM realm_price_samples AS samples
-              JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
-             WHERE samples.item_id = ? AND samples.region = ? AND samples.observed_at >= ?
-             ORDER BY samples.observed_at
+            WITH expanded AS (
+                 SELECT samples.item_id, samples.region, samples.realm_id, samples.variant_id,
+                        snapshots.observed_at, samples.min_price, samples.median_price, samples.max_price, samples.listings
+                   FROM collection_snapshots AS snapshots JOIN realm_price_samples AS samples
+                     ON samples.region = snapshots.region AND samples.realm_id = snapshots.realm_id
+                  WHERE snapshots.region = ? AND snapshots.observed_at >= ? AND samples.item_id = ?
+                    AND samples.observed_at = (SELECT MAX(previous.observed_at) FROM realm_price_samples AS previous
+                         WHERE previous.region = snapshots.region AND previous.realm_id = snapshots.realm_id
+                           AND previous.item_id = samples.item_id AND previous.variant_id = samples.variant_id
+                           AND previous.observed_at <= snapshots.observed_at)
+             )
+             SELECT expanded.item_id, expanded.region, expanded.realm_id, variants.variant, expanded.observed_at,
+                    expanded.min_price, expanded.median_price, expanded.max_price, expanded.listings
+               FROM expanded JOIN market_variants AS variants ON variants.variant_id = expanded.variant_id
+             UNION ALL
+             SELECT samples.item_id, samples.region, samples.realm_id, variants.variant, samples.observed_at,
+                    samples.min_price, samples.median_price, samples.max_price, samples.listings
+               FROM realm_price_samples AS samples JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+              WHERE samples.region = ? AND samples.observed_at >= ? AND samples.item_id = ?
+                AND NOT EXISTS (SELECT 1 FROM collection_snapshots AS snapshots WHERE snapshots.region = samples.region
+                                  AND snapshots.realm_id = samples.realm_id AND snapshots.observed_at = samples.observed_at)
+              ORDER BY observed_at
         """,
-        params=(REALM_ITEM, REGION, SINCE),
+        params=(REGION, SINCE, REALM_ITEM, REGION, SINCE, REALM_ITEM),
         why="the BoE analysis page: one track on every realm of a region",
     ),
     Query(
         name="per-realm history, one item on one realm",
         source="crates/storage/src/sqlite/realm_prices.rs",
-        anchor="AND samples.realm_id = ? AND samples.observed_at >= ?",
+        anchor="AND samples.item_id = ? AND samples.realm_id = ?",
         sql="""
-            SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
-                    samples.observed_at, samples.min_price, samples.median_price,
-                    samples.max_price, samples.listings
-               FROM realm_price_samples AS samples
-               JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
-              WHERE samples.item_id = ? AND samples.region = ?
-                    AND samples.realm_id = ? AND samples.observed_at >= ?
-              ORDER BY samples.observed_at
+            WITH expanded AS (
+                 SELECT samples.item_id, samples.region, samples.realm_id, samples.variant_id,
+                        snapshots.observed_at, samples.min_price, samples.median_price, samples.max_price, samples.listings
+                   FROM collection_snapshots AS snapshots JOIN realm_price_samples AS samples
+                     ON samples.region = snapshots.region AND samples.realm_id = snapshots.realm_id
+                  WHERE snapshots.region = ? AND snapshots.observed_at >= ?
+                    AND samples.item_id = ? AND samples.realm_id = ?
+                    AND samples.observed_at = (SELECT MAX(previous.observed_at) FROM realm_price_samples AS previous
+                         WHERE previous.region = snapshots.region AND previous.realm_id = snapshots.realm_id
+                           AND previous.item_id = samples.item_id AND previous.variant_id = samples.variant_id
+                           AND previous.observed_at <= snapshots.observed_at)
+             )
+             SELECT expanded.item_id, expanded.region, expanded.realm_id, variants.variant, expanded.observed_at,
+                    expanded.min_price, expanded.median_price, expanded.max_price, expanded.listings
+               FROM expanded JOIN market_variants AS variants ON variants.variant_id = expanded.variant_id
+             UNION ALL
+             SELECT samples.item_id, samples.region, samples.realm_id, variants.variant, samples.observed_at,
+                    samples.min_price, samples.median_price, samples.max_price, samples.listings
+               FROM realm_price_samples AS samples JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+              WHERE samples.region = ? AND samples.observed_at >= ? AND samples.item_id = ? AND samples.realm_id = ?
+                AND NOT EXISTS (SELECT 1 FROM collection_snapshots AS snapshots WHERE snapshots.region = samples.region
+                                  AND snapshots.realm_id = samples.realm_id AND snapshots.observed_at = samples.observed_at)
+              ORDER BY observed_at
         """,
-        params=(REALM_ITEM, REGION, REALM, SINCE),
+        params=(REGION, SINCE, REALM_ITEM, REALM, REGION, SINCE, REALM_ITEM, REALM),
         why="the single-realm full history view",
     ),
     Query(
