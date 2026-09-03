@@ -64,6 +64,109 @@ pub struct Realm {
     pub enabled: bool,
 }
 
+/// The next time one realm should be checked for a new auction snapshot.
+///
+/// This is deliberately small and serialisable: the collector persists it in
+/// its durable key/value store after every successful request, so a restart
+/// does not turn every quiet realm back into an aggressive poller.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RealmCadence {
+    /// The current polling interval, bounded by the collector configuration.
+    pub interval_ms: u64,
+    /// Do not ask upstream again before this instant.
+    pub next_check_at: Millis,
+}
+
+impl RealmCadence {
+    /// Start a newly discovered realm at the fast end of the schedule.
+    pub fn new(now: Millis, minimum_ms: u64) -> Self {
+        Self {
+            interval_ms: minimum_ms,
+            next_check_at: now,
+        }
+    }
+
+    pub fn is_due(self, now: Millis) -> bool {
+        now >= self.next_check_at
+    }
+
+    /// Apply new configured bounds without forgetting when the last request
+    /// happened. This matters after a deploy that tightens the maximum: old
+    /// persisted state must not keep a realm beyond the new freshness cap.
+    pub fn within_bounds(self, minimum_ms: u64, maximum_ms: u64) -> Self {
+        let (minimum_ms, maximum_ms) = bounds(minimum_ms, maximum_ms);
+        let previous_interval_ms = self.interval_ms.max(1);
+        let checked_at = Millis(
+            self.next_check_at
+                .get()
+                .saturating_sub(previous_interval_ms),
+        );
+        let interval_ms = self.interval_ms.clamp(minimum_ms, maximum_ms);
+        Self {
+            interval_ms,
+            next_check_at: checked_at.plus_ms(interval_ms),
+        }
+    }
+
+    /// Record a 304 response.
+    ///
+    /// The default bounds make this the 1 / 5 / 15 / 30 minute ladder from
+    /// the roadmap.  Keeping the first two multipliers here rather than
+    /// repeatedly doubling gives a quiet realm meaningful relief after one
+    /// proof that it is static, while the capped final step keeps its data
+    /// fresh enough for the evidence gate.
+    pub fn after_unchanged(self, now: Millis, minimum_ms: u64, maximum_ms: u64) -> Self {
+        let (minimum_ms, maximum_ms) = bounds(minimum_ms, maximum_ms);
+        let five = minimum_ms.saturating_mul(5).min(maximum_ms);
+        let fifteen = minimum_ms.saturating_mul(15).min(maximum_ms);
+        let interval_ms = if self.interval_ms < five {
+            five
+        } else if self.interval_ms < fifteen {
+            fifteen
+        } else {
+            maximum_ms
+        };
+        Self {
+            interval_ms,
+            next_check_at: now.plus_ms(interval_ms),
+        }
+    }
+
+    /// A fresh snapshot returns to the fast end.
+    ///
+    /// A changed realm is therefore sampled again after only the configured
+    /// minimum, even if it had been quiet long enough to reach the maximum.
+    pub fn after_activity(now: Millis, minimum_ms: u64, maximum_ms: u64) -> Self {
+        let (minimum_ms, _) = bounds(minimum_ms, maximum_ms);
+        Self {
+            interval_ms: minimum_ms,
+            next_check_at: now.plus_ms(minimum_ms),
+        }
+    }
+
+    /// A failed request has no evidence about this realm's volatility.
+    ///
+    /// It therefore backs off independently of the 304 ladder. Each failure
+    /// doubles the current interval, capped at the configured maximum, so a
+    /// broad upstream or storage outage cannot turn into a one-minute retry
+    /// storm. A later successful snapshot still uses [`Self::after_activity`]
+    /// and immediately returns to the minimum.
+    pub fn after_failure(self, now: Millis, minimum_ms: u64, maximum_ms: u64) -> Self {
+        let (_, maximum_ms) = bounds(minimum_ms, maximum_ms);
+        let current = self.within_bounds(minimum_ms, maximum_ms);
+        let interval_ms = current.interval_ms.saturating_mul(2).min(maximum_ms);
+        Self {
+            interval_ms,
+            next_check_at: now.plus_ms(interval_ms),
+        }
+    }
+}
+
+fn bounds(minimum_ms: u64, maximum_ms: u64) -> (u64, u64) {
+    let minimum_ms = minimum_ms.max(1);
+    (minimum_ms, maximum_ms.max(minimum_ms))
+}
+
 /// A single gear auction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GearListing {

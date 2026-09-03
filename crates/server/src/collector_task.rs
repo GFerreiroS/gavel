@@ -14,11 +14,11 @@ use app_core::item::ItemDetailProvider;
 use app_core::locale::{ALL_LOCALES, DEFAULT_LOCALE};
 use app_core::market::{
     ALGORITHM_VERSION, Collector, ItemId, ItemKind as ItemKindT, Outcome as CollectOutcome, Realm,
-    RealmAuctionProvider, RealmSnapshot, summarise_realm,
+    RealmAuctionProvider, RealmCadence, RealmSnapshot, summarise_realm,
 };
 use app_core::repo::{
-    PriceRepository, ReadModelRepository, RealmPriceRepository, SettingsRepository, Store,
-    TokenPriceRepository,
+    KeyValueStore, PriceRepository, ReadModelRepository, RealmPriceRepository, SettingsRepository,
+    Store, TokenPriceRepository,
 };
 use app_core::service::{Freshness, ItemTooltipService};
 use app_integrations::blizzard::{BlizzardConfig, BlizzardCredentials, BlizzardWowToken};
@@ -94,14 +94,20 @@ async fn run_market<E: Ports>(
     awaits_workers: bool,
 ) {
     let market = env.market().clone();
-    let mut ticker = tokio::time::interval(Duration::from_millis(
+    let mut commodity_ticker = tokio::time::interval(Duration::from_millis(
         market.collect_interval_ms.max(60_000),
     ));
-    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    commodity_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut realm_ticker = tokio::time::interval(Duration::from_millis(
+        market.realm_min_interval_ms.max(60_000),
+    ));
+    realm_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     match env.active_catalog() {
         Some(catalog) => tracing::info!(
             regions = ?market.regions.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
-            every_minutes = market.collect_interval_ms / 60_000,
+            commodity_every_minutes = market.collect_interval_ms / 60_000,
+            realm_min_minutes = market.realm_min_interval_ms / 60_000,
+            realm_max_minutes = market.realm_max_interval_ms / 60_000,
             items = catalog.tracked_ids().len(),
             expansion = %catalog.expansion,
             season = %catalog.season_label(),
@@ -117,28 +123,29 @@ async fn run_market<E: Ports>(
     backfill(&env, &artifacts, awaits_workers).await;
 
     loop {
-        ticker.tick().await;
-        // Only the regions whose snapshot actually moved. A `NotModified`
-        // does no analysis work, which is CLAUDE.md §16's Phase 2 in one line:
-        // the upstream said nothing changed, so nothing needs recalculating.
-        let collected = collect_once(&env).await;
-        // A cycle that fetched no realm has nothing to roll up. When any realm
-        // moved the whole region is recalculated, because the roll-up a card
-        // reads is *across* realms: one realm's new price changes what the
-        // region's cheapest copy is.
-        let realms = if collect_realms(&env).await {
-            env.market().regions.clone()
-        } else {
-            Vec::new()
-        };
-        // One version for both halves. Publishing them separately would leave
-        // a moment where the consumables page had moved on and the gear page
-        // had not, which is exactly what §15 says a reader must never see.
-        crate::materialise_task::publish(&env, &artifacts, &collected, &realms).await;
-        warm_tooltips(&env).await;
-        downsample(&env).await;
-        prune(&env).await;
-        prune_ladders(&env).await;
+        tokio::select! {
+            _ = commodity_ticker.tick() => {
+                // Commodity data remains on its fixed cadence: §16 measured it
+                // changing on 86.7% of observations, unlike quiet realm data.
+                let collected = collect_once(&env).await;
+                crate::materialise_task::publish(&env, &artifacts, &collected, &[]).await;
+                warm_tooltips(&env).await;
+                downsample(&env).await;
+                prune(&env).await;
+                prune_ladders(&env).await;
+            }
+            _ = realm_ticker.tick() => {
+                // A realm's own persisted schedule decides whether it is due.
+                // When one moves, the whole affected region is recalculated:
+                // the roll-up a card reads spans its connected realms.
+                let realms = if collect_realms(&env).await {
+                    env.market().regions.clone()
+                } else {
+                    Vec::new()
+                };
+                crate::materialise_task::publish(&env, &artifacts, &[], &realms).await;
+            }
+        }
     }
 }
 
@@ -347,7 +354,7 @@ async fn disabled_kinds<E: Ports>(env: &E) -> Vec<String> {
 ///
 /// What the cluster does decide today is *how much* work is in flight, which
 /// is the part that makes 184 realms possible at all.
-/// Collect every enabled realm's snapshot.
+/// Collect each enabled realm whose own cadence says it is due.
 ///
 /// Returns whether anything actually changed, which is what decides if the
 /// roll-ups need rebuilding.
@@ -382,9 +389,35 @@ async fn collect_realms<E: Ports>(env: &E) -> bool {
         return false;
     }
 
+    let now = env.now();
+    let market = env.market();
+    let mut due = Vec::new();
+    for realm in realms {
+        let cadence = match load_realm_cadence(env, &realm).await {
+            Ok(Some(cadence)) => {
+                cadence.within_bounds(market.realm_min_interval_ms, market.realm_max_interval_ms)
+            }
+            Ok(None) => RealmCadence::new(now, market.realm_min_interval_ms),
+            Err(error) => {
+                // Missing cadence metadata is never a reason to starve a
+                // realm; a safe retry at the minimum is better than stale UI.
+                tracing::warn!(realm = %realm.name, %error,
+                    "could not read realm cadence; collecting at the minimum interval");
+                RealmCadence::new(now, market.realm_min_interval_ms)
+            }
+        };
+        if !cadence.is_due(now) {
+            continue;
+        }
+        due.push((realm, cadence));
+    }
+    if due.is_empty() {
+        return false;
+    }
+
     let width = fan_out(env).await;
     let started = std::time::Instant::now();
-    let mut queue = realms.into_iter();
+    let mut queue = due.into_iter();
     let mut running = tokio::task::JoinSet::new();
     let (mut collected, mut unchanged, mut failed) = (0u32, 0u32, 0u32);
 
@@ -393,10 +426,12 @@ async fn collect_realms<E: Ports>(env: &E) -> bool {
         // finish. A fixed-size window rather than a batch: a slow realm holds
         // up one slot instead of the whole cycle.
         while running.len() < width {
-            let Some(realm) = queue.next() else { break };
+            let Some((realm, cadence)) = queue.next() else {
+                break;
+            };
             let env = env.clone();
             let wanted = wanted.clone();
-            running.spawn(async move { collect_one_realm(&env, &realm, &wanted).await });
+            running.spawn(async move { collect_one_realm(&env, &realm, cadence, &wanted).await });
         }
         let Some(finished) = running.join_next().await else {
             break;
@@ -443,7 +478,12 @@ async fn fan_out<E: Ports>(env: &E) -> usize {
     (nodes as usize).clamp(1, CAP)
 }
 
-async fn collect_one_realm<E: Ports>(env: &E, realm: &Realm, wanted: &[ItemId]) -> Outcome {
+async fn collect_one_realm<E: Ports>(
+    env: &E,
+    realm: &Realm,
+    cadence: RealmCadence,
+    wanted: &[ItemId],
+) -> Outcome {
     let prices = env.store().realm_prices();
     // Per realm, because realms regenerate on their own schedules: one
     // region-wide timestamp would re-fetch realms that had not moved and skip
@@ -462,7 +502,19 @@ async fn collect_one_realm<E: Ports>(env: &E, realm: &Realm, wanted: &[ItemId]) 
         .auctions(realm.region, realm.id, wanted, since)
         .await
     {
-        Ok(RealmSnapshot::NotModified) => Outcome::Unchanged,
+        Ok(RealmSnapshot::NotModified) => {
+            save_realm_cadence(
+                env,
+                realm,
+                cadence.after_unchanged(
+                    env.now(),
+                    env.market().realm_min_interval_ms,
+                    env.market().realm_max_interval_ms,
+                ),
+            )
+            .await;
+            Outcome::Unchanged
+        }
         Ok(RealmSnapshot::Fresh {
             generated_at,
             listings,
@@ -474,12 +526,32 @@ async fn collect_one_realm<E: Ports>(env: &E, realm: &Realm, wanted: &[ItemId]) 
                 .await
             {
                 Ok((written, rungs)) => {
+                    save_realm_cadence(
+                        env,
+                        realm,
+                        RealmCadence::after_activity(
+                            env.now(),
+                            env.market().realm_min_interval_ms,
+                            env.market().realm_max_interval_ms,
+                        ),
+                    )
+                    .await;
                     tracing::debug!(realm = %realm.name, written, rungs,
                         "collected gear prices");
                     Outcome::Collected
                 }
                 Err(e) => {
                     tracing::warn!(realm = %realm.name, error = %e, "storing gear snapshot failed");
+                    save_realm_cadence(
+                        env,
+                        realm,
+                        cadence.after_failure(
+                            env.now(),
+                            env.market().realm_min_interval_ms,
+                            env.market().realm_max_interval_ms,
+                        ),
+                    )
+                    .await;
                     Outcome::Failed
                 }
             }
@@ -488,8 +560,59 @@ async fn collect_one_realm<E: Ports>(env: &E, realm: &Realm, wanted: &[ItemId]) 
         // markets and separate requests.
         Err(e) => {
             tracing::warn!(realm = %realm.name, error = %e, "gear collection failed");
+            save_realm_cadence(
+                env,
+                realm,
+                cadence.after_failure(
+                    env.now(),
+                    env.market().realm_min_interval_ms,
+                    env.market().realm_max_interval_ms,
+                ),
+            )
+            .await;
             Outcome::Failed
         }
+    }
+}
+
+fn realm_cadence_key(realm: &Realm) -> String {
+    format!("market/realm-cadence/{}/{}", realm.region, realm.id)
+}
+
+async fn load_realm_cadence<E: Ports>(
+    env: &E,
+    realm: &Realm,
+) -> app_core::error::RepoResult<Option<RealmCadence>> {
+    let Some(value) = env.store().kv().get(&realm_cadence_key(realm)).await? else {
+        return Ok(None);
+    };
+    let parsed = std::str::from_utf8(&value)
+        .ok()
+        .and_then(|value| value.split_once(','))
+        .and_then(|(interval_ms, next_check_at)| {
+            Some((interval_ms.parse().ok()?, next_check_at.parse().ok()?))
+        });
+    match parsed {
+        Some((interval_ms, next_check_at)) => Ok(Some(RealmCadence {
+            interval_ms,
+            next_check_at: Millis(next_check_at),
+        })),
+        None => {
+            tracing::warn!(realm = %realm.name, "ignoring invalid persisted realm cadence");
+            Ok(None)
+        }
+    }
+}
+
+async fn save_realm_cadence<E: Ports>(env: &E, realm: &Realm, cadence: RealmCadence) {
+    let value = format!("{},{}", cadence.interval_ms, cadence.next_check_at.get());
+    if let Err(error) = env
+        .store()
+        .kv()
+        .put(&realm_cadence_key(realm), value.as_bytes())
+        .await
+    {
+        tracing::warn!(realm = %realm.name, %error, "could not persist realm cadence");
     }
 }
 
