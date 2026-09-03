@@ -277,6 +277,27 @@ pub trait PriceRepository: Send + Sync + 'static {
     fn prune_ladders_before(&self, before: Millis) -> impl Future<Output = RepoResult<u64>> + Send;
 }
 
+/// One region's WoW Token price at an upstream-provided instant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WowTokenPrice {
+    pub region: Region,
+    pub observed_at: Millis,
+    pub price: crate::market::Copper,
+}
+
+/// Token history stays separate from catalogue markets: it has no item id,
+/// realm, alert, ladder, or materialised market state.
+pub trait TokenPriceRepository: Send + Sync + 'static {
+    /// Returns false when the upstream instant was already recorded.
+    fn record(&self, token: &WowTokenPrice) -> impl Future<Output = RepoResult<bool>> + Send;
+
+    /// One region's complete recorded history, oldest first.
+    fn history(
+        &self,
+        region: Region,
+    ) -> impl Future<Output = RepoResult<Vec<WowTokenPrice>>> + Send;
+}
+
 /// Per-realm auction history: gear, which is not a commodity.
 ///
 /// A separate port from [`PriceRepository`] rather than more methods on it,
@@ -787,7 +808,7 @@ pub trait Store: Send + Sync + 'static {
     type Events: EventRepository;
     type Cache: CacheStore;
     type Kv: KeyValueStore;
-    type Prices: PriceRepository;
+    type Prices: PriceRepository + TokenPriceRepository;
     type RealmPrices: RealmPriceRepository;
     type Settings: SettingsRepository;
     type Watches: WatchRepository;

@@ -14,6 +14,7 @@ mod sessions;
 mod settings;
 mod users;
 mod watches;
+mod wow_token;
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;

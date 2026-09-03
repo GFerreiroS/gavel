@@ -649,8 +649,11 @@ impl Layout {
         csrf: String,
     ) -> Self {
         // What the app is for. Everyone sees these.
-        const NAV: [(&str, &str); 2] =
-            [("Auction House", "/wow/auctions"), ("Account", "/account")];
+        const NAV: [(&str, &str); 3] = [
+            ("Auction House", "/wow/auctions"),
+            ("WoW Token", "/wow/token"),
+            ("Account", "/account"),
+        ];
         // Only means anything with an account behind it: the page is a list of
         // what *you* follow. Offering it to a signed-out visitor is offering a
         // page that can only say "sign in".

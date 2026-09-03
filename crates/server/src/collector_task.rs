@@ -18,8 +18,10 @@ use app_core::market::{
 };
 use app_core::repo::{
     PriceRepository, ReadModelRepository, RealmPriceRepository, SettingsRepository, Store,
+    TokenPriceRepository,
 };
 use app_core::service::{Freshness, ItemTooltipService};
+use app_integrations::blizzard::{BlizzardConfig, BlizzardCredentials, BlizzardWowToken};
 use cluster_core::ClusterControl;
 use cluster_core::Millis;
 
@@ -39,16 +41,54 @@ use cluster_core::Millis;
 /// coming". The regular collection cycle needs none of this: it is half an
 /// hour in, by which time a worker has either joined or is not going to.
 const WORKER_GRACE: Duration = Duration::from_secs(5);
+const TOKEN_INTERVAL: Duration = Duration::from_secs(20 * 60);
 
 pub fn spawn<E: Ports>(
     env: E,
     artifacts: std::sync::Arc<crate::analysis_work::Artifacts>,
     awaits_workers: bool,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(run(env, artifacts, awaits_workers))
+) -> tokio::task::JoinHandle<()>
+where
+    E::Clock: Clone,
+{
+    let tokens =
+        BlizzardCredentials::from_env().and_then(|credentials| {
+            match BlizzardWowToken::new(BlizzardConfig::default(), credentials, env.clock().clone())
+            {
+                Ok(tokens) => Some(tokens),
+                Err(error) => {
+                    tracing::warn!(%error, "could not build the WoW Token client");
+                    None
+                }
+            }
+        });
+    tokio::spawn(run(env, artifacts, awaits_workers, tokens))
 }
 
 async fn run<E: Ports>(
+    env: E,
+    artifacts: std::sync::Arc<crate::analysis_work::Artifacts>,
+    awaits_workers: bool,
+    tokens: Option<BlizzardWowToken<E::Clock>>,
+) where
+    E::Clock: Clone,
+{
+    // The token endpoint is independent of collecting the auction house.  A
+    // JoinSet keeps both tasks under this returned handle: aborting the
+    // collector during shutdown drops the set and aborts both children.
+    let mut tasks = tokio::task::JoinSet::new();
+    tasks.spawn(run_market(env.clone(), artifacts, awaits_workers));
+    if let Some(client) = tokens {
+        tasks.spawn(run_tokens(env, client));
+    }
+    while let Some(result) = tasks.join_next().await {
+        if let Err(error) = result {
+            tracing::warn!(%error, "collector task ended unexpectedly");
+        }
+    }
+}
+
+async fn run_market<E: Ports>(
     env: E,
     artifacts: std::sync::Arc<crate::analysis_work::Artifacts>,
     awaits_workers: bool,
@@ -58,7 +98,6 @@ async fn run<E: Ports>(
         market.collect_interval_ms.max(60_000),
     ));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
     match env.active_catalog() {
         Some(catalog) => tracing::info!(
             regions = ?market.regions.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
@@ -100,6 +139,38 @@ async fn run<E: Ports>(
         downsample(&env).await;
         prune(&env).await;
         prune_ladders(&env).await;
+    }
+}
+
+async fn run_tokens<E: Ports>(env: E, client: BlizzardWowToken<E::Clock>)
+where
+    E::Clock: Clone,
+{
+    let mut ticker = tokio::time::interval(TOKEN_INTERVAL);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        ticker.tick().await;
+        collect_tokens(&env, &client).await;
+    }
+}
+
+async fn collect_tokens<E: Ports>(env: &E, client: &BlizzardWowToken<E::Clock>)
+where
+    E::Clock: Clone,
+{
+    for region in &env.market().regions {
+        match client.price(*region).await {
+            Ok(token) => match env.store().prices().record(&token).await {
+                Ok(true) => {
+                    tracing::info!(region = %region, price = %token.price, "collected WoW Token price")
+                }
+                Ok(false) => tracing::debug!(region = %region, "WoW Token price already recorded"),
+                Err(error) => {
+                    tracing::warn!(region = %region, %error, "could not store WoW Token price")
+                }
+            },
+            Err(error) => tracing::warn!(region = %region, %error, "WoW Token collection failed"),
+        }
     }
 }
 
