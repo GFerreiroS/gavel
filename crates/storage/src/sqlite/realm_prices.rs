@@ -125,52 +125,151 @@ impl RealmPriceRepository for SqliteRealmPrices {
         .execute(&mut *tx)
         .await
         .map_err(map_err)?;
-        let mut variants = BTreeMap::new();
+
+        let mut variants = std::collections::BTreeMap::new();
+
+        // Fetch previous state to suppress unchanged rows.
+        let previous_rows: Vec<(i64, i64, i64, i64, i64, Option<String>)> = sqlx::query_as(
+            "SELECT samples.item_id, samples.variant_id, samples.min_price,
+                    samples.median_price, samples.listings, ladders.steps
+               FROM realm_price_samples AS samples
+               LEFT JOIN realm_price_ladders AS ladders
+                 ON ladders.item_id = samples.item_id
+                AND ladders.region = samples.region
+                AND ladders.realm_id = samples.realm_id
+                AND ladders.variant_id = samples.variant_id
+                AND ladders.observed_at = samples.observed_at
+              WHERE samples.region = ? AND samples.realm_id = ?
+                AND samples.observed_at = (
+                    SELECT MAX(previous.observed_at) FROM realm_price_samples AS previous
+                     WHERE previous.region = samples.region AND previous.realm_id = samples.realm_id
+                       AND previous.item_id = samples.item_id AND previous.variant_id = samples.variant_id
+                )"
+        )
+        .bind(region.as_str())
+        .bind(realm.get() as i64)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(map_err)?;
+
+        #[allow(clippy::type_complexity)]
+        let mut previous: std::collections::HashMap<
+            (i64, i64),
+            (i64, i64, i64, Option<String>),
+        > = previous_rows
+            .into_iter()
+            .map(|(item, variant, min_p, med_p, list, steps)| {
+                ((item, variant), (min_p, med_p, list, steps))
+            })
+            .collect();
+
+        // Encode incoming ladders
+        let mut incoming_ladders: std::collections::HashMap<(i64, &str), String> =
+            std::collections::HashMap::new();
+        for (item, variant, ladder) in ladders {
+            if !ladder.is_empty() {
+                incoming_ladders.insert((item.get() as i64, variant.as_str()), ladder.encode());
+            }
+        }
+
         let mut sample_rows = 0u64;
-        for sample in samples {
-            let variant_id = variant_id(&mut tx, &mut variants, &sample.variant).await?;
-            sample_rows += sqlx::query(
-                "INSERT INTO realm_price_samples
-                   (item_id, region, realm_id, variant_id, observed_at,
-                    min_price, median_price, max_price, listings)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                 ON CONFLICT(item_id, region, realm_id, variant_id, observed_at) DO NOTHING",
-            )
-            .bind(sample.item.get() as i64)
-            .bind(sample.region.as_str())
-            .bind(sample.realm.get() as i64)
-            .bind(variant_id)
-            .bind(sample.observed_at.get() as i64)
-            .bind(sample.min_price.get() as i64)
-            .bind(sample.median_price.get() as i64)
-            .bind(sample.max_price.get() as i64)
-            .bind(sample.listings as i64)
-            .execute(&mut *tx)
-            .await
-            .map_err(map_err)?
-            .rows_affected();
-        }
         let mut ladder_rows = 0u64;
-        for (item, variant, ladder) in ladders.iter().filter(|(_, _, ladder)| !ladder.is_empty()) {
-            let variant_id = variant_id(&mut tx, &mut variants, variant).await?;
-            ladder_rows += sqlx::query(
-                "INSERT OR IGNORE INTO realm_price_ladders
-                   (item_id, region, realm_id, variant_id, observed_at, levels, total, steps)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(item.get() as i64)
-            .bind(region.as_str())
-            .bind(realm.get() as i64)
-            .bind(variant_id)
-            .bind(observed_at.get() as i64)
-            .bind(ladder.levels() as i64)
-            .bind(ladder.total() as i64)
-            .bind(ladder.encode())
-            .execute(&mut *tx)
-            .await
-            .map_err(map_err)?
-            .rows_affected();
+
+        for sample in samples {
+            let item_id = sample.item.get() as i64;
+            let variant_id = variant_id(&mut tx, &mut variants, &sample.variant).await?;
+
+            let min_price = sample.min_price.get() as i64;
+            let median_price = sample.median_price.get() as i64;
+            let max_price = sample.max_price.get() as i64;
+            let listings = sample.listings as i64;
+            let incoming_steps = incoming_ladders
+                .get(&(item_id, sample.variant.as_str()))
+                .cloned();
+
+            let changed = match previous.remove(&(item_id, variant_id)) {
+                Some((prev_min, prev_med, prev_list, prev_steps)) => {
+                    min_price != prev_min
+                        || median_price != prev_med
+                        || listings != prev_list
+                        || incoming_steps != prev_steps
+                }
+                None => true,
+            };
+
+            if changed {
+                sample_rows += sqlx::query(
+                    "INSERT INTO realm_price_samples
+                       (item_id, region, realm_id, variant_id, observed_at,
+                        min_price, median_price, max_price, listings)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     ON CONFLICT(item_id, region, realm_id, variant_id, observed_at) DO NOTHING",
+                )
+                .bind(item_id)
+                .bind(region.as_str())
+                .bind(realm.get() as i64)
+                .bind(variant_id)
+                .bind(observed_at.get() as i64)
+                .bind(min_price)
+                .bind(median_price)
+                .bind(max_price)
+                .bind(listings)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_err)?
+                .rows_affected();
+
+                // Write ladders only if the market changed (which means either ladder or sample changed)
+                if let Some((item, _variant, ladder)) = ladders
+                    .iter()
+                    .find(|(i, v, _l)| {
+                        i.get() as i64 == item_id && v.as_str() == sample.variant.as_str()
+                    })
+                    .filter(|(_, _, l)| !l.is_empty())
+                {
+                    ladder_rows += sqlx::query(
+                            "INSERT OR IGNORE INTO realm_price_ladders
+                               (item_id, region, realm_id, variant_id, observed_at, levels, total, steps)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                        )
+                        .bind(item.get() as i64)
+                        .bind(region.as_str())
+                        .bind(realm.get() as i64)
+                        .bind(variant_id)
+                        .bind(observed_at.get() as i64)
+                        .bind(ladder.levels() as i64)
+                        .bind(ladder.total() as i64)
+                        .bind(incoming_steps.unwrap())
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(map_err)?
+                        .rows_affected();
+                }
+            }
         }
+
+        // Tombstones for disappeared markets
+        for ((item_id, variant_id), (_, _, list, _)) in previous {
+            if list > 0 {
+                sample_rows += sqlx::query(
+                    "INSERT INTO realm_price_samples
+                       (item_id, region, realm_id, variant_id, observed_at,
+                        min_price, median_price, max_price, listings)
+                     VALUES (?, ?, ?, ?, ?, 0, 0, 0, 0)
+                     ON CONFLICT(item_id, region, realm_id, variant_id, observed_at) DO NOTHING",
+                )
+                .bind(item_id)
+                .bind(region.as_str())
+                .bind(realm.get() as i64)
+                .bind(variant_id)
+                .bind(observed_at.get() as i64)
+                .execute(&mut *tx)
+                .await
+                .map_err(map_err)?
+                .rows_affected();
+            }
+        }
+
         tx.commit().await.map_err(map_err)?;
         Ok((sample_rows, ladder_rows))
     }
@@ -373,6 +472,7 @@ impl RealmPriceRepository for SqliteRealmPrices {
                     expanded.observed_at, expanded.min_price, expanded.median_price,
                     expanded.max_price, expanded.listings
                FROM expanded JOIN market_variants AS variants ON variants.variant_id = expanded.variant_id
+              WHERE expanded.listings > 0
              UNION ALL
              SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
                     samples.observed_at, samples.min_price, samples.median_price,
@@ -420,6 +520,7 @@ impl RealmPriceRepository for SqliteRealmPrices {
              SELECT expanded.item_id, expanded.region, expanded.realm_id, variants.variant, expanded.observed_at,
                     expanded.min_price, expanded.median_price, expanded.max_price, expanded.listings
                FROM expanded JOIN market_variants AS variants ON variants.variant_id = expanded.variant_id
+              WHERE expanded.listings > 0
              UNION ALL
              SELECT samples.item_id, samples.region, samples.realm_id, variants.variant, samples.observed_at,
                     samples.min_price, samples.median_price, samples.max_price, samples.listings
@@ -458,6 +559,7 @@ impl RealmPriceRepository for SqliteRealmPrices {
              SELECT expanded.item_id, expanded.region, expanded.realm_id, variants.variant, expanded.observed_at,
                     expanded.min_price, expanded.median_price, expanded.max_price, expanded.listings
                FROM expanded JOIN market_variants AS variants ON variants.variant_id = expanded.variant_id
+              WHERE expanded.listings > 0
              UNION ALL
              SELECT samples.item_id, samples.region, samples.realm_id, variants.variant, samples.observed_at,
                     samples.min_price, samples.median_price, samples.max_price, samples.listings
