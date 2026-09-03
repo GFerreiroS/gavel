@@ -145,6 +145,39 @@ QUERIES = [
         why="the BoE analysis page: one track on every realm of a region",
     ),
     Query(
+        name="per-realm history, one item on one realm",
+        source="crates/storage/src/sqlite/realm_prices.rs",
+        anchor="AND samples.realm_id = ? AND samples.observed_at >= ?",
+        sql="""
+            SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+                    samples.observed_at, samples.min_price, samples.median_price,
+                    samples.max_price, samples.listings
+               FROM realm_price_samples AS samples
+               JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+              WHERE samples.item_id = ? AND samples.region = ?
+                    AND samples.realm_id = ? AND samples.observed_at >= ?
+              ORDER BY samples.observed_at
+        """,
+        params=(REALM_ITEM, REGION, REALM, SINCE),
+        why="the single-realm full history view",
+    ),
+    Query(
+        name="per-realm window, whole region",
+        source="crates/storage/src/sqlite/realm_prices.rs",
+        anchor="WHERE samples.region = ? AND samples.observed_at >= ?",
+        sql="""
+            SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+                    samples.observed_at, samples.min_price, samples.median_price,
+                    samples.max_price, samples.listings
+               FROM realm_price_samples AS samples
+               JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+              WHERE samples.region = ? AND samples.observed_at >= ?
+              ORDER BY samples.item_id, samples.realm_id, samples.variant_id, samples.observed_at
+        """,
+        params=(REGION, SINCE),
+        why="the background materialiser reading a window of history",
+    ),
+    Query(
         name="tooltips for a whole category",
         source="crates/storage/src/sqlite/cache.rs",
         anchor="SELECT key, value FROM cache WHERE key IN ({placeholders}) AND expires_at > ?",

@@ -744,7 +744,10 @@ because it changes the growth rate the trigger is measured against.
 
 Audit of the four 34.9 MB realm indexes (measured pre-§7 `variant_id`; true savings today are smaller but unmeasured):
 
-- `idx_realm_prices_item` and `idx_realm_prices_window` were dropped. Both are strictly redundant. `realm_price_samples` is a `WITHOUT ROWID` table, meaning secondary indexes include the full 5-column primary key. `idx_realm_prices_item` matches the primary key's leading columns, while `idx_realm_prices_window` merely swaps `item_id` and `region` (which are queried together). Queries degrade to an identical skip-scan on the primary key with no plan change.
+- `idx_realm_prices_window` was dropped. It is genuinely redundant. `realm_price_samples` is a `WITHOUT ROWID` table, meaning secondary indexes include the full primary key. `idx_realm_prices_window` merely swaps `item_id` and `region` (which are queried together).
+- `idx_realm_prices_item` was evaluated but **MUST NOT BE DROPPED**. The actual primary key is `(item_id, region, realm_id, variant_id, observed_at)`. The `history()` query filters by `item_id`, `region`, and `realm_id` and orders by `observed_at` without filtering `variant_id`. Because `variant_id` sits between the filtered columns and the ordering column, dropping the index forces SQLite to do per-variant PK searches plus a `USE TEMP B-TREE FOR ORDER BY`.
 - `idx_realm_prices_latest` and `idx_realm_price_ladders_age` were kept. They are used exclusively by the background history prune (`DELETE ... WHERE observed_at < ?`). Dropping either degrades its respective delete to a full table scan. Both remain oversized (carrying the full primary key) but are earned.
 
-**Recovered:** 69.8 MB (pre-§7).
+**Note on Audit Methodology:** The recorded plan set in `scripts/query-plans.py` is the audit's real limiting factor. An unchanged plan output only proves the recorded file matches the code, not that no queries regressed.
+
+**Recovered:** ~34.9 MB (pre-§7).
