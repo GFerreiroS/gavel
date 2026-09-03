@@ -6,6 +6,7 @@
 mod account;
 pub(crate) mod admin;
 mod alerts;
+mod arbitrage;
 mod archive;
 mod cluster;
 mod debug;
@@ -135,6 +136,11 @@ where
         .route("/wow/auctions/gems", get(enhancements::gems_page::<E>))
         .route("/wow/auctions/gear", get(gear::page_handler::<E>))
         .route("/wow/auctions/recipes", get(gear::recipes_page::<E>))
+        .route("/wow/arbitrage/{item_id}", get(arbitrage::recipe::<E>))
+        .route(
+            "/wow/arbitrage/{item_id}/{track}",
+            get(arbitrage::gear::<E>),
+        )
         // One page per upgrade track: the track is the market, and the item
         // levels inside it are what that page breaks apart.
         .route("/wow/gear/{item_id}/{track}", get(gear_stats::stats::<E>))
