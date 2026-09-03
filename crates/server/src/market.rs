@@ -170,15 +170,22 @@ pub fn config(
     regions: Vec<Region>,
     realms: Vec<(Region, RealmId)>,
     interval_minutes: u64,
+    realm_intervals_minutes: (u64, u64),
     retain_days: u64,
     downsample_days: u64,
     ladder_days: u64,
 ) -> MarketConfig {
     const DAY_MS: u64 = 24 * 60 * 60 * 1000;
+    const MINUTE_MS: u64 = 60 * 1000;
+    let (realm_min_interval_minutes, realm_max_interval_minutes) = realm_intervals_minutes;
+    let realm_min_interval_ms = realm_min_interval_minutes.max(1) * MINUTE_MS;
     MarketConfig {
         regions,
         realms,
         collect_interval_ms: interval_minutes.max(1) * 60 * 1000,
+        realm_min_interval_ms,
+        realm_max_interval_ms: realm_max_interval_minutes.max(realm_min_interval_minutes.max(1))
+            * MINUTE_MS,
         // Zero means forever in all three cases, and must survive as zero.
         retain_ms: retain_days * DAY_MS,
         downsample_after_ms: downsample_days * DAY_MS,

@@ -7,14 +7,93 @@ use std::sync::Mutex;
 use app_core::error::{AppResult, RepoResult};
 use app_core::market::{
     Alert, AlertRule, AlertSeverity, Audience, Catalog, CatalogSet, Collector, CommodityProvider,
-    Copper, ItemId, Listing, NullSink, Outcome, PriceSample, Region, Snapshot, WindowStats, alerts,
-    summarise,
+    Copper, ItemId, Listing, NullSink, Outcome, PriceSample, RealmCadence, Region, Snapshot,
+    WindowStats, alerts, summarise,
 };
 use app_core::repo::PriceRepository;
 use cluster_core::Millis;
 
 const ITEM: ItemId = ItemId(241324);
 const HOUR: u64 = 60 * 60 * 1000;
+
+// --- per-realm collection cadence ---------------------------------------
+
+#[test]
+fn a_quiet_realm_backs_off_through_the_cadence_ladder() {
+    let minute = 60_000;
+    let mut cadence = RealmCadence::new(Millis(0), minute);
+
+    cadence = cadence.after_unchanged(Millis(0), minute, 30 * minute);
+    assert_eq!(cadence.interval_ms, 5 * minute);
+    assert_eq!(cadence.next_check_at, Millis(5 * minute));
+
+    cadence = cadence.after_unchanged(Millis(5 * minute), minute, 30 * minute);
+    assert_eq!(cadence.interval_ms, 15 * minute);
+
+    cadence = cadence.after_unchanged(Millis(20 * minute), minute, 30 * minute);
+    assert_eq!(cadence.interval_ms, 30 * minute);
+
+    cadence = cadence.after_unchanged(Millis(50 * minute), minute, 30 * minute);
+    assert_eq!(cadence.interval_ms, 30 * minute, "the maximum is sticky");
+}
+
+#[test]
+fn a_fresh_realm_snapshot_recovers_at_the_minimum_interval() {
+    let minute = 60_000;
+    let active = RealmCadence::after_activity(Millis(100 * minute), minute, 30 * minute);
+    assert_eq!(active.interval_ms, minute);
+    assert_eq!(active.next_check_at, Millis(101 * minute));
+}
+
+#[test]
+fn consecutive_failures_only_lengthen_a_realms_cadence() {
+    let minute = 60_000;
+    let cadence = RealmCadence {
+        interval_ms: 15 * minute,
+        next_check_at: Millis(15 * minute),
+    };
+    let first = cadence.after_failure(Millis(15 * minute), minute, 30 * minute);
+    assert_eq!(first.interval_ms, 30 * minute);
+
+    let second = first.after_failure(Millis(45 * minute), minute, 30 * minute);
+    assert_eq!(second.interval_ms, 30 * minute, "the failure cap is sticky");
+}
+
+#[test]
+fn a_success_after_failures_restores_fast_realm_polling() {
+    let minute = 60_000;
+    let failed = RealmCadence::new(Millis(0), minute)
+        .after_failure(Millis(0), minute, 30 * minute)
+        .after_failure(Millis(2 * minute), minute, 30 * minute);
+    assert_eq!(failed.interval_ms, 4 * minute);
+
+    let recovered = RealmCadence::after_activity(Millis(6 * minute), minute, 30 * minute);
+    assert_eq!(recovered.interval_ms, minute);
+    assert_eq!(recovered.next_check_at, Millis(7 * minute));
+}
+
+#[test]
+fn realm_cadence_respects_configured_bounds() {
+    let minute = 60_000;
+    let cadence = RealmCadence::new(Millis(0), 10 * minute).after_unchanged(
+        Millis(0),
+        10 * minute,
+        20 * minute,
+    );
+    assert_eq!(cadence.interval_ms, 20 * minute);
+
+    let invalid = RealmCadence::after_activity(Millis(0), 0, 0);
+    assert_eq!(invalid.interval_ms, 1);
+    assert_eq!(invalid.next_check_at, Millis(1));
+
+    let tightened = RealmCadence {
+        interval_ms: 30 * minute,
+        next_check_at: Millis(30 * minute),
+    }
+    .within_bounds(minute, 10 * minute);
+    assert_eq!(tightened.interval_ms, 10 * minute);
+    assert_eq!(tightened.next_check_at, Millis(10 * minute));
+}
 
 fn listing(unit: u64, quantity: u64) -> Listing {
     Listing {

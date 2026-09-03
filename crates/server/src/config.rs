@@ -179,6 +179,16 @@ pub struct Cli {
     #[arg(long, env = "APP_MARKET_INTERVAL_MIN", default_value_t = 30)]
     pub market_interval_minutes: u64,
 
+    /// Fastest per-realm auction polling interval, in minutes. A fresh realm
+    /// snapshot returns to this cadence immediately.
+    #[arg(long, env = "APP_REALM_MIN_INTERVAL_MIN", default_value_t = 1)]
+    pub realm_min_interval_minutes: u64,
+
+    /// Slowest per-realm auction polling interval, in minutes. Quiet realms
+    /// back off through 1 / 5 / 15 minutes before reaching this cap.
+    #[arg(long, env = "APP_REALM_MAX_INTERVAL_MIN", default_value_t = 30)]
+    pub realm_max_interval_minutes: u64,
+
     /// How long price history is kept, in days. Zero keeps it forever, which
     /// is what the archive is for -- growth is handled by downsampling.
     #[arg(long, env = "APP_MARKET_RETAIN_DAYS", default_value_t = 0)]

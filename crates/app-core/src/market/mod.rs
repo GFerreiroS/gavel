@@ -50,7 +50,8 @@ pub use materialise::{
     Materialised, ModifierStat, Scope,
 };
 pub use realm::{
-    GearListing, Realm, RealmAuctionProvider, RealmId, RealmSample, RealmSnapshot, summarise_realm,
+    GearListing, Realm, RealmAuctionProvider, RealmCadence, RealmId, RealmSample, RealmSnapshot,
+    summarise_realm,
 };
 pub use release::ReleaseStates;
 pub use series::{ChartPoint, ChartSeries, Histogram, Observation};
@@ -265,6 +266,12 @@ pub struct MarketConfig {
     /// How often to poll. The upstream snapshot only moves hourly, so polling
     /// faster mostly produces 304s -- cheap, but not free at 25 per call.
     pub collect_interval_ms: u64,
+    /// Fastest a realm may be polled. A fresh realm snapshot returns to this
+    /// interval immediately, independently of the commodity cadence.
+    pub realm_min_interval_ms: u64,
+    /// Slowest a quiet realm may be polled. This is a freshness bound: letting
+    /// a realm go stale would make the evidence gate look like a data fault.
+    pub realm_max_interval_ms: u64,
     /// How long history is kept before pruning. **Zero means keep forever**,
     /// which is the default: the point of this feature is the archive, and a
     /// retention window would quietly delete the oldest expansion first.
@@ -307,6 +314,8 @@ impl Default for MarketConfig {
             realms: Vec::new(),
             rule: AlertRule::default(),
             collect_interval_ms: 30 * 60 * 1000,
+            realm_min_interval_ms: 60 * 1000,
+            realm_max_interval_ms: 30 * 60 * 1000,
             retain_ms: 0,
             downsample_after_ms: 14 * 24 * 60 * 60 * 1000,
             // Fourteen days, matching the longest comparison window a card
