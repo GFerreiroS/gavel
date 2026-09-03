@@ -270,6 +270,9 @@ async fn build<E: Ports>(
             locale,
             "Not enough history yet — the chart appears after a few collections.",
         ),
+        // All current windows use 96-slot hourly resolution; the §12 15-day
+        // minimum applies only to daily-granularity rollups.
+        false,
     );
 
     let distribution_chart = chart::histogram_chart(
@@ -282,11 +285,6 @@ async fn build<E: Ports>(
             }),
         state.has_data().then_some(state.price),
         crate::i18n::translate(locale, "Not enough history to show a distribution yet."),
-    );
-
-    let stock_chart = chart::stock_chart(
-        &mine,
-        crate::i18n::translate(locale, "Not enough history yet."),
     );
 
     // One grid rather than two bar charts. Weekday names are translated here
@@ -382,8 +380,8 @@ async fn build<E: Ports>(
         has_data: state.has_data(),
 
         price_panel: panel(
-            "What has this been worth, and how tightly?",
-            "gold",
+            "How have price and listed supply moved together?",
+            "gold and units listed",
             coverage_text.clone(),
             freshness.clone(),
         ),
@@ -426,12 +424,6 @@ async fn build<E: Ports>(
         distribution_panel: panel(
             "What prices has this market spent its time at?",
             "hours",
-            coverage_text.clone(),
-            freshness.clone(),
-        ),
-        stock_panel: panel(
-            "Is there enough of it to buy?",
-            "units listed",
             coverage_text.clone(),
             freshness.clone(),
         ),
@@ -566,7 +558,6 @@ async fn build<E: Ports>(
 
         price_chart,
         distribution_chart,
-        stock_chart,
         heatmap_chart,
         series_labels: rank_series
             .iter()

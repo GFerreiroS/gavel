@@ -604,6 +604,11 @@ progress.bar { margin: .35rem 0 .1rem; }
    Inline SVG, so it inherits the theme through currentColor rather than
    carrying a palette of its own. */
 .viz-root { width: 100%; height: auto; }
+/* svg.chart is sized and displayed by its own embedded CHART_STYLE (<style>
+   inside every SVG). No border or padding here: article.viz-root.panel is
+   already a Pico card and supplies the frame. A second box would double the
+   border and shrink the usable viewBox, clipping the right-axis labels on
+   narrow screens. */
 
 /* --- analysis panels -----------------------------------------------------
    A panel is a question with an answer under it. Phase 6's exit gate is that

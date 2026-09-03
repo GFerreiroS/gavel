@@ -1341,7 +1341,6 @@ pub struct ItemAnalysis {
     pub mad: String,
 
     pub distribution_panel: PanelHead,
-    pub stock_panel: PanelHead,
     pub quantity: u64,
     pub listings: u32,
 
@@ -1390,7 +1389,6 @@ pub struct ItemAnalysis {
     /// Pre-rendered inline SVG.
     pub price_chart: String,
     pub distribution_chart: String,
-    pub stock_chart: String,
     pub heatmap_chart: String,
     /// Legend entries: the label, and the colour the chart draws that slot in.
     ///
