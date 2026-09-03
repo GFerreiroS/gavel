@@ -11,6 +11,7 @@ mod market;
 mod materialise_task;
 mod query_timing;
 mod runtime;
+mod tsm_task;
 mod worker;
 
 use std::path::PathBuf;
@@ -272,6 +273,9 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
     // and a cluster with no nodes coming look identical from inside.
     let collector =
         collector_task::spawn(env.clone(), artifacts.clone(), cli.worker_listen.is_some());
+    // TSM's cadence and source semantics differ from Blizzard's auction
+    // feed, so it has its own loop and never delays the primary collector.
+    let tsm_collector = tsm_task::spawn(env.clone());
 
     // --- serve ------------------------------------------------------------
     // Told to the handlers that hold a connection open -- the SSE stream --
@@ -338,6 +342,8 @@ async fn run(env_path: Option<PathBuf>, env_keys: Vec<String>) -> anyhow::Result
     // Dropping the last handle stops the supervisor, which stops the nodes.
     collector.abort();
     let _ = collector.await;
+    tsm_collector.abort();
+    let _ = tsm_collector.await;
     drop(env);
     // Bounded for the same reason as the server above: a shutdown path that
     // can wait for ever is a shutdown path that eventually does.

@@ -46,6 +46,9 @@ pub struct WebConfig {
     /// A visitor is owed the page, not the shape of the read path behind it.
     /// The benchmark turns it on; a deployment asks for it when it wants it.
     pub server_timing: bool,
+    /// Allow public templates to render TSM-derived values. Source collection
+    /// and the internal contrast test are intentionally independent of this.
+    pub show_tsm_data: bool,
 }
 
 impl Default for WebConfig {
@@ -60,6 +63,7 @@ impl Default for WebConfig {
             upstream_cache_ttl_ms: 10 * 60 * 1000,
             item_cache_ttl_ms: 7 * 24 * 60 * 60 * 1000,
             server_timing: false,
+            show_tsm_data: false,
         }
     }
 }

@@ -78,6 +78,9 @@ COPIED = {
     "realms",
     # Which categories an administrator has turned on. A switch, not a person.
     "collection_settings",
+    # Independent market and completed-sales measurements from TSM.
+    "tsm_region_daily",
+    "tsm_commodity_sample",
 }
 
 # Not copied. Two different reasons live here, and both are worth stating.
