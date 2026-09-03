@@ -97,13 +97,15 @@ QUERIES = [
     Query(
         name="per-realm latest, whole region",
         source="crates/storage/src/sqlite/realm_prices.rs",
-        anchor="SELECT item_id, region, realm_id, variant, MAX(observed_at) AS observed_at",
+        anchor="SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,",
         sql="""
-            SELECT item_id, region, realm_id, variant, MAX(observed_at) AS observed_at,
-                   min_price, median_price, max_price, listings
-              FROM realm_price_samples
-             WHERE region = ?
-             GROUP BY item_id, realm_id, variant
+            SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+                   MAX(samples.observed_at) AS observed_at, samples.min_price,
+                   samples.median_price, samples.max_price, samples.listings
+              FROM realm_price_samples AS samples
+              JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+             WHERE samples.region = ?
+             GROUP BY samples.item_id, samples.realm_id, samples.variant_id
         """,
         params=(REGION,),
         why="the gear and recipe pages: 18k markets rebuilt to draw nine cards",
@@ -113,11 +115,13 @@ QUERIES = [
         source="crates/storage/src/sqlite/realm_prices.rs",
         anchor="const BY_MARKET",
         sql="""
-            SELECT item_id, region, realm_id, variant, MAX(observed_at) AS observed_at,
-                   min_price, median_price, max_price, listings
-              FROM realm_price_samples
-             WHERE region = ? AND realm_id = ?
-             GROUP BY item_id, realm_id, variant
+            SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+                   MAX(samples.observed_at) AS observed_at, samples.min_price,
+                   samples.median_price, samples.max_price, samples.listings
+              FROM realm_price_samples AS samples
+              JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+             WHERE samples.region = ? AND samples.realm_id = ?
+             GROUP BY samples.item_id, samples.realm_id, samples.variant_id
         """,
         params=(REGION, REALM),
         why="the same pages once a realm is chosen",
@@ -125,13 +129,15 @@ QUERIES = [
     Query(
         name="per-realm history, one item across a region",
         source="crates/storage/src/sqlite/realm_prices.rs",
-        anchor="WHERE item_id = ? AND region = ? AND observed_at >= ?",
+        anchor="WHERE samples.item_id = ? AND samples.region = ?",
         sql="""
-            SELECT item_id, region, realm_id, variant, observed_at,
-                   min_price, median_price, max_price, listings
-              FROM realm_price_samples
-             WHERE item_id = ? AND region = ? AND observed_at >= ?
-             ORDER BY observed_at
+            SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+                   samples.observed_at, samples.min_price, samples.median_price,
+                   samples.max_price, samples.listings
+              FROM realm_price_samples AS samples
+              JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+             WHERE samples.item_id = ? AND samples.region = ? AND samples.observed_at >= ?
+             ORDER BY samples.observed_at
         """,
         params=(REALM_ITEM, REGION, SINCE),
         why="the BoE analysis page: one track on every realm of a region",

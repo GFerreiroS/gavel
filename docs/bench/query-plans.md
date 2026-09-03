@@ -53,7 +53,8 @@ SELECT item_id,
 ```
 
 ```text
-SEARCH price_samples USING PRIMARY KEY (ANY(item_id) AND region=? AND observed_at>? AND observed_at<?)
+SEARCH price_samples USING INDEX idx_prices_time (region=? AND observed_at>? AND observed_at<?)
+USE TEMP B-TREE FOR GROUP BY
 ```
 
 ## commodity history, one market
@@ -77,15 +78,18 @@ the gear and recipe pages: 18k markets rebuilt to draw nine cards.
 `crates/storage/src/sqlite/realm_prices.rs`
 
 ```sql
-SELECT item_id, region, realm_id, variant, MAX(observed_at) AS observed_at,
-       min_price, median_price, max_price, listings
-  FROM realm_price_samples
- WHERE region = ?
- GROUP BY item_id, realm_id, variant
+SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+       MAX(samples.observed_at) AS observed_at, samples.min_price,
+       samples.median_price, samples.max_price, samples.listings
+  FROM realm_price_samples AS samples
+  JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+ WHERE samples.region = ?
+ GROUP BY samples.item_id, samples.realm_id, samples.variant_id
 ```
 
 ```text
-SEARCH realm_price_samples USING PRIMARY KEY (ANY(item_id) AND region=?)
+SEARCH samples USING PRIMARY KEY (ANY(item_id) AND region=?)
+SEARCH variants USING INTEGER PRIMARY KEY (rowid=?)
 ```
 
 ## per-realm latest, one realm
@@ -94,15 +98,18 @@ the same pages once a realm is chosen.
 `crates/storage/src/sqlite/realm_prices.rs`
 
 ```sql
-SELECT item_id, region, realm_id, variant, MAX(observed_at) AS observed_at,
-       min_price, median_price, max_price, listings
-  FROM realm_price_samples
- WHERE region = ? AND realm_id = ?
- GROUP BY item_id, realm_id, variant
+SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+       MAX(samples.observed_at) AS observed_at, samples.min_price,
+       samples.median_price, samples.max_price, samples.listings
+  FROM realm_price_samples AS samples
+  JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+ WHERE samples.region = ? AND samples.realm_id = ?
+ GROUP BY samples.item_id, samples.realm_id, samples.variant_id
 ```
 
 ```text
-SEARCH realm_price_samples USING PRIMARY KEY (ANY(item_id) AND region=? AND realm_id=?)
+SEARCH samples USING PRIMARY KEY (ANY(item_id) AND region=? AND realm_id=?)
+SEARCH variants USING INTEGER PRIMARY KEY (rowid=?)
 ```
 
 ## per-realm history, one item across a region
@@ -111,15 +118,18 @@ the BoE analysis page: one track on every realm of a region.
 `crates/storage/src/sqlite/realm_prices.rs`
 
 ```sql
-SELECT item_id, region, realm_id, variant, observed_at,
-       min_price, median_price, max_price, listings
-  FROM realm_price_samples
- WHERE item_id = ? AND region = ? AND observed_at >= ?
- ORDER BY observed_at
+SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+       samples.observed_at, samples.min_price, samples.median_price,
+       samples.max_price, samples.listings
+  FROM realm_price_samples AS samples
+  JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+ WHERE samples.item_id = ? AND samples.region = ? AND samples.observed_at >= ?
+ ORDER BY samples.observed_at
 ```
 
 ```text
-SEARCH realm_price_samples USING PRIMARY KEY (item_id=? AND region=?)
+SEARCH samples USING PRIMARY KEY (item_id=? AND region=?)
+SEARCH variants USING INTEGER PRIMARY KEY (rowid=?)
 USE TEMP B-TREE FOR ORDER BY
 ```
 

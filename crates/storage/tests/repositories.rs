@@ -788,13 +788,17 @@ async fn window_function_latest(
 ) -> Vec<(u32, u32, String, u64, u64)> {
     let mut sql = String::from(
         "SELECT item_id, realm_id, variant, observed_at, min_price FROM (
-           SELECT *, ROW_NUMBER() OVER (
-                       PARTITION BY item_id, realm_id, variant
-                       ORDER BY observed_at DESC) AS rn
-             FROM realm_price_samples WHERE region = ?",
+           SELECT samples.item_id, samples.realm_id, variants.variant,
+                  samples.observed_at, samples.min_price,
+                  ROW_NUMBER() OVER (
+                      PARTITION BY samples.item_id, samples.realm_id, samples.variant_id
+                      ORDER BY samples.observed_at DESC) AS rn
+             FROM realm_price_samples AS samples
+             JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+            WHERE samples.region = ?",
     );
     if realm.is_some() {
-        sql.push_str(" AND realm_id = ?");
+        sql.push_str(" AND samples.realm_id = ?");
     }
     sql.push_str(") WHERE rn = 1");
 
@@ -941,6 +945,152 @@ async fn a_variant_is_its_own_market() {
         .await
         .unwrap();
     assert_eq!(latest.len(), 2);
+}
+
+/// Migration 0026 must preserve every bonus-list identity exactly. This starts
+/// from the pre-0026 source-table shapes rather than from a fresh database,
+/// which would only prove the new schema can be created.
+#[tokio::test]
+async fn variant_dictionary_migration_is_lossless() {
+    use sqlx::sqlite::SqlitePoolOptions;
+
+    #[derive(Debug, PartialEq, sqlx::FromRow)]
+    struct Sample {
+        item_id: i64,
+        region: String,
+        realm_id: i64,
+        variant: String,
+        observed_at: i64,
+        min_price: i64,
+        median_price: i64,
+        max_price: i64,
+        listings: i64,
+    }
+
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .expect("old-shape database");
+    sqlx::raw_sql(
+        "CREATE TABLE realm_price_samples (
+            item_id INTEGER NOT NULL, region TEXT NOT NULL, realm_id INTEGER NOT NULL,
+            variant TEXT NOT NULL, observed_at INTEGER NOT NULL, min_price INTEGER NOT NULL,
+            median_price INTEGER NOT NULL, max_price INTEGER NOT NULL, listings INTEGER NOT NULL,
+            PRIMARY KEY (item_id, region, realm_id, variant, observed_at)
+        ) WITHOUT ROWID;
+        CREATE TABLE realm_price_ladders (
+            item_id INTEGER NOT NULL, region TEXT NOT NULL, realm_id INTEGER NOT NULL,
+            variant TEXT NOT NULL, observed_at INTEGER NOT NULL, levels INTEGER NOT NULL,
+            total INTEGER NOT NULL, steps TEXT NOT NULL,
+            PRIMARY KEY (item_id, region, realm_id, variant, observed_at)
+        ) WITHOUT ROWID;",
+    )
+    .execute(&pool)
+    .await
+    .expect("old tables");
+
+    sqlx::query(
+        "INSERT INTO realm_price_samples
+           (item_id, region, realm_id, variant, observed_at,
+            min_price, median_price, max_price, listings)
+         VALUES (10, 'eu', 1403, '12833,13333', 1000, 100, 125, 150, 2),
+                (10, 'eu', 1403, '',            2000, 200, 250, 300, 3),
+                (11, 'us', 60,   '12833,13333', 3000, 400, 450, 500, 4)",
+    )
+    .execute(&pool)
+    .await
+    .expect("old samples");
+    sqlx::query(
+        "INSERT INTO realm_price_ladders
+           (item_id, region, realm_id, variant, observed_at, levels, total, steps)
+         VALUES (10, 'eu', 1403, '12833,13333', 1000, 2, 2, '100:1,150:1'),
+                (10, 'eu', 1403, 'socket,13333', 2000, 1, 1, '250:1')",
+    )
+    .execute(&pool)
+    .await
+    .expect("old ladders");
+
+    sqlx::raw_sql(include_str!("../../../migrations/0026_variant_ids.sql"))
+        .execute(&pool)
+        .await
+        .expect("migration 0026");
+
+    let samples: Vec<Sample> = sqlx::query_as(
+        "SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+                samples.observed_at, samples.min_price, samples.median_price,
+                samples.max_price, samples.listings
+           FROM realm_price_samples AS samples
+           JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+          ORDER BY samples.item_id, samples.region, samples.realm_id,
+                   variants.variant, samples.observed_at",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("migrated samples");
+    assert_eq!(
+        samples,
+        vec![
+            Sample {
+                item_id: 10,
+                region: "eu".into(),
+                realm_id: 1403,
+                variant: "".into(),
+                observed_at: 2000,
+                min_price: 200,
+                median_price: 250,
+                max_price: 300,
+                listings: 3,
+            },
+            Sample {
+                item_id: 10,
+                region: "eu".into(),
+                realm_id: 1403,
+                variant: "12833,13333".into(),
+                observed_at: 1000,
+                min_price: 100,
+                median_price: 125,
+                max_price: 150,
+                listings: 2,
+            },
+            Sample {
+                item_id: 11,
+                region: "us".into(),
+                realm_id: 60,
+                variant: "12833,13333".into(),
+                observed_at: 3000,
+                min_price: 400,
+                median_price: 450,
+                max_price: 500,
+                listings: 4,
+            },
+        ]
+    );
+
+    let ladders: Vec<(String, String)> = sqlx::query_as(
+        "SELECT variants.variant, ladders.steps
+           FROM realm_price_ladders AS ladders
+           JOIN market_variants AS variants ON variants.variant_id = ladders.variant_id
+          ORDER BY variants.variant",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("migrated ladders");
+    assert_eq!(
+        ladders,
+        vec![
+            ("12833,13333".into(), "100:1,150:1".into()),
+            ("socket,13333".into(), "250:1".into()),
+        ]
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM market_variants")
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+        3,
+        "the dictionary is the union of sample and ladder variants"
+    );
 }
 
 // --- watchlists -------------------------------------------------------------
