@@ -1,0 +1,20 @@
+Gavel notices
+=============
+
+This product includes derivative work from Project Shatari Data by Gerard
+Dombroski, licensed under the Apache License, Version 2.0.
+
+Derived files:
+
+* `crates/app-core/src/market/bonuses.rs`, derived from
+  `shatari-data/src/bonuses.php` and `shatari-data/src/items.php`; ported to
+  Rust to evaluate DB2 bonus rules offline.
+* `crates/app-core/src/item.rs`, whose `ItemMetadata` type carries the
+  curated offline fields derived from `shatari-data/src/items.php`.
+* `scripts/catalog-sync.py`, whose bonus-data generator derives its input
+  shape from `shatari-data/src/bonuses.php` and `shatari-data/src/items.php`.
+* `crates/app-core/src/market/bonus-data.json`, generated from Project
+  Shatari Data outputs and Project Shatari Front English name suffixes.
+
+The Apache 2.0 license text is distributed at
+`LICENSES/Apache-2.0-shatari.txt`.

@@ -343,6 +343,22 @@ Tests live next to what they cover:
 - `crates/app-core/tests/rollup.rs` — a region's worth of per-realm markets,
   including the three different meanings of "the dearest one"
 
+### Thanks
+
+The offline item-bonus decoder and its curated item metadata derive from
+[Project Shatari Data](https://github.com/erorus/shatari-data), with published
+data from [Project Shatari](https://github.com/erorus/shatari) and English name
+suffixes from [Project Shatari Front](https://github.com/erorus/shatari-front).
+Auction-market research also draws on [undermine.exchange](https://undermine.exchange).
+See [`NOTICE`](NOTICE) and [`LICENSES/Apache-2.0-shatari.txt`](LICENSES/Apache-2.0-shatari.txt).
+
+To regenerate `crates/app-core/src/market/bonus-data.json`, first produce
+matching-patch `bonuses.json` and `items.all.json` from the upstream DB2
+scripts and obtain the matching English suffix JSON. Then run
+`python3 scripts/catalog-sync.py --generate-bonus-data` with all three source
+paths and immutable `--source-revision`; the command refuses missing curated
+item metadata unless the gap is explicitly recorded with `--allow-missing-items`.
+
 ### Measuring
 
 ```bash

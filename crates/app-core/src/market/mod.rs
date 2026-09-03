@@ -9,6 +9,7 @@
 pub mod alerts;
 pub mod analysis;
 pub mod archive;
+pub mod bonuses;
 pub mod catalog;
 pub mod collector;
 pub mod correlate;
@@ -31,6 +32,7 @@ use serde::{Deserialize, Serialize};
 pub use alerts::{Alert, AlertRule, AlertSeverity};
 pub use analysis::{Cycle, ItemAnalysis, Point, Trend, analyse, downsample};
 pub use archive::{Archive, ArchivedExpansion, ArchivedPatch, ArchivedTier};
+pub use bonuses::{DecodedItem, TertiaryStat, decode, metadata};
 pub use catalog::{
     ALL_AUDIENCES, ALL_AUDIENCES_LABELS, ALL_PROFESSIONS, ALL_SLOTS, Audience, Catalog,
     CatalogItem, CatalogSet, CatalogStatus, Category, ItemKind, ItemLevel, ItemRank, Patch,

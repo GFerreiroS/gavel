@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
+# Derived from `shatari-data/src/bonuses.php` and `src/items.php`, (c) Gerard
+# Dombroski, Apache-2.0. Ported to Python; compacts their generated DB2 output
+# to this repository's curated item catalogue.
 """Reconcile catalogs.json against what is actually trading on the auction house.
 
-Also resolves the bonus ids that per-realm gear carries, which is a separate
-job with separate sources -- see `--realm` below.
+Also resolves the bonus ids that per-realm gear carries. The old `--realm`
+workflow remains a reviewed fallback for the active catalogue. `--generate-
+bonus-data` imports the DB2-derived JSON emitted by Project Shatari Data for
+the offline Rust decoder.
 
 The catalog decides what gets collected, so a category that claims to track
 "everything of this expansion" is a claim about a live data set, not about a
@@ -70,6 +75,24 @@ SIMC_BONUS_URL = (
     "/engine/dbc/generated/item_bonus.inc"
 )
 WOWHEAD_TOOLTIP = "https://nether.wowhead.com/tooltip/item/{item}?bonus={bonus}&dataEnv=1&locale=0"
+
+# --- offline DB2 bonus data ------------------------------------------------
+#
+# The Rust decoder receives the per-patch JSON that Project Shatari Data emits
+# from Blizzard's DB2 files. Keep those inputs outside this repository: they
+# are a build artifact for one game client. The committed asset preserves every
+# bonus rule but limits item metadata to this workspace's curated catalogues.
+BONUS_DATA = ROOT / "crates/app-core/src/market/bonus-data.json"
+SHATARI_DATA = "https://github.com/erorus/shatari-data"
+SHATARI_PUBLISHED_DATA = "https://github.com/erorus/shatari"
+SHATARI_FRONT = "https://github.com/erorus/shatari-front"
+TERTIARY_STATS = {
+    # ItemModType enum values emitted by shatari-data's bonuses.php.
+    "63": "speed",
+    "62": "leech",
+    "61": "avoidance",
+    "64": "indestructible",
+}
 
 # simc bonus types we care about. 34 is an upgrade level, and picks out
 # exactly the eight ids the auctions carry. 4 names an upgrade track ("Heroic")
@@ -427,6 +450,116 @@ def tracked(catalog):
     return out
 
 
+def catalog_item_ids(document):
+    """Every curated item id, including archived catalogues.
+
+    The decoder is a presentation rule, so historical catalogues keep their
+    metadata when the active catalogue changes. Do not limit this to the
+    current catalogue.
+    """
+    return sorted(
+        {
+            rank["item_id"]
+            for catalog in document["catalogs"]
+            for item in catalog["items"]
+            for rank in item["ranks"]
+        }
+    )
+
+
+def generate_bonus_data(args, document):
+    """Write the embedded, reproducible DB2-derived decoder input.
+
+    `bonuses.php` and `items.php` in shatari-data produce these two JSON
+    sources. The output is a reviewable subset: all level and suffix rules are
+    retained, while item metadata is limited to this workspace's catalogues.
+    """
+    bonus_source = pathlib.Path(args.bonus_source)
+    item_source = pathlib.Path(args.item_source)
+    suffix_source = pathlib.Path(args.suffix_source)
+    if not bonus_source.is_file() or not item_source.is_file() or not suffix_source.is_file():
+        sys.exit("--bonus-source, --item-source, and --suffix-source must name readable JSON files")
+
+    bonuses = json.loads(bonus_source.read_text())
+    items = json.loads(item_source.read_text())
+    suffixes = json.loads(suffix_source.read_text())
+    required = {"levelData", "names", "curvePoints", "statBonuses", "squishEras"}
+    missing = required - bonuses.keys()
+    if missing:
+        sys.exit(f"bonus source is missing keys: {', '.join(sorted(missing))}")
+
+    item_ids = catalog_item_ids(document)
+    unavailable = [item_id for item_id in item_ids if str(item_id) not in items]
+    if unavailable and not args.allow_missing_items:
+        sys.exit(
+            "source is missing curated item metadata for "
+            f"{', '.join(map(str, unavailable))}; rerun from the matching DB2 build, "
+            "or use --allow-missing-items to record the gap explicitly"
+        )
+
+    metadata = {}
+    for item_id in item_ids:
+        row = items.get(str(item_id))
+        if row is None:
+            continue
+        metadata[str(item_id)] = {
+            "icon": row.get("icon"),
+            "vendor_buy": row.get("vendorBuy"),
+            "vendor_sell": row.get("vendorSell"),
+            "stack_size": row.get("stack", 1),
+            "bind_on_pickup": bool(row.get("bop", False)),
+            "expansion": row.get("expansion"),
+            # Decoder inputs, deliberately separate from public metadata.
+            "base_item_level": row.get("itemLevel", 1),
+            "squish_era": row.get("squishEra", 0),
+        }
+
+    output = {
+        "_provenance": {
+            "derived_from": [
+                f"{SHATARI_DATA}/src/bonuses.php",
+                f"{SHATARI_DATA}/src/items.php",
+                f"{SHATARI_FRONT}/json/name-suffixes.enus.json",
+            ],
+            "published_data": SHATARI_PUBLISHED_DATA,
+            "revision": args.source_revision,
+            "changes": "Curated item metadata only; Rust evaluates the bonus rules at runtime.",
+        },
+        "level_data": {
+            "legacy_adjust": bonuses["levelData"].get("legacyAdjust", {}),
+            "content_tuning": bonuses["levelData"].get("contentTuning", {}),
+            "legacy_set": bonuses["levelData"].get("legacySet", {}),
+            "era_curve_set": bonuses["levelData"].get("eraCurveSet", {}),
+            "item_scaling_set": bonuses["levelData"].get("itemScalingSet", {}),
+            "item_scaling_set_by_player": bonuses["levelData"].get(
+                "itemScalingSetByPlayer", {}
+            ),
+            "era_adjust": bonuses["levelData"].get("eraAdjust", {}),
+            "adjust": bonuses["levelData"].get("adjust", {}),
+        },
+        "suffixes": bonuses["names"],
+        "suffix_names": {
+            suffix_id: row["name"]
+            for suffix_id, row in suffixes.items()
+            if row.get("name")
+        },
+        "curve_points": bonuses["curvePoints"],
+        "tertiary_stats": {
+            name: bonuses["statBonuses"].get(stat_id, [])
+            for stat_id, name in TERTIARY_STATS.items()
+        },
+        "squish_eras": bonuses["squishEras"],
+        "items": metadata,
+        "missing_item_ids": unavailable,
+    }
+    output_path = pathlib.Path(args.bonus_output)
+    output_path.write_text(json.dumps(output, indent=2, sort_keys=True) + "\n")
+    print(
+        f"wrote {len(metadata)} curated items and {len(unavailable)} explicit gaps to "
+        f"{output_path.relative_to(ROOT)}"
+    )
+
+
 def report(kind, held, found, names):
     added = sorted(found - held)
     removed = sorted(held - found)
@@ -469,11 +602,56 @@ def main():
         help="resolve the gear bonus ids seen on this connected realm "
         "(e.g. eu:1403) and write them into the catalog",
     )
+    parser.add_argument(
+        "--generate-bonus-data",
+        action="store_true",
+        help="generate the embedded DB2-derived Rust decoder asset",
+    )
+    parser.add_argument(
+        "--bonus-source",
+        help="bonuses.json emitted by shatari-data/src/bonuses.php",
+    )
+    parser.add_argument(
+        "--item-source",
+        help="items.all.json emitted by shatari-data/src/items.php",
+    )
+    parser.add_argument(
+        "--suffix-source",
+        help="name-suffixes.enus.json emitted by shatari-data/src/bonuses.php",
+    )
+    parser.add_argument(
+        "--bonus-output",
+        default=str(BONUS_DATA),
+        help="generated decoder asset path",
+    )
+    parser.add_argument(
+        "--source-revision",
+        help="immutable upstream revision that produced the two source files",
+    )
+    parser.add_argument(
+        "--allow-missing-items",
+        action="store_true",
+        help="record item ids absent from the source instead of failing generation",
+    )
     parser.add_argument("--workers", type=int, default=12)
     args = parser.parse_args()
 
-    CACHE.mkdir(parents=True, exist_ok=True)
     document = json.loads(CATALOGS.read_text())
+    if args.generate_bonus_data:
+        if (
+            not args.bonus_source
+            or not args.item_source
+            or not args.suffix_source
+            or not args.source_revision
+        ):
+            sys.exit(
+                "--generate-bonus-data requires --bonus-source, --item-source, --suffix-source, "
+                "and --source-revision"
+            )
+        generate_bonus_data(args, document)
+        return
+
+    CACHE.mkdir(parents=True, exist_ok=True)
     catalog = next((c for c in document["catalogs"] if c["status"] == "active"), None)
     if catalog is None:
         sys.exit("no active catalog; nothing to reconcile")
