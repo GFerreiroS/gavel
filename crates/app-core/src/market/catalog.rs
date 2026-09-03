@@ -18,6 +18,9 @@ use std::collections::BTreeMap;
 use cluster_core::Millis;
 use serde::{Deserialize, Serialize};
 
+use crate::item::ItemMetadata;
+
+use super::bonuses::{DecodedItem, decode, metadata};
 use super::key::MarketKey;
 use super::realm::RealmSample;
 use super::{ItemId, PriceSample, Region};
@@ -1028,6 +1031,28 @@ impl Catalog {
     /// catalogue entry and never any history (CLAUDE.md §8).
     pub fn bonuses(variant: &str) -> impl Iterator<Item = u32> + '_ {
         variant.split(',').filter_map(|id| id.parse::<u32>().ok())
+    }
+
+    /// Decode an item's opaque market variant into patch-specific display
+    /// facts. The variant remains the stored market identity; this is never a
+    /// grouping or persistence rule.
+    ///
+    /// The reviewed `item_levels` and `modifiers` maps below remain the
+    /// compatibility fallback for the existing materialiser. A presentation
+    /// caller can migrate independently to this item-aware DB2 decoder.
+    pub fn decode_variant(item: ItemId, variant: &str) -> Option<DecodedItem> {
+        let bonus_ids = variant
+            .split(',')
+            .map(str::parse)
+            .collect::<Result<Vec<u32>, _>>()
+            .ok()?;
+        decode(item, &bonus_ids, None)
+    }
+
+    /// Offline, curated item metadata. Unlike [`crate::ItemTooltip`], this
+    /// does not make a runtime Blizzard API call.
+    pub fn item_metadata(item: ItemId) -> Option<ItemMetadata> {
+        metadata(item)
     }
 
     /// The upgrade bonus in a variant: the one id this catalogue knows an item

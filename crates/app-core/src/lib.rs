@@ -20,7 +20,7 @@ pub mod timing;
 pub mod wow;
 
 pub use error::{AppError, AppResult, RepoError, RepoResult};
-pub use item::{ItemDetailProvider, ItemQuality, ItemTooltip, LocalizedTooltips};
+pub use item::{ItemDetailProvider, ItemMetadata, ItemQuality, ItemTooltip, LocalizedTooltips};
 pub use locale::{ALL_LOCALES, DEFAULT_LOCALE, Locale};
 pub use market::{Catalog, CatalogSet, Copper, ItemId, PriceSample, Region};
 pub use metrics::{Metrics, MetricsSnapshot};

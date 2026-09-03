@@ -1,3 +1,7 @@
+//! Derived from `shatari-data/src/items.php`, (c) Gerard Dombroski,
+//! Apache-2.0. Ported to Rust; keeps only curated, offline metadata separate
+//! from the runtime Blizzard tooltip lookup.
+//!
 //! Item detail: the data behind an in-game style tooltip.
 //!
 //! Separate from [`crate::market`] on purpose. The market module is about what
@@ -16,6 +20,22 @@ use serde::{Deserialize, Serialize};
 use crate::error::AppResult;
 use crate::locale::Locale;
 use crate::market::{Copper, ItemId, Region};
+
+/// Static item facts read from a game-client build, rather than a live API.
+///
+/// This intentionally complements [`ItemTooltip`]. The latter remains the
+/// runtime, localised Blizzard boundary; this small offline record answers
+/// facts the API does not reliably provide for a historical patch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ItemMetadata {
+    pub item: ItemId,
+    pub icon: Option<String>,
+    pub vendor_buy: Option<Copper>,
+    pub vendor_sell: Option<Copper>,
+    pub stack_size: u32,
+    pub bind_on_pickup: bool,
+    pub expansion: Option<u8>,
+}
 
 /// Item quality. Drives one thing in the UI -- the colour of the name -- but
 /// it is modelled as an enum rather than a colour string because colour is a
