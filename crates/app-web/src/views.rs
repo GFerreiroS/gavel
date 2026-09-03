@@ -1341,6 +1341,8 @@ pub struct ArbitrageRealmRow {
 pub struct DealsView {
     pub panel: PanelHead,
     pub rows: Vec<DealRow>,
+    /// Candidate markets withheld by our availability policy.
+    pub suppressed: usize,
 }
 
 #[derive(Debug, Clone)]

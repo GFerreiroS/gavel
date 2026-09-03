@@ -10,9 +10,11 @@ use super::{Copper, ItemId, ItemKind, MarketRollup, RealmId, Scope, Track};
 
 /// Roadmap §10: below this, a cheap item is noise rather than an opportunity.
 pub const MIN_DEAL_PRICE: Copper = Copper(1_500_000);
-/// Do not make a cross-realm recommendation from one or two available realms.
+/// Our policy, not a roadmap §10 threshold: one or two available realms are
+/// too thin for a recommendation that asks a reader to spend gold.
 pub const MIN_LISTING_REALMS: u32 = 3;
-/// A current price must cover at least half of the realms that supplied history.
+/// Our policy, not a roadmap §10 threshold: current offers must cover half the
+/// realms that supplied the history, or the comparison is not representative.
 pub const MIN_LISTING_COVERAGE_PERCENT: u32 = 50;
 /// Roadmap §10's gate before the current-offer percentile is meaningful.
 pub const PERCENTILE_REALMS: usize = 15;
@@ -32,12 +34,26 @@ pub struct Deal {
     pub realms_collected: u32,
 }
 
+/// Deals that may be shown, plus candidate markets our evidence policy
+/// deliberately withheld. The latter is presentation evidence, not a deal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DealSelection {
+    pub deals: Vec<Deal>,
+    pub suppressed: usize,
+}
+
 /// Select the published markets that are safe enough to call deals.
 ///
 /// The regional row supplies the historical median and its evidence. Realm
 /// rows supply the currently purchasable prices for §10's 15-realm percentile
 /// rule. No price history is reduced here.
 pub fn find(rows: &[MarketRollup]) -> Vec<Deal> {
+    select(rows).deals
+}
+
+/// Select showable deals and count plausible candidates withheld by our
+/// availability policy. The count lets callers explain absence honestly.
+pub fn select(rows: &[MarketRollup]) -> DealSelection {
     let mut grouped: BTreeMap<(ItemId, ItemKind, Option<Track>), Vec<&MarketRollup>> =
         BTreeMap::new();
     for row in rows {
@@ -49,7 +65,15 @@ pub fn find(rows: &[MarketRollup]) -> Vec<Deal> {
         }
     }
 
-    let mut deals: Vec<Deal> = grouped.into_values().filter_map(deal).collect();
+    let mut deals = Vec::new();
+    let mut suppressed = 0;
+    for rows in grouped.into_values() {
+        if let Some(deal) = deal(&rows) {
+            deals.push(deal);
+        } else if candidate(&rows) {
+            suppressed += 1;
+        }
+    }
     deals.sort_by(|a, b| {
         b.saving_percent
             .cmp(&a.saving_percent)
@@ -57,10 +81,10 @@ pub fn find(rows: &[MarketRollup]) -> Vec<Deal> {
             .then_with(|| a.item.cmp(&b.item))
             .then_with(|| a.track.cmp(&b.track))
     });
-    deals
+    DealSelection { deals, suppressed }
 }
 
-fn deal(rows: Vec<&MarketRollup>) -> Option<Deal> {
+fn deal(rows: &[&MarketRollup]) -> Option<Deal> {
     let regional = rows
         .iter()
         .copied()
@@ -80,34 +104,13 @@ fn deal(rows: Vec<&MarketRollup>) -> Option<Deal> {
         return None;
     }
 
-    let mut offered: Vec<(Copper, RealmId)> = rows
-        .iter()
-        .filter_map(|row| match row.scope {
-            Scope::Region => None,
-            Scope::Realm(realm) => {
-                // §9's evidence rule applies to the purchase realm too. A
-                // zero-listing snapshot has no price, even if a malformed row
-                // carries a numeric value.
-                (row.position
-                    .is_some_and(|position| position.insufficient.is_none())
-                    && row.listings_now > 0)
-                    .then_some(row.cheapest_now)
-                    .flatten()
-                    .map(|price| (price, realm))
-            }
-        })
-        .collect();
-    offered.sort_unstable_by_key(|(price, realm)| (*price, *realm));
+    let offered = offered(rows, true);
     let &(price, realm) = offered.first()?;
 
     // Exact port of §10: historic median normally, then the lower of that and
     // the current offered third once at least fifteen realms make that
     // percentile a real shape rather than a single unusual listing.
-    let threshold = if offered.len() >= PERCENTILE_REALMS {
-        historical_median.min(offered[offered.len() / 3].0)
-    } else {
-        historical_median
-    };
+    let threshold = threshold(historical_median, &offered);
     if price < MIN_DEAL_PRICE || price >= threshold {
         return None;
     }
@@ -123,6 +126,61 @@ fn deal(rows: Vec<&MarketRollup>) -> Option<Deal> {
         realms_listing: regional.realms_listing,
         realms_collected: regional.realms_collected,
     })
+}
+
+/// A plausible price that would otherwise clear §10's threshold. This is
+/// deliberately evaluated before our extra availability policy so a caller
+/// can disclose what that policy withheld.
+fn candidate(rows: &[&MarketRollup]) -> bool {
+    let Some(regional) = rows.iter().copied().find(|row| row.scope == Scope::Region) else {
+        return false;
+    };
+    let Some(historical_median) = regional
+        .distribution
+        .map(|distribution| distribution.median)
+    else {
+        return false;
+    };
+    let offered = offered(rows, false);
+    let Some(&(price, _)) = offered.first() else {
+        return false;
+    };
+    price >= MIN_DEAL_PRICE && price < threshold(historical_median, &offered)
+}
+
+fn offered(rows: &[&MarketRollup], require_evidence: bool) -> Vec<(Copper, RealmId)> {
+    let mut offered: Vec<(Copper, RealmId)> = rows
+        .iter()
+        .filter_map(|row| match row.scope {
+            Scope::Region => None,
+            Scope::Realm(realm) => {
+                // §9's evidence rule applies to the purchase realm too. A
+                // zero-listing snapshot has no price, even if a malformed row
+                // carries a numeric value.
+                (!require_evidence
+                    || row
+                        .position
+                        .is_some_and(|position| position.insufficient.is_none()))
+                .then_some(row.listings_now > 0)
+                .filter(|listed| *listed)
+                .and(row.cheapest_now)
+                .map(|price| (price, realm))
+            }
+        })
+        .collect();
+    offered.sort_unstable_by_key(|(price, realm)| (*price, *realm));
+    offered
+}
+
+fn threshold(historical_median: Copper, offered: &[(Copper, RealmId)]) -> Copper {
+    // Exact port of §10: historic median normally, then the lower of that and
+    // the current offered third once at least fifteen realms make that
+    // percentile a real shape rather than a single unusual listing.
+    if offered.len() >= PERCENTILE_REALMS {
+        historical_median.min(offered[offered.len() / 3].0)
+    } else {
+        historical_median
+    }
 }
 
 #[cfg(test)]
@@ -194,6 +252,7 @@ mod tests {
         rows[0].realms_collected = 3;
 
         assert!(find(&rows).is_empty());
+        assert_eq!(select(&rows).suppressed, 1);
     }
 
     #[test]

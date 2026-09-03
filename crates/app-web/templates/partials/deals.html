@@ -6,7 +6,15 @@
 <article class="panel">
   {% call tips::panel_head(deals.panel) %}
   {% if deals.rows.is_empty() %}
+  {% if deals.suppressed > 0 %}
+  {% if deals.suppressed == 1 %}
+  <p class="muted">{{ "1 market had candidate prices but too little evidence to rank."|t }}</p>
+  {% else %}
+  <p class="muted">{{ "{} markets had candidate prices but too little evidence to rank."|t|fill(deals.suppressed) }}</p>
+  {% endif %}
+  {% else %}
   <p class="muted">{{ "No current listings clear the deal threshold with enough evidence."|t }}</p>
+  {% endif %}
   {% else %}
   <div class="scroll-x">
     <table class="deals-table">
@@ -25,5 +33,12 @@
       </tbody>
     </table>
   </div>
+  {% if deals.suppressed > 0 %}
+  {% if deals.suppressed == 1 %}
+  <p class="hint">{{ "1 market had candidate prices but too little evidence to rank."|t }}</p>
+  {% else %}
+  <p class="hint">{{ "{} markets had candidate prices but too little evidence to rank."|t|fill(deals.suppressed) }}</p>
+  {% endif %}
+  {% endif %}
   {% endif %}
 </article>

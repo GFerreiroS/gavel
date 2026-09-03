@@ -37,8 +37,17 @@ pub async fn page_handler<E: Ports>(
 ) -> WebResult<Html<String>> {
     // One published cross-realm scan, shared with §9's row shape. The domain
     // selector owns every price and evidence rule below this line.
-    let rows = env.store().read_model().deal_rollups(prefs.region).await?;
     let public = env.public_index();
+    let rows: Vec<_> = env
+        .store()
+        .read_model()
+        .deal_rollups(prefs.region)
+        .await?
+        .into_iter()
+        // Apply the public catalogue gate before selecting both visible and
+        // suppressed markets: a count must not leak a draft item either.
+        .filter(|row| public.contains_key(&row.item))
+        .collect();
     let realms: BTreeMap<RealmId, String> = env
         .store()
         .realm_prices()
@@ -49,7 +58,9 @@ pub async fn page_handler<E: Ports>(
         .map(|realm| (realm.id, realm.name))
         .collect();
     let now = env.now();
-    let mut visible: Vec<DealRow> = visible_deals(&rows)
+    let selection = visible_deals(&rows);
+    let mut visible: Vec<DealRow> = selection
+        .deals
         .into_iter()
         // The public index is the catalogue gate: stale rows never reveal a
         // draft item's name just because the read model still has history.
@@ -103,14 +114,15 @@ pub async fn page_handler<E: Ports>(
                     freshness: observed.map(|at| crate::format::ago(prefs.locale, now.since(at))),
                 },
                 rows: visible,
+                suppressed: selection.suppressed,
             },
         },
         prefs.locale,
     )
 }
 
-fn visible_deals(rows: &[app_core::market::MarketRollup]) -> Vec<Deal> {
-    deals::find(rows)
+fn visible_deals(rows: &[app_core::market::MarketRollup]) -> app_core::market::DealSelection {
+    deals::select(rows)
 }
 
 fn deal_href(deal: &Deal) -> String {
@@ -125,8 +137,11 @@ fn deal_href(deal: &Deal) -> String {
 
 #[cfg(test)]
 mod tests {
+    use app_core::WebConfig;
+    use app_core::locale::Locale;
     use app_core::market::engine::{Anomaly, Distribution, Position};
     use app_core::market::{Copper, ItemId, MarketRollup, Region, Scope, Track, Window};
+    use axum::http::Uri;
 
     use super::*;
 
@@ -176,12 +191,39 @@ mod tests {
         ]
     }
 
+    fn rendered_empty(suppressed: usize) -> String {
+        DealsPage {
+            layout: Layout::new(
+                &WebConfig::default(),
+                Locale::EnUs,
+                "Deals",
+                "/wow/auctions",
+                &Uri::from_static("/wow/deals"),
+                None,
+                String::new(),
+            ),
+            deals: DealsView {
+                panel: PanelHead {
+                    question: "Which cross-realm listings are genuinely cheap?",
+                    window: "published history and latest realm snapshots".into(),
+                    units: "gold per item",
+                    coverage: Some("0 deals after evidence gates".into()),
+                    freshness: None,
+                },
+                rows: Vec::new(),
+                suppressed,
+            },
+        }
+        .render()
+        .expect("deals template renders")
+    }
+
     #[test]
     fn the_route_surfaces_a_genuine_deal() {
         let deals = visible_deals(&market(Some(Copper(2_000_000)), 1));
 
-        assert_eq!(deals.len(), 1);
-        assert_eq!(deals[0].price, Copper(2_000_000));
+        assert_eq!(deals.deals.len(), 1);
+        assert_eq!(deals.deals[0].price, Copper(2_000_000));
     }
 
     #[test]
@@ -190,11 +232,33 @@ mod tests {
         rows[0].realms_listing = 1;
         rows[0].realms_collected = 3;
 
-        assert!(visible_deals(&rows).is_empty());
+        assert!(visible_deals(&rows).deals.is_empty());
     }
 
     #[test]
     fn the_route_never_ranks_a_zero_listing_market() {
-        assert!(visible_deals(&market(Some(Copper::ZERO), 0)).is_empty());
+        assert!(
+            visible_deals(&market(Some(Copper::ZERO), 0))
+                .deals
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn suppressed_candidates_do_not_render_as_no_deals() {
+        let mut thin = market(Some(Copper(2_000_000)), 1);
+        thin[0].realms_listing = 1;
+        thin[0].realms_collected = 3;
+        let suppressed = visible_deals(&thin);
+
+        assert!(suppressed.deals.is_empty());
+        assert_eq!(suppressed.suppressed, 1);
+        let withheld = rendered_empty(suppressed.suppressed);
+        let no_deals = rendered_empty(0);
+        assert!(
+            withheld.contains("1 market had candidate prices but too little evidence to rank.")
+        );
+        assert!(!withheld.contains("No current listings clear the deal threshold"));
+        assert!(no_deals.contains("No current listings clear the deal threshold"));
     }
 }
