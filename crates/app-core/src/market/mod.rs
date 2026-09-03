@@ -13,6 +13,7 @@ pub mod bonuses;
 pub mod catalog;
 pub mod collector;
 pub mod correlate;
+pub mod deals;
 pub mod depth;
 pub mod engine;
 pub mod event;
@@ -41,6 +42,9 @@ pub use catalog::{
 };
 pub use collector::{AlertSink, Collector, NullSink, Outcome, Report};
 pub use correlate::{Association, BeforeAfter, Heatmap, Stability, Strength, Swings};
+pub use deals::{
+    Deal, MIN_DEAL_PRICE, MIN_LISTING_COVERAGE_PERCENT, MIN_LISTING_REALMS, PERCENTILE_REALMS,
+};
 pub use depth::{Depth, Fill, Ladder, Step, Target, Wall};
 pub use engine::{Anomaly, Buckets, Distribution, Gates, Insufficient, Position, Swing, Valuation};
 pub use event::{EventKind, EventScope, MarketEvent, Provenance, Validation, Visibility};

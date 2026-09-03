@@ -2258,6 +2258,64 @@ async fn item_rollups_return_regional_evidence_and_every_realm() {
     );
 }
 
+/// Deals needs the same regional evidence plus every purchasable realm, but
+/// for every item at once. It remains a published read-model range, never an
+/// archive reduction during a request.
+#[tokio::test]
+async fn deal_rollups_return_every_items_regional_and_realm_rows() {
+    let store = store().await;
+    let model = store.read_model();
+    let version = model.begin(2, Millis(10)).await.unwrap();
+
+    let mut first_regional = rollup(212_265, 5_000);
+    first_regional.scope = Scope::Region;
+    let first_realm = rollup(212_265, 5_000);
+    let mut second_regional = rollup(212_266, 9_000);
+    second_regional.scope = Scope::Region;
+    let mut second_realm = rollup(212_266, 9_000);
+    second_realm.scope = Scope::Realm(RealmId(1404));
+
+    model
+        .stage_rollups(
+            version,
+            &[
+                first_regional.clone(),
+                first_realm.clone(),
+                second_regional.clone(),
+                second_realm.clone(),
+            ],
+        )
+        .await
+        .unwrap();
+    model
+        .publish(version, (Some(Millis(0)), Some(Millis(1_000))), Millis(20))
+        .await
+        .unwrap();
+
+    assert_eq!(
+        model.deal_rollups(Region::Eu).await.unwrap(),
+        vec![first_regional, first_realm, second_regional, second_realm]
+    );
+
+    let plan = sqlx::query(
+        "EXPLAIN QUERY PLAN
+         SELECT * FROM market_rollup
+         WHERE state = 'published' AND region = ?
+         ORDER BY item_id, track, realm_id",
+    )
+    .bind(Region::Eu.as_str())
+    .fetch_all(store.pool())
+    .await
+    .expect("query plan");
+    let detail: Vec<String> = plan.into_iter().map(|row| row.get(3)).collect();
+    assert!(
+        detail
+            .iter()
+            .any(|step| step.contains("SEARCH market_rollup USING PRIMARY KEY")),
+        "expected the (region, item_id, track, realm_id, state) primary key: {detail:?}"
+    );
+}
+
 /// The refusal survives the round trip too, with its two numbers.
 ///
 /// A band and a reason are stored in different columns, and a reason is the

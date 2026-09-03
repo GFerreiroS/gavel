@@ -966,6 +966,23 @@ impl ReadModelRepository for SqliteReadModel {
         rows.iter().map(rollup_from_row).collect()
     }
 
+    async fn deal_rollups(&self, region: Region) -> RepoResult<Vec<MarketRollup>> {
+        // Deals groups one item's regional evidence row with each of its realm
+        // rows. The WITHOUT ROWID primary key starts with `region`, making this
+        // a single indexed range across the published read model, not an
+        // archive scan.
+        let rows = sqlx::query(
+            "SELECT * FROM market_rollup
+              WHERE state = 'published' AND region = ?
+              ORDER BY item_id, track, realm_id",
+        )
+        .bind(region.as_str())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(map_err)?;
+        rows.iter().map(rollup_from_row).collect()
+    }
+
     async fn rollup(
         &self,
         region: Region,
