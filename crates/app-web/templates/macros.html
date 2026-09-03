@@ -414,6 +414,25 @@
 </article>
 {% endmacro %}
 
+{# A panel's fixed five terms. See `partials/item.html` for why each is
+   required; keeping the opening here lets every analysis page use the same
+   evidence vocabulary. #}
+{% macro panel_head(head) %}
+<header class="panel-head">
+  <h2>{{ head.question|t }}</h2>
+  <p class="panel-terms">
+    <span class="term"><span class="term-label">{{ "Window"|t }}</span>{{ head.window }}</span>
+    <span class="term"><span class="term-label">{{ "Units"|t }}</span>{{ head.units|t }}</span>
+    {% if let Some(coverage) = head.coverage %}
+    <span class="term"><span class="term-label">{{ "Coverage"|t }}</span>{{ coverage }}</span>
+    {% endif %}
+    {% if let Some(freshness) = head.freshness %}
+    <span class="term"><span class="term-label">{{ "Updated"|t }}</span>{{ freshness }}</span>
+    {% endif %}
+  </p>
+</header>
+{% endmacro %}
+
 {#
   What it costs to sweep a market, from a stored ladder.
 

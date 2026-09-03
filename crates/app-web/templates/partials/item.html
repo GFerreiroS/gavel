@@ -10,22 +10,6 @@
   coverage or freshness to report says so by rendering nothing there rather
   than by quietly omitting a line nobody notices is missing.
 #}
-{% macro panel_head(head) %}
-<header class="panel-head">
-  <h2>{{ head.question|t }}</h2>
-  <p class="panel-terms">
-    <span class="term"><span class="term-label">{{ "Window"|t }}</span>{{ head.window }}</span>
-    <span class="term"><span class="term-label">{{ "Units"|t }}</span>{{ head.units|t }}</span>
-    {% if let Some(coverage) = head.coverage %}
-    <span class="term"><span class="term-label">{{ "Coverage"|t }}</span>{{ coverage }}</span>
-    {% endif %}
-    {% if let Some(freshness) = head.freshness %}
-    <span class="term"><span class="term-label">{{ "Updated"|t }}</span>{{ freshness }}</span>
-    {% endif %}
-  </p>
-</header>
-{% endmacro %}
-
 {% if !analysis.has_data %}
 <div class="alert alert-archived" role="status">
   {{ "No observations recorded for this market yet. Statistics appear once the collector has run."|t }}
@@ -34,7 +18,7 @@
 
 {# --- what is it worth, and where does that sit ------------------------- #}
 <article class="viz-root panel">
-  {% call panel_head(analysis.price_panel) %}
+  {% call tips::panel_head(analysis.price_panel) %}
 
   <div class="verdict-row">
     <div class="stat">
@@ -98,7 +82,7 @@
 
 {# --- the distribution the band is a rank inside ------------------------ #}
 <article class="viz-root panel">
-  {% call panel_head(analysis.distribution_panel) %}
+  {% call tips::panel_head(analysis.distribution_panel) %}
   {{ analysis.distribution_chart|safe }}
   <p class="hint">
     {{ "Hours spent at each price, with today's marked. A wide spread and a narrow one can give the same percentile and mean very different things."|t }}
@@ -115,7 +99,7 @@
 
 {# --- what it costs to buy what you need -------------------------------- #}
 <article class="viz-root panel">
-  {% call panel_head(analysis.depth_panel) %}
+  {% call tips::panel_head(analysis.depth_panel) %}
   {% if let Some(depth) = analysis.depth %}
   {% call tips::depth_body(depth) %}
   {% else %}
@@ -130,7 +114,7 @@
 
 {# --- how good is the evidence ------------------------------------------ #}
 <article class="panel">
-  {% call panel_head(analysis.quality_panel) %}
+  {% call tips::panel_head(analysis.quality_panel) %}
   <div class="verdict-row">
     <div class="stat">
       <span class="label">{{ "Hours observed"|t }}</span>
@@ -188,7 +172,7 @@
 
 {# --- when in the week ---------------------------------------------------- #}
 <article class="viz-root panel">
-  {% call panel_head(analysis.cycle_panel) %}
+  {% call tips::panel_head(analysis.cycle_panel) %}
   {% if let Some(cell) = analysis.cheapest_cell %}
   {# An hour *and* a day, which is what the grid can say and two separate
      charts could not: a reset happens at one hour on one day. #}
@@ -202,7 +186,7 @@
 
 {# --- how steady is it, and what moves with it -------------------------- #}
 <article class="panel">
-  {% call panel_head(analysis.movement_panel) %}
+  {% call tips::panel_head(analysis.movement_panel) %}
   <div class="verdict-row">
     <div class="stat">
       <span class="label">{{ "Typical move"|t }}</span>
@@ -244,7 +228,7 @@
 {# --- what happened around it ------------------------------------------- #}
 {% if !analysis.events.is_empty() %}
 <article class="panel">
-  {% call panel_head(analysis.events_panel) %}
+  {% call tips::panel_head(analysis.events_panel) %}
   <div class="scroll-x">
     <table>
       <thead>
@@ -295,7 +279,7 @@
 {% endif %}
 
 <article class="panel">
-  {% call panel_head(analysis.patch_panel) %}
+  {% call tips::panel_head(analysis.patch_panel) %}
   <div class="scroll-x">
     <table>
       <thead><tr><th>{{ "Patch"|t }}</th><th>{{ "Median"|t }}</th><th>{{ "Low"|t }}</th><th>{{ "High"|t }}</th><th>{{ "Observations"|t }}</th></tr></thead>
