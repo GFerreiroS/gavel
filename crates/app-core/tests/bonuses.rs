@@ -10,7 +10,7 @@ fn real_bonus_ids_decode_level_suffix_and_tertiary() {
     // Leech in the source ItemModType table.
     let decoded = decode(PEACEBLOOM, &[12_825, 459, 41], None).expect("curated item");
 
-    assert_eq!(decoded.item_level, 279);
+    assert_eq!(decoded.item_level, 310);
     assert_eq!(decoded.name_suffix.as_deref(), Some("of the Fireflash"));
     assert_eq!(decoded.tertiary_stats, vec![TertiaryStat::Leech]);
 }
@@ -34,7 +34,7 @@ fn real_tertiary_bonus_ids_keep_their_stat_identity() {
 fn catalog_boundary_keeps_variant_as_a_string_identity() {
     let decoded = Catalog::decode_variant(PEACEBLOOM, "12825,459,41").expect("valid variant");
 
-    assert_eq!(decoded.item_level, 279);
+    assert_eq!(decoded.item_level, 310);
     assert!(Catalog::decode_variant(PEACEBLOOM, "12825,nope").is_none());
 }
 

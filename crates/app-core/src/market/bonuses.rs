@@ -161,8 +161,7 @@ pub fn decode(
     if let Some([_, set_level]) = highest(bonus_ids, &data.level_data.legacy_set) {
         level = *set_level;
     }
-    if let Some([_, curve_id, player_max]) = highest(bonus_ids, &data.level_data.content_tuning)
-    {
+    if let Some([_, curve_id, player_max]) = highest(bonus_ids, &data.level_data.content_tuning) {
         let player = if *player_max == 0 {
             player_level
         } else {

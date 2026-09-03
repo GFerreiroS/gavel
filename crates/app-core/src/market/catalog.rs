@@ -20,9 +20,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::item::ItemMetadata;
 
+use super::bonuses::{DecodedItem, decode, metadata};
 use super::key::MarketKey;
 use super::realm::RealmSample;
-use super::bonuses::{DecodedItem, decode, metadata};
 use super::{ItemId, PriceSample, Region};
 
 /// Who the consumable is for.
