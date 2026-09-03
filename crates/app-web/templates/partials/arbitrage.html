@@ -1,0 +1,62 @@
+{% import "macros.html" as tips %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/wow/auctions">{{ "Auction House"|t }}</a></li>
+    <li><a href="{{ arbitrage.section_href }}">{{ "Back to market"|t }}</a></li>
+    <li>{{ arbitrage.name }}</li>
+  </ul>
+</nav>
+<header>
+  <h1>{{ arbitrage.name }}</h1>
+  <p class="muted">{{ "Cross-realm arbitrage"|t }}{% if !arbitrage.track.is_empty() %} · {{ arbitrage.track|t }}{% endif %}</p>
+</header>
+<div class="arbitrage-summary">
+  <article class="panel">
+    {% call tips::panel_head(arbitrage.summary_panel) %}
+    {% if arbitrage.has_data %}
+    <div class="verdict-row">
+      <div class="stat">
+        <span class="label">{{ "Cheapest realm"|t }}</span>
+        <span class="value">{{ arbitrage.cheapest }}</span>
+        <span class="when muted">{{ arbitrage.cheapest_realm }}</span>
+      </div>
+      <div class="stat">
+        <span class="label">{{ "Typical realm"|t }}</span>
+        <span class="value">{{ arbitrage.typical }}</span>
+        <span class="when muted">{{ "median of each realm's cheapest copy"|t }}</span>
+      </div>
+      <div class="stat">
+        <span class="label">{{ "Dearest realm"|t }}</span>
+        <span class="value">{{ arbitrage.dearest }}</span>
+        <span class="when muted">{{ arbitrage.dearest_realm }}</span>
+      </div>
+    </div>
+    <p class="hint">{{ "Prices are each realm's cheapest listed copy. The median counts only realms listing now; it is not an average of every auction."|t }}</p>
+    {% else %}
+    <p class="muted">{{ "No listings in the latest collected snapshots."|t }}</p>
+    {% endif %}
+  </article>
+  <article class="panel">
+    {% call tips::panel_head(arbitrage.table_panel) %}
+    <div class="scroll-x">
+      <table class="arbitrage-table">
+        <thead><tr><th>{{ "Realm"|t }}</th><th class="number">{{ "Cheapest"|t }}</th><th class="number">{{ "Listings"|t }}</th><th>{{ "Updated"|t }}</th></tr></thead>
+        <tbody>
+          {% for row in arbitrage.realms %}
+          <tr>
+            <td>{{ row.realm }}</td>
+            {% if let Some(reason) = row.insufficient %}
+            <td colspan="2" class="muted">{{ reason|t }}</td>
+            {% else %}
+            <td class="number">{{ row.price }}</td>
+            <td class="number">{{ row.listings }}</td>
+            {% endif %}
+            <td class="muted">{{ row.observed }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <p class="hint">{{ "A thinly observed realm withholds its price and names the evidence gap instead of presenting a confident comparison."|t }}</p>
+  </article>
+</div>

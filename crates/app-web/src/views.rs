@@ -1309,6 +1309,33 @@ pub struct PanelHead {
     pub freshness: Option<String>,
 }
 
+/// One item across the connected realms where it can be bought.
+#[derive(Debug, Clone)]
+pub struct ArbitrageView {
+    pub name: String,
+    pub track: String,
+    pub section_href: String,
+    pub summary_panel: PanelHead,
+    pub table_panel: PanelHead,
+    pub has_data: bool,
+    pub cheapest: String,
+    pub typical: String,
+    pub dearest: String,
+    pub cheapest_realm: String,
+    pub dearest_realm: String,
+    pub realms: Vec<ArbitrageRealmRow>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ArbitrageRealmRow {
+    pub realm: String,
+    pub price: String,
+    pub listings: u32,
+    pub observed: String,
+    /// Existing evidence vocabulary; non-empty means the price is withheld.
+    pub insufficient: Option<&'static str>,
+}
+
 /// The cacheable half of the item page.
 ///
 /// Everything here is a pure function of the published version, the item, the
