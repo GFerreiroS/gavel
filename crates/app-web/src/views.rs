@@ -1336,6 +1336,25 @@ pub struct ArbitrageRealmRow {
     pub insufficient: Option<&'static str>,
 }
 
+/// One evidence-gated current listing that clears the deals threshold.
+#[derive(Debug, Clone)]
+pub struct DealsView {
+    pub panel: PanelHead,
+    pub rows: Vec<DealRow>,
+}
+
+#[derive(Debug, Clone)]
+pub struct DealRow {
+    pub name: String,
+    pub kind: &'static str,
+    pub realm: String,
+    pub price: String,
+    pub threshold: String,
+    pub saving_percent: u8,
+    pub coverage: String,
+    pub href: String,
+}
+
 /// The cacheable half of the item page.
 ///
 /// Everything here is a pure function of the published version, the item, the

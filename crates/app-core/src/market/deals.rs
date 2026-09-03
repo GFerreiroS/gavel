@@ -128,7 +128,7 @@ fn deal(rows: Vec<&MarketRollup>) -> Option<Deal> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::market::engine::{Anomaly, Position};
+    use crate::market::engine::{Anomaly, Insufficient, Position};
     use crate::market::{Distribution, Window};
 
     fn healthy() -> Position {
@@ -197,9 +197,49 @@ mod tests {
     }
 
     #[test]
+    fn an_insufficient_historical_market_is_excluded() {
+        let mut rows = market(Some(Copper(2_000_000)), 1);
+        rows[0]
+            .position
+            .as_mut()
+            .expect("fixture position")
+            .insufficient = Some(Insufficient::TooManyGaps {
+            coverage: 20,
+            need: 80,
+        });
+
+        assert!(find(&rows).is_empty());
+    }
+
+    #[test]
     fn a_zero_listing_price_never_ranks() {
         let deals = find(&market(Some(Copper::ZERO), 0));
 
         assert!(deals.is_empty());
+    }
+
+    #[test]
+    fn fifteen_offered_realms_cap_the_threshold_at_the_current_third() {
+        let mut rows = Vec::new();
+        let mut regional = row(Scope::Region, Some(Copper(2_000_000)), 1);
+        regional.realms_listing = PERCENTILE_REALMS as u32;
+        regional.realms_collected = PERCENTILE_REALMS as u32;
+        rows.push(regional);
+        for offset in 0..PERCENTILE_REALMS {
+            rows.push(row(
+                Scope::Realm(RealmId(1403 + offset as u32)),
+                Some(Copper(2_000_000 + offset as u64 * 100_000)),
+                1,
+            ));
+        }
+
+        let deals = find(&rows);
+
+        assert_eq!(deals.len(), 1);
+        assert_eq!(
+            deals[0].threshold,
+            Copper(2_500_000),
+            "§10's offered[len / 3], not an invented dispersion percentile"
+        );
     }
 }

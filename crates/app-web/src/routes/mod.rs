@@ -9,6 +9,7 @@ mod alerts;
 mod arbitrage;
 mod archive;
 mod cluster;
+mod deals;
 mod debug;
 pub(crate) mod enhancements;
 pub(crate) mod gear;
@@ -120,6 +121,7 @@ where
         // The product: what the auction house costs.
         .route("/account", get(pages::account::<E>))
         .route("/wow/auctions", get(market::index::<E>))
+        .route("/wow/deals", get(deals::page_handler::<E>))
         .route("/wow/token", get(wow_token::page_handler::<E>))
         // Per account: what you follow, and what fired today. A visitor who is
         // signed out gets the page with an invitation and no alerts.

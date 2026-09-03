@@ -1,0 +1,29 @@
+{% import "macros.html" as tips %}
+<header>
+  <h1>{{ "Deals"|t }}</h1>
+  <p class="muted">{{ "Cross-realm listings below their evidence-gated deal price."|t }}</p>
+</header>
+<article class="panel">
+  {% call tips::panel_head(deals.panel) %}
+  {% if deals.rows.is_empty() %}
+  <p class="muted">{{ "No current listings clear the deal threshold with enough evidence."|t }}</p>
+  {% else %}
+  <div class="scroll-x">
+    <table class="deals-table">
+      <thead><tr><th>{{ "Item"|t }}</th><th>{{ "Realm"|t }}</th><th class="number">{{ "Price"|t }}</th><th class="number">{{ "Deal price"|t }}</th><th class="number">{{ "Saving"|t }}</th><th>{{ "Coverage"|t }}</th></tr></thead>
+      <tbody>
+        {% for row in deals.rows %}
+        <tr>
+          <td><a href="{{ row.href }}">{{ row.name }}</a> <small class="muted">{{ row.kind|t }}</small></td>
+          <td>{{ row.realm }}</td>
+          <td class="number">{{ row.price }}</td>
+          <td class="number">{{ row.threshold }}</td>
+          <td class="number">{{ row.saving_percent }}%</td>
+          <td class="muted">{{ row.coverage }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</article>
