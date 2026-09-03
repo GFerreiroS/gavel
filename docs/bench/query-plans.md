@@ -134,6 +134,47 @@ SEARCH variants USING INTEGER PRIMARY KEY (rowid=?)
 USE TEMP B-TREE FOR ORDER BY
 ```
 
+## per-realm history, one item on one realm
+
+the single-realm full history view.  
+`crates/storage/src/sqlite/realm_prices.rs`
+
+```sql
+SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+        samples.observed_at, samples.min_price, samples.median_price,
+        samples.max_price, samples.listings
+   FROM realm_price_samples AS samples
+   JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+  WHERE samples.item_id = ? AND samples.region = ?
+        AND samples.realm_id = ? AND samples.observed_at >= ?
+  ORDER BY samples.observed_at
+```
+
+```text
+SEARCH samples USING INDEX idx_realm_prices_item (item_id=? AND region=? AND realm_id=? AND observed_at>?)
+SEARCH variants USING INTEGER PRIMARY KEY (rowid=?)
+```
+
+## per-realm window, whole region
+
+the background materialiser reading a window of history.  
+`crates/storage/src/sqlite/realm_prices.rs`
+
+```sql
+SELECT samples.item_id, samples.region, samples.realm_id, variants.variant,
+        samples.observed_at, samples.min_price, samples.median_price,
+        samples.max_price, samples.listings
+   FROM realm_price_samples AS samples
+   JOIN market_variants AS variants ON variants.variant_id = samples.variant_id
+  WHERE samples.region = ? AND samples.observed_at >= ?
+  ORDER BY samples.item_id, samples.realm_id, samples.variant_id, samples.observed_at
+```
+
+```text
+SEARCH samples USING PRIMARY KEY (ANY(item_id) AND region=?)
+SEARCH variants USING INTEGER PRIMARY KEY (rowid=?)
+```
+
 ## tooltips for a whole category
 
 `get_many`, which replaced 1316 single reads per page (§11b).  
