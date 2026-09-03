@@ -111,6 +111,20 @@ impl RealmPriceRepository for SqliteRealmPrices {
         ladders: &[(ItemId, String, Ladder)],
     ) -> RepoResult<(u64, u64)> {
         let mut tx = self.pool.begin().await.map_err(map_err)?;
+        // This is the durable evidence that the realm was fetched.  It stays
+        // append-only even while Slice A still writes every state row: later
+        // change detection needs to distinguish an observed unchanged snapshot
+        // from a collection gap without inferring anything before migration 30.
+        sqlx::query(
+            "INSERT OR IGNORE INTO collection_snapshots (region, realm_id, observed_at)
+             VALUES (?, ?, ?)",
+        )
+        .bind(region.as_str())
+        .bind(realm.get() as i64)
+        .bind(observed_at.get() as i64)
+        .execute(&mut *tx)
+        .await
+        .map_err(map_err)?;
         let mut variants = BTreeMap::new();
         let mut sample_rows = 0u64;
         for sample in samples {
@@ -406,8 +420,14 @@ impl RealmPriceRepository for SqliteRealmPrices {
 
     async fn last_observed(&self, region: Region, realm: RealmId) -> RepoResult<Option<Millis>> {
         let row: Option<(i64,)> = sqlx::query_as(
-            "SELECT MAX(observed_at) FROM realm_price_samples WHERE region = ? AND realm_id = ?",
+            "SELECT MAX(observed_at) FROM (
+                 SELECT observed_at FROM collection_snapshots WHERE region = ? AND realm_id = ?
+                 UNION ALL
+                 SELECT observed_at FROM realm_price_samples WHERE region = ? AND realm_id = ?
+             )",
         )
+        .bind(region.as_str())
+        .bind(realm.get() as i64)
         .bind(region.as_str())
         .bind(realm.get() as i64)
         .fetch_optional(&self.pool)
@@ -580,5 +600,32 @@ mod atomic_tests {
             prices.last_observed(Region::Eu, RealmId(1)).await.unwrap(),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn an_empty_realm_snapshot_is_still_an_observation() {
+        let store = SqliteStore::connect(&SqliteConfig::in_memory())
+            .await
+            .unwrap();
+        let prices = store.realm_prices();
+        let at = Millis(1_000);
+
+        prices
+            .record_snapshot(&[], Region::Eu, RealmId(1), at, &[])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            prices.last_observed(Region::Eu, RealmId(1)).await.unwrap(),
+            Some(at)
+        );
+        let observations: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM collection_snapshots
+              WHERE region = 'eu' AND realm_id = 1 AND observed_at = 1000",
+        )
+        .fetch_one(&prices.pool)
+        .await
+        .unwrap();
+        assert_eq!(observations, 1);
     }
 }
