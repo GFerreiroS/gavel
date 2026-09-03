@@ -604,6 +604,13 @@ progress.bar { margin: .35rem 0 .1rem; }
    Inline SVG, so it inherits the theme through currentColor rather than
    carrying a palette of its own. */
 .viz-root { width: 100%; height: auto; }
+.viz-root > svg.chart {
+  box-sizing: border-box;
+  margin-block: var(--pico-block-spacing-vertical);
+  padding: var(--pico-block-spacing-vertical);
+  border: var(--pico-border-width) solid var(--pico-muted-border-color);
+  border-radius: var(--pico-border-radius);
+}
 
 /* --- analysis panels -----------------------------------------------------
    A panel is a question with an answer under it. Phase 6's exit gate is that

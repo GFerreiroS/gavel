@@ -15,7 +15,7 @@ use app_core::market::correlate::Heatmap;
 use app_core::market::depth::Ladder;
 use app_core::market::engine::Spark;
 use app_core::market::series::{ChartPoint, ChartSeries, Histogram};
-use app_core::market::{Copper, Point};
+use app_core::market::{Buckets, Copper, Gates, Insufficient, Point};
 use cluster_core::Millis;
 
 /// The categorical palette, in slot order: blue, then orange.
@@ -39,7 +39,10 @@ pub fn series_colour(slot: usize) -> &'static str {
 const W: f64 = 760.0;
 const H: f64 = 260.0;
 const PAD_L: f64 = 64.0;
-const PAD_R: f64 = 14.0;
+// The right-hand quantity axis needs the same room as the price axis. Keeping
+// the shared charts inside one geometry is what makes their plot areas line
+// up, instead of leaving a second scale hanging off the edge.
+const PAD_R: f64 = 64.0;
 const PAD_T: f64 = 14.0;
 const PAD_B: f64 = 30.0;
 
@@ -200,6 +203,14 @@ const CHART_STYLE: &str = concat!(
     // summary *of*, and drawn at equal weight it would compete with it.
     "svg.chart .band-raw{fill:none;stroke:var(--series-1);stroke-opacity:.45;",
     "stroke-width:1;stroke-linejoin:round}",
+    // The price is an area, while supply is a line on its own right-hand axis.
+    // Hue plus the labelled axes make the two scales readable without relying
+    // on a reader to infer them from the shapes alone.
+    "svg.chart .price-area{fill:var(--series-1);fill-opacity:.16;stroke:none}",
+    "svg.chart .stock-line{fill:none;stroke:var(--series-2);stroke-width:2;",
+    "stroke-linejoin:round;stroke-linecap:round}",
+    "svg.chart .axis-price{fill:var(--series-1)}",
+    "svg.chart .axis-stock{fill:var(--series-2)}",
     // Today, as a rule across the plot. Dashed, because it is a reference
     // line rather than a measurement over time.
     "svg.chart .band-now{stroke:var(--series-2);stroke-width:1.5;",
@@ -359,8 +370,79 @@ fn placeholder(note: &str) -> String {
 
 // --- the analysis page's price band --------------------------------------
 
-/// Price over time as a rolling median inside a P25--P75 band, with the raw
-/// observation drawn through it and gaps left as gaps.
+/// The minimum evidence before a chart is allowed to claim a shape.
+const CHART_GATES: Gates = Gates {
+    median: 6,
+    tails: 6,
+    coverage: 0,
+};
+
+fn chart_admission(series: &ChartSeries) -> Result<(), Insufficient> {
+    // This uses the same gate and refusal vocabulary as every valuation: a
+    // chart with four samples is not a weaker chart, it is no chart at all.
+    // Coverage is intentionally absent here. The stored series records gaps
+    // visibly, and §12's chart rule sets a six-snapshot threshold rather than
+    // a second, unrelated coverage threshold.
+    CHART_GATES.admit(series.observed() as u32, None)
+}
+
+fn refused_chart(empty_note: &str, reason: Insufficient) -> String {
+    match reason {
+        Insufficient::NotEnoughHistory { have, need } => {
+            placeholder(&format!("{empty_note} ({have} of {need} snapshots)"))
+        }
+        Insufficient::TooManyGaps { coverage, need } => placeholder(&format!(
+            "{empty_note} ({coverage}% coverage; need {need}%)"
+        )),
+    }
+}
+
+/// `min(observed max, P95 × 1.1)`, using the shared R8 percentile estimator.
+///
+/// A lone absurd listing must remain available in its tooltip, but cannot be
+/// allowed to flatten every ordinary observation into one straight line.
+fn clipped_price_max(observed: &[&ChartPoint]) -> u64 {
+    let buckets = Buckets::from_observations(observed.iter().map(|point| (point.at, point.price)));
+    let observed_max = observed
+        .iter()
+        .map(|point| point.price.get())
+        .max()
+        .expect("the caller checks evidence before clipping");
+    let p95 = buckets
+        .quantile(0.95)
+        .expect("the caller checks evidence before clipping")
+        .get();
+    observed_max.min(p95.saturating_mul(11).div_ceil(10))
+}
+
+/// §12: no daily series below this many calendar days.
+///
+/// A chart over two days is not a trend; it is two data points that happen to
+/// occupy adjacent pixels. The reader has no way to tell a three-day spike
+/// from a three-day market, and drawing the band implies that a pattern
+/// exists to read. Fifteen days is the minimum before the band makes a claim
+/// worth reading.
+const CHART_MIN_DAYS: u64 = 15;
+const MILLIS_PER_DAY: u64 = 86_400_000;
+
+fn right_y_axis(svg: &mut String, lo: f64, hi: f64, step: f64, unit: Unit) {
+    let plot_h = H - PAD_T - PAD_B;
+    let mut value = lo;
+    while value <= hi + step / 2.0 {
+        let gy = H - PAD_B - (value - lo) / (hi - lo) * plot_h;
+        let _ = write!(
+            svg,
+            r#"<text class="axis axis-stock" x="{:.1}" y="{:.1}">{}</text>"#,
+            W - PAD_R + 8.0,
+            gy + 3.5,
+            escape(&unit.tick(value.max(0.0) as u64))
+        );
+        value += step;
+    }
+}
+
+/// Price and listed stock over time, with the price inside a rolling P25--P75
+/// band and gaps left as gaps.
 ///
 /// `docs/market-analysis.md` §6 asks for exactly this rather than a line
 /// through every observation, and the reason is what the two marks are for. A
@@ -375,8 +457,19 @@ fn placeholder(note: &str) -> String {
 /// straight line across a week nobody looked at.
 pub fn band_chart(series: &ChartSeries, current: Option<Copper>, empty_note: &str) -> String {
     let observed: Vec<&ChartPoint> = series.points.iter().filter(|p| p.observed).collect();
-    if observed.len() < 2 {
-        return placeholder(empty_note);
+    if let Err(reason) = chart_admission(series) {
+        return refused_chart(empty_note, reason);
+    }
+
+    // §12: no daily series below 15 days. This is a separate gate from the
+    // snapshot count: six snapshots in two days is thin in a different way
+    // from six snapshots spread over three weeks -- the band would be claiming
+    // a trend across a window that is almost entirely extrapolation.
+    let span_days = series.until.get().saturating_sub(series.from.get()) / MILLIS_PER_DAY;
+    if span_days < CHART_MIN_DAYS {
+        return placeholder(&format!(
+            "{empty_note} ({span_days} of {CHART_MIN_DAYS} days)"
+        ));
     }
 
     let (min_t, max_t) = (
@@ -388,11 +481,7 @@ pub fn band_chart(series: &ChartSeries, current: Option<Copper>, empty_note: &st
         .map(|p| p.price.get().min(p.p25.get()))
         .min()
         .expect("not empty");
-    let raw_max = observed
-        .iter()
-        .map(|p| p.price.get().max(p.p75.get()))
-        .max()
-        .expect("not empty");
+    let raw_max = clipped_price_max(&observed);
 
     // Same rule as `line_chart`: a price chart may sit off zero, and the axis
     // is labelled so the truncation is visible.
@@ -402,13 +491,28 @@ pub fn band_chart(series: &ChartSeries, current: Option<Copper>, empty_note: &st
         raw_min
     };
     let (lo, hi, step) = nice_axis(floor, raw_max, 4);
+    let stock_max = observed
+        .iter()
+        .map(|point| point.quantity)
+        .max()
+        .expect("not empty");
+    let (stock_lo, stock_hi, stock_step) = nice_axis(0, stock_max, 4);
     let span_t = (max_t - min_t).max(1);
     let x = |t: u64| PAD_L + (t.saturating_sub(min_t)) as f64 / span_t as f64 * (W - PAD_L - PAD_R);
-    let y = |p: u64| H - PAD_B - (p as f64 - lo) / (hi - lo) * (H - PAD_T - PAD_B);
+    let y = |p: u64| H - PAD_B - (p.min(hi as u64) as f64 - lo) / (hi - lo) * (H - PAD_T - PAD_B);
+    let stock_y = |quantity: u64| {
+        H - PAD_B - (quantity as f64 - stock_lo) / (stock_hi - stock_lo) * (H - PAD_T - PAD_B)
+    };
 
     let mut svg = String::with_capacity(16 * 1024);
     open_svg(&mut svg);
     y_axis(&mut svg, lo, hi, step, unit_gold());
+    right_y_axis(&mut svg, stock_lo, stock_hi, stock_step, Unit::Count);
+    let _ = write!(
+        svg,
+        r#"<text class="axis axis-price" x="{PAD_L}" y="12">Price · gold</text><text class="axis axis-stock" x="{:.1}" y="12" text-anchor="end">Stock · units listed</text>"#,
+        W - PAD_R
+    );
 
     // One band and one line per *run* of observed slots. A run is what a break
     // in the data leaves behind, and drawing runs rather than the whole series
@@ -461,6 +565,35 @@ pub fn band_chart(series: &ChartSeries, current: Option<Copper>, empty_note: &st
             r#"<path class="band-median" d="{}"/>"#,
             line(&|p| p.median.get())
         );
+
+        // The price area's baseline is the actual axis floor, not zero: a
+        // price axis may begin above zero without turning the shape into a
+        // false zero-priced observation.
+        let mut area = line(&|p| p.price.get());
+        let _ = write!(
+            area,
+            " L{:.1} {:.1} L{:.1} {:.1} Z",
+            x(run.last().expect("run is not empty").at.get()),
+            H - PAD_B,
+            x(run[0].at.get()),
+            H - PAD_B
+        );
+        let _ = write!(svg, r#"<path class="price-area" d="{}"/>"#, area);
+
+        let stock = run
+            .iter()
+            .enumerate()
+            .map(|(i, point)| {
+                format!(
+                    "{}{:.1} {:.1}",
+                    if i == 0 { "M" } else { "L" },
+                    x(point.at.get()),
+                    stock_y(point.quantity)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let _ = write!(svg, r#"<path class="stock-line" d="{stock}"/>"#);
     }
 
     // Where the market is now, as a rule across the plot. §6 asks for the
@@ -512,34 +645,6 @@ pub fn band_chart(series: &ChartSeries, current: Option<Copper>, empty_note: &st
     time_axis(&mut svg, min_t, max_t);
     svg.push_str("</svg>");
     svg
-}
-
-/// Stock and listings over the same slots the price band covers.
-///
-/// Its own chart rather than a second axis on the price one, for the reason
-/// the existing stock chart already gives: they are different measures on
-/// different scales. Gaps break here too.
-pub fn stock_chart(series: &ChartSeries, empty_note: &str) -> String {
-    let points: Vec<Point> = series
-        .points
-        .iter()
-        .filter(|p| p.observed)
-        .map(|p| Point {
-            at: p.at,
-            price: Copper(p.quantity),
-            quantity: p.listings as u64,
-        })
-        .collect();
-    line_chart(
-        &[Series {
-            label: "units listed",
-            points: &points,
-            slot: 0,
-            show_stock: false,
-        }],
-        Unit::Count,
-        empty_note,
-    )
 }
 
 /// Contiguous runs of observed slots.
@@ -1296,5 +1401,231 @@ mod tests {
             }
         }
         feet
+    }
+
+    /// Clipping arithmetic: an isolated absurd listing must not flatten the
+    /// axis, but it must remain available in a tooltip.
+    ///
+    /// §12: `max = min(observed_max, P95 × 1.1)`. When the vast majority of
+    /// observations are at a normal price and one is 100× the normal price,
+    /// the clipped maximum should be near the normal price, not the outlier.
+    ///
+    /// Uses 40 normal values + 1 outlier so that, with the Type-8 estimator,
+    /// P95 lands solidly within the normal range (index 39/41) rather than
+    /// blending into the outlier.
+    #[test]
+    fn outlier_is_clipped_to_p95_times_1_1() {
+        // 40 normal prices, then one extreme outlier (100×).
+        let normal_price = 1_000_000u64; // 100 g
+        let outlier_price = 100_000_000u64; // 10 000 g
+        let points: Vec<ChartPoint> = (0..40u64)
+            .map(|i| ChartPoint {
+                at: Millis(i * 3_600_000),
+                price: Copper(normal_price),
+                observed: true,
+                ..ChartPoint::default()
+            })
+            .chain(std::iter::once(ChartPoint {
+                at: Millis(40 * 3_600_000),
+                price: Copper(outlier_price),
+                observed: true,
+                ..ChartPoint::default()
+            }))
+            .collect();
+        let observed_refs: Vec<&ChartPoint> = points.iter().collect();
+        let clipped = clipped_price_max(&observed_refs);
+
+        // With n=41 and the type-8 estimator, P95 lands at position 39.6
+        // (1-indexed), which falls between the 39th and 40th values — both
+        // `normal_price` — so P95 = normal_price exactly.
+        // Clipped max = min(outlier, normal × 1.1) = normal × 1.1.
+        let expected_max = (normal_price as f64 * 1.1) as u64;
+        assert!(
+            clipped <= expected_max + 1,
+            "clipped max {clipped} should be ≤ p95×1.1 ≈ {expected_max}"
+        );
+        assert!(
+            clipped >= normal_price,
+            "clipped max {clipped} dropped below the normal price"
+        );
+        assert!(
+            clipped < outlier_price,
+            "outlier {outlier_price} was not clipped; axis max is {clipped}"
+        );
+    }
+
+    /// When the same value is the both the observed max AND the p95, the clip
+    /// must equal observed_max (i.e. nothing is clipped). This guards against
+    /// a regression where the formula over-clips a uniform series.
+    #[test]
+    fn uniform_series_is_not_clipped() {
+        let price = 500_000u64;
+        let points: Vec<ChartPoint> = (0..10u64)
+            .map(|i| ChartPoint {
+                at: Millis(i * 3_600_000),
+                price: Copper(price),
+                observed: true,
+                ..ChartPoint::default()
+            })
+            .collect();
+        let observed_refs: Vec<&ChartPoint> = points.iter().collect();
+        let clipped = clipped_price_max(&observed_refs);
+        // p95 == price, so p95 × 1.1 > price: clip should NOT reduce
+        // below the actual max.
+        assert!(
+            clipped >= price,
+            "uniform series was clipped: max={clipped} but all prices={price}"
+        );
+    }
+
+    /// §12 snapshot gate: fewer than 6 observed snapshots must be refused.
+    ///
+    /// The result must say why it refused (mention the count and the
+    /// threshold) so the reader is not left looking at an empty panel with
+    /// no explanation.
+    #[test]
+    fn band_chart_refuses_fewer_than_6_snapshots() {
+        // 20-day window, but only 4 observed slots.
+        let from = Millis(0);
+        let until = Millis(20 * MILLIS_PER_DAY);
+        let span = until.get() - from.get();
+        // 4 evenly spaced observed points + the rest as gaps.
+        let mut points = vec![
+            ChartPoint {
+                ..ChartPoint::default()
+            };
+            96
+        ];
+        for i in 0..4usize {
+            let slot = i * 24; // spread across the 96 slots
+            points[slot] = ChartPoint {
+                at: Millis(from.get() + (slot as u64 * span) / 96),
+                price: Copper(100_000),
+                median: Copper(100_000),
+                p25: Copper(80_000),
+                p75: Copper(120_000),
+                quantity: 50,
+                listings: 5,
+                observed: true,
+            };
+        }
+        let series = ChartSeries {
+            from,
+            until,
+            points,
+        };
+
+        let out = band_chart(&series, None, "no data yet");
+
+        assert!(
+            !out.contains("<svg"),
+            "a 4-snapshot series must not draw an SVG"
+        );
+        assert!(
+            out.contains("no data yet"),
+            "the refusal must echo the caller's note"
+        );
+        // The refusal must say how many it had so the reader can see why.
+        assert!(
+            out.contains('4') || out.contains("4 of"),
+            "refusal should mention the snapshot count: {out}"
+        );
+    }
+
+    /// §12 daily-series gate: a window shorter than 15 days must be refused
+    /// even when it has enough snapshots.
+    #[test]
+    fn band_chart_refuses_fewer_than_15_days() {
+        // 8 snapshots (> 6), but only 7 days.
+        let from = Millis(0);
+        let until = Millis(7 * MILLIS_PER_DAY);
+        let span = until.get() - from.get();
+        let mut points = vec![
+            ChartPoint {
+                ..ChartPoint::default()
+            };
+            96
+        ];
+        // Place 8 observed slots across the series.
+        for i in 0..8usize {
+            let slot = i * 11; // 8 × 11 < 96
+            points[slot] = ChartPoint {
+                at: Millis(from.get() + (slot as u64 * span) / 96),
+                price: Copper(100_000),
+                median: Copper(100_000),
+                p25: Copper(80_000),
+                p75: Copper(120_000),
+                quantity: 50,
+                listings: 5,
+                observed: true,
+            };
+        }
+        let series = ChartSeries {
+            from,
+            until,
+            points,
+        };
+
+        let out = band_chart(&series, None, "too short");
+
+        assert!(
+            !out.contains("<svg"),
+            "a 7-day series must not draw an SVG even with enough snapshots"
+        );
+        assert!(
+            out.contains("too short"),
+            "the refusal must echo the caller's note"
+        );
+        // The refusal must mention the day count so the reader knows why.
+        assert!(
+            out.contains('7') || out.contains("7 of"),
+            "refusal should mention the span in days: {out}"
+        );
+    }
+
+    /// Both gates passed: a series spanning 20 days with 10 snapshots must
+    /// produce an SVG.
+    #[test]
+    fn band_chart_draws_when_both_gates_pass() {
+        let from = Millis(0);
+        let until = Millis(20 * MILLIS_PER_DAY);
+        let span = until.get() - from.get();
+        let mut points = vec![
+            ChartPoint {
+                ..ChartPoint::default()
+            };
+            96
+        ];
+        // Place 10 evenly spaced observed slots.
+        for i in 0..10usize {
+            let slot = i * 9; // 10 × 9 = 90 < 96
+            points[slot] = ChartPoint {
+                at: Millis(from.get() + (slot as u64 * span) / 96),
+                price: Copper(100_000),
+                median: Copper(100_000),
+                p25: Copper(80_000),
+                p75: Copper(120_000),
+                quantity: 50,
+                listings: 5,
+                observed: true,
+            };
+        }
+        let series = ChartSeries {
+            from,
+            until,
+            points,
+        };
+
+        let out = band_chart(&series, None, "no data");
+
+        assert!(
+            out.contains("<svg"),
+            "a 20-day, 10-snapshot series should render an SVG"
+        );
+        // Both axis labels must be present.
+        assert!(
+            out.contains("axis-price") && out.contains("axis-stock"),
+            "dual-axis labels must appear in the SVG"
+        );
     }
 }

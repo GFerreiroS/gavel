@@ -68,6 +68,16 @@
       <span class="value">{{ analysis.median }}</span>
       <span class="when muted">{{ "P25 {} · P75 {}"|t|fill(analysis.p25)|fill(analysis.p75) }}</span>
     </div>
+    <div class="stat">
+      <span class="label">{{ "In stock"|t }}</span>
+      <span class="value">{{ analysis.quantity }}</span>
+      <span class="when muted">{{ "units listed now, not sold"|t }}</span>
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Auctions"|t }}</span>
+      <span class="value">{{ analysis.listings }}</span>
+      <span class="when muted">{{ "distinct listings behind the stock"|t }}</span>
+    </div>
   </div>
 
   {% if analysis.series_labels.len() > 1 %}
@@ -82,47 +92,26 @@
   {% endif %}
   {{ analysis.price_chart|safe }}
   <p class="hint">
-    {{ "The band is the rolling P25–P75; the line through it is the rolling median, and the faint line is each observation. A break in the line is an interval nothing was collected in, not a price of zero."|t }}
+    {{ "Blue is price on the left axis: its filled area is each observation, with the P25–P75 band and rolling median over it. Orange is listed units on the right axis. A break is an interval nothing was collected in, not a price of zero."|t }}
   </p>
 </article>
 
 {# --- the distribution the band is a rank inside ------------------------ #}
-<div class="two-col">
-  <article class="viz-root panel">
-    {% call panel_head(analysis.distribution_panel) %}
-    {{ analysis.distribution_chart|safe }}
-    <p class="hint">
-      {{ "Hours spent at each price, with today's marked. A wide spread and a narrow one can give the same percentile and mean very different things."|t }}
-    </p>
-    <dl class="rank-stats">
-      <dt>{{ "IQR"|t }}</dt><dd>{{ analysis.iqr }}</dd>
-      <dt>{{ "MAD"|t }}</dt><dd>{{ analysis.mad }}</dd>
-      <dt>{{ "Swing"|t }}</dt><dd>{{ analysis.swing_percent }}%</dd>
-    </dl>
-    <p class="hint">
-      {{ "IQR and MAD are robust measures of spread. Swing is (highest − lowest) ÷ mean: legible, and moved by any two observations."|t }}
-    </p>
-  </article>
-
-  {# --- how much of it there is ---------------------------------------- #}
-  <article class="viz-root panel">
-    {% call panel_head(analysis.stock_panel) %}
-    <div class="verdict-row">
-      <div class="stat">
-        <span class="label">{{ "In stock"|t }}</span>
-        <span class="value">{{ analysis.quantity }}</span>
-      </div>
-      <div class="stat">
-        <span class="label">{{ "Auctions"|t }}</span>
-        <span class="value">{{ analysis.listings }}</span>
-      </div>
-    </div>
-    {{ analysis.stock_chart|safe }}
-    <p class="hint">
-      {{ "Units listed right now, not units sold. Nothing here says how much of it changes hands. A price drop with supply collapsing is somebody undercutting an empty market."|t }}
-    </p>
-  </article>
-</div>
+<article class="viz-root panel">
+  {% call panel_head(analysis.distribution_panel) %}
+  {{ analysis.distribution_chart|safe }}
+  <p class="hint">
+    {{ "Hours spent at each price, with today's marked. A wide spread and a narrow one can give the same percentile and mean very different things."|t }}
+  </p>
+  <dl class="rank-stats">
+    <dt>{{ "IQR"|t }}</dt><dd>{{ analysis.iqr }}</dd>
+    <dt>{{ "MAD"|t }}</dt><dd>{{ analysis.mad }}</dd>
+    <dt>{{ "Swing"|t }}</dt><dd>{{ analysis.swing_percent }}%</dd>
+  </dl>
+  <p class="hint">
+    {{ "IQR and MAD are robust measures of spread. Swing is (highest − lowest) ÷ mean: legible, and moved by any two observations."|t }}
+  </p>
+</article>
 
 {# --- what it costs to buy what you need -------------------------------- #}
 <article class="viz-root panel">
