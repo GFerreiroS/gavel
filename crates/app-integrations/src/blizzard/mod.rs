@@ -10,6 +10,7 @@ mod auctions;
 mod items;
 mod realms;
 mod token;
+mod wow_token;
 
 use std::time::Duration;
 
@@ -20,6 +21,7 @@ pub use auctions::BlizzardAuctions;
 pub use items::BlizzardItems;
 pub use realms::BlizzardRealms;
 pub use token::TokenSource;
+pub use wow_token::BlizzardWowToken;
 
 /// Client credentials, read from the environment.
 #[derive(Clone)]

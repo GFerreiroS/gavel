@@ -18,8 +18,10 @@ use app_core::market::{
 };
 use app_core::repo::{
     PriceRepository, ReadModelRepository, RealmPriceRepository, SettingsRepository, Store,
+    TokenPriceRepository,
 };
 use app_core::service::{Freshness, ItemTooltipService};
+use app_integrations::blizzard::{BlizzardConfig, BlizzardCredentials, BlizzardWowToken};
 use cluster_core::ClusterControl;
 use cluster_core::Millis;
 
@@ -39,25 +41,45 @@ use cluster_core::Millis;
 /// coming". The regular collection cycle needs none of this: it is half an
 /// hour in, by which time a worker has either joined or is not going to.
 const WORKER_GRACE: Duration = Duration::from_secs(5);
+const TOKEN_INTERVAL: Duration = Duration::from_secs(20 * 60);
 
 pub fn spawn<E: Ports>(
     env: E,
     artifacts: std::sync::Arc<crate::analysis_work::Artifacts>,
     awaits_workers: bool,
-) -> tokio::task::JoinHandle<()> {
-    tokio::spawn(run(env, artifacts, awaits_workers))
+) -> tokio::task::JoinHandle<()>
+where
+    E::Clock: Clone,
+{
+    let tokens =
+        BlizzardCredentials::from_env().and_then(|credentials| {
+            match BlizzardWowToken::new(BlizzardConfig::default(), credentials, env.clock().clone())
+            {
+                Ok(tokens) => Some(tokens),
+                Err(error) => {
+                    tracing::warn!(%error, "could not build the WoW Token client");
+                    None
+                }
+            }
+        });
+    tokio::spawn(run(env, artifacts, awaits_workers, tokens))
 }
 
 async fn run<E: Ports>(
     env: E,
     artifacts: std::sync::Arc<crate::analysis_work::Artifacts>,
     awaits_workers: bool,
-) {
+    tokens: Option<BlizzardWowToken<E::Clock>>,
+) where
+    E::Clock: Clone,
+{
     let market = env.market().clone();
     let mut ticker = tokio::time::interval(Duration::from_millis(
         market.collect_interval_ms.max(60_000),
     ));
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut token_ticker = tokio::time::interval(TOKEN_INTERVAL);
+    token_ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
 
     match env.active_catalog() {
         Some(catalog) => tracing::info!(
@@ -78,28 +100,55 @@ async fn run<E: Ports>(
     backfill(&env, &artifacts, awaits_workers).await;
 
     loop {
-        ticker.tick().await;
-        // Only the regions whose snapshot actually moved. A `NotModified`
-        // does no analysis work, which is CLAUDE.md §16's Phase 2 in one line:
-        // the upstream said nothing changed, so nothing needs recalculating.
-        let collected = collect_once(&env).await;
-        // A cycle that fetched no realm has nothing to roll up. When any realm
-        // moved the whole region is recalculated, because the roll-up a card
-        // reads is *across* realms: one realm's new price changes what the
-        // region's cheapest copy is.
-        let realms = if collect_realms(&env).await {
-            env.market().regions.clone()
-        } else {
-            Vec::new()
-        };
-        // One version for both halves. Publishing them separately would leave
-        // a moment where the consumables page had moved on and the gear page
-        // had not, which is exactly what §15 says a reader must never see.
-        crate::materialise_task::publish(&env, &artifacts, &collected, &realms).await;
-        warm_tooltips(&env).await;
-        downsample(&env).await;
-        prune(&env).await;
-        prune_ladders(&env).await;
+        tokio::select! {
+            _ = ticker.tick() => {
+                // Only the regions whose snapshot actually moved. A `NotModified`
+                // does no analysis work, which is CLAUDE.md §16's Phase 2 in one line:
+                // the upstream said nothing changed, so nothing needs recalculating.
+                let collected = collect_once(&env).await;
+                // A cycle that fetched no realm has nothing to roll up. When any realm
+                // moved the whole region is recalculated, because the roll-up a card
+                // reads is *across* realms: one realm's new price changes what the
+                // region's cheapest copy is.
+                let realms = if collect_realms(&env).await {
+                    env.market().regions.clone()
+                } else {
+                    Vec::new()
+                };
+                // One version for both halves. Publishing them separately would leave
+                // a moment where the consumables page had moved on and the gear page
+                // had not, which is exactly what §15 says a reader must never see.
+                crate::materialise_task::publish(&env, &artifacts, &collected, &realms).await;
+                warm_tooltips(&env).await;
+                downsample(&env).await;
+                prune(&env).await;
+                prune_ladders(&env).await;
+            }
+            _ = token_ticker.tick() => collect_tokens(&env, tokens.as_ref()).await,
+        }
+    }
+}
+
+async fn collect_tokens<E: Ports>(env: &E, client: Option<&BlizzardWowToken<E::Clock>>)
+where
+    E::Clock: Clone,
+{
+    let Some(client) = client else {
+        return;
+    };
+    for region in &env.market().regions {
+        match client.price(*region).await {
+            Ok(token) => match env.store().prices().record(&token).await {
+                Ok(true) => {
+                    tracing::info!(region = %region, price = %token.price, "collected WoW Token price")
+                }
+                Ok(false) => tracing::debug!(region = %region, "WoW Token price already recorded"),
+                Err(error) => {
+                    tracing::warn!(region = %region, %error, "could not store WoW Token price")
+                }
+            },
+            Err(error) => tracing::warn!(region = %region, %error, "WoW Token collection failed"),
+        }
     }
 }
 

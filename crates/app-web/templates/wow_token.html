@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<nav aria-label="breadcrumb">
+  <ul>
+    <li><a href="/wow/auctions">{{ "Auction House"|t }}</a></li>
+    <li>{{ "WoW Token"|t }}</li>
+  </ul>
+</nav>
+
+<h1>{{ "WoW Token"|t }}</h1>
+<p class="hint">{{ "The current token price and the history recorded for this region."|t }}</p>
+
+<div class="stat-grid">
+  <div class="stat">
+    <span class="label">{{ "Region"|t }}</span>
+    <span class="value">{{ region }}</span>
+  </div>
+  <div class="stat">
+    <span class="label">{{ "Current price"|t }}</span>
+    <span class="value">{% if let Some(price) = current %}{{ price }}{% else %}—{% endif %}</span>
+  </div>
+  <div class="stat">
+    <span class="label">{{ "Updated"|t }}</span>
+    <span class="value">{% if let Some(when) = updated %}{{ when }}{% else %}—{% endif %}</span>
+  </div>
+  <div class="stat">
+    <span class="label">{{ "Observations"|t }}</span>
+    <span class="value">{{ observations }}</span>
+  </div>
+</div>
+
+<article class="viz-root panel">
+  <header class="panel-head">
+    <h2>{{ "Price history"|t }}</h2>
+    <p class="panel-terms">
+      <span class="term"><span class="term-label">{{ "Units"|t }}</span>{{ "gold"|t }}</span>
+      <span class="term"><span class="term-label">{{ "Region"|t }}</span>{{ region }}</span>
+    </p>
+  </header>
+  {{ chart|safe }}
+  <p class="hint">{{ "Prices are recorded from Blizzard's WoW Token endpoint for this region."|t }}</p>
+</article>
+{% endblock %}

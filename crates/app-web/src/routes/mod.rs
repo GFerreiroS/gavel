@@ -22,6 +22,7 @@ mod realms;
 mod stream;
 pub(crate) mod tooltip;
 mod wow;
+mod wow_token;
 
 use std::sync::Arc;
 
@@ -118,6 +119,7 @@ where
         // The product: what the auction house costs.
         .route("/account", get(pages::account::<E>))
         .route("/wow/auctions", get(market::index::<E>))
+        .route("/wow/token", get(wow_token::page_handler::<E>))
         // Per account: what you follow, and what fired today. A visitor who is
         // signed out gets the page with an invitation and no alerts.
         .route(
@@ -329,6 +331,7 @@ mod tests {
         ("wow.rs", include_str!("wow.rs")),
         ("pages.rs", include_str!("pages.rs")),
         ("archive.rs", include_str!("archive.rs")),
+        ("wow_token.rs", include_str!("wow_token.rs")),
     ];
 
     /// A `draft_ptr` catalogue is administrator-only

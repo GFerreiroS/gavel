@@ -59,6 +59,8 @@ INSTALLED_ON = "2026-08-30 00:00:00"
 # Market data, and nothing that belongs to a person.
 
 COPIED = {
+    # A region-scoped market history, not connected to any account or catalogue.
+    "wow_token_prices",
     # The commodity archive: region-wide prices, one row per item/region/hour.
     "price_samples",
     # The per-realm archive: gear and recipes, one row per market per snapshot.
