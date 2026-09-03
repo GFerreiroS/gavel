@@ -31,6 +31,25 @@ fn real_tertiary_bonus_ids_keep_their_stat_identity() {
 }
 
 #[test]
+fn real_bonus_ids_exercise_every_db2_level_rule_family() {
+    // One known id from each `bonuses.php` mechanism. The exact output is
+    // pinned after the source revision is generated into bonus-data.json.
+    for (bonus, expected_level) in [
+        (15, 5),
+        (615, 17),
+        (7_180, 18),
+        (12_825, 310),
+        (7_175, 18),
+        (6_709, 80),
+        (8_799, 7),
+        (12_373, 7),
+    ] {
+        let decoded = decode(PEACEBLOOM, &[bonus], None).expect("curated item");
+        assert_eq!(decoded.item_level, expected_level, "bonus {bonus}");
+    }
+}
+
+#[test]
 fn catalog_boundary_keeps_variant_as_a_string_identity() {
     let decoded = Catalog::decode_variant(PEACEBLOOM, "12825,459,41").expect("valid variant");
 
