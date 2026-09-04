@@ -44,7 +44,7 @@ impl TsmRepository for SqliteTsm {
             .bind(sample.historical.get() as i64)
             .bind(sample.avg_sale_price.get() as i64)
             .bind(sample.sale_rate_bp as i64)
-            .bind(sample.sold_per_day as i64)
+            .bind(sample.sold_per_day)
             .bind(sample.updated_at.get() as i64)
             .execute(&mut *tx)
             .await
