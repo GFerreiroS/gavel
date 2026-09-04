@@ -263,7 +263,8 @@ async fn build<E: Ports>(
         .find(|(rank, _)| Some(*rank) == entry.rank_of(item))
         .map(|(_, s)| s.clone())
         .unwrap_or_default();
-    let price_chart = chart::band_chart(
+    let price_chart = chart::band_chart_localised(
+        locale,
         &mine,
         state.has_data().then_some(state.price),
         crate::i18n::translate(
@@ -275,7 +276,8 @@ async fn build<E: Ports>(
         false,
     );
 
-    let distribution_chart = chart::histogram_chart(
+    let distribution_chart = chart::histogram_chart_localised(
+        locale,
         window
             .and_then(|w| w.histogram.as_ref())
             .unwrap_or(&app_core::market::Histogram {
@@ -293,7 +295,8 @@ async fn build<E: Ports>(
         .iter()
         .map(|name| crate::i18n::translate(locale, name).to_string())
         .collect();
-    let heatmap_chart = chart::heatmap_chart(
+    let heatmap_chart = chart::heatmap_chart_localised(
+        locale,
         &state.heatmap,
         &weekdays,
         crate::i18n::translate(
@@ -457,7 +460,8 @@ async fn build<E: Ports>(
                     share_percent: wall.share_percent,
                 })
                 .collect(),
-            chart: chart::depth_chart(
+            chart: chart::depth_chart_localised(
+                locale,
                 &state.ladder,
                 depth.target,
                 crate::i18n::translate(locale, "Not enough of the ladder to draw a curve."),
@@ -468,7 +472,7 @@ async fn build<E: Ports>(
             // A snapshot, not a window: the ladder is what is listed right
             // now. Saying "the last 7 days" here would be the panel borrowing
             // a period it does not describe.
-            window: crate::i18n::translate(locale, "listed right now").to_string(),
+            window: "listed right now".into(),
             units: "gold",
             coverage: None,
             freshness: freshness.clone(),
@@ -517,7 +521,7 @@ async fn build<E: Ports>(
         // so they say so instead of borrowing the window above.
         cycle_panel: PanelHead {
             question: "When in the week is it cheapest?",
-            window: crate::i18n::translate(locale, "the whole history").to_string(),
+            window: "the whole history".into(),
             units: "gold",
             coverage: heatmap_coverage.clone(),
             freshness: None,
@@ -525,7 +529,7 @@ async fn build<E: Ports>(
 
         movement_panel: PanelHead {
             question: "How steady is it, and what moves with it?",
-            window: crate::i18n::translate(locale, "the whole history").to_string(),
+            window: "the whole history".into(),
             units: "percent",
             coverage: state.stock_association.map(|a| {
                 crate::i18n::translate(locale, "{} paired observations").replacen(
@@ -571,7 +575,8 @@ async fn build<E: Ports>(
             .map(|(slot, (rank, _))| crate::views::SeriesKey {
                 colour: crate::chart::series_colour(slot),
                 label: if entry.ranks.len() > 1 {
-                    format!("Rank {rank}")
+                    crate::i18n::translate(locale, "Rank {}")
+                        .replacen("{}", &rank.to_string(), 1)
                 } else {
                     "Price".into()
                 },
@@ -580,7 +585,7 @@ async fn build<E: Ports>(
 
         patch_panel: PanelHead {
             question: "How has each patch priced it?",
-            window: crate::i18n::translate(locale, "one row per patch").to_string(),
+            window: "one row per patch".into(),
             units: "gold",
             coverage: None,
             freshness: None,

@@ -46,7 +46,8 @@ pub async fn page_handler<E: Ports>(
             quantity: 0,
         })
         .collect();
-    let chart = chart::line_chart(
+    let chart = chart::line_chart_localised(
+        prefs.locale,
         &[Series {
             label: "WoW Token",
             points: &points,
@@ -66,7 +67,7 @@ pub async fn page_handler<E: Ports>(
             layout: Layout::new(
                 env.config(),
                 prefs.locale,
-                "WoW Token",
+                crate::i18n::translate(prefs.locale, "WoW Token"),
                 "/wow/token",
                 &uri,
                 user.as_ref(),
@@ -99,7 +100,7 @@ pub(crate) async fn summary<E: Ports>(env: &E, prefs: MarketPrefs) -> WebResult<
     Ok(TokenSummaryView {
         panel: PanelHead {
             question: "What is the current WoW Token price for this region?",
-            window: crate::i18n::translate(prefs.locale, "latest collection").to_string(),
+            window: "latest collection".into(),
             units: "gold",
             coverage: Some(
                 crate::i18n::translate(

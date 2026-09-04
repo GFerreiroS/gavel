@@ -2759,6 +2759,278 @@ msgstr "{}% respecto a la mediana"
 msgid "{}% translated"
 msgstr "{} % traducido"
 
+#: crates/app-web/templates/partials/deals.html
+msgid "1 market had candidate prices but too little evidence to rank."
+msgstr "1 mercado tenía precios candidatos, pero pruebas insuficientes para clasificarlos."
+
+#: crates/app-web/templates/partials/arbitrage.html
+msgid "A thinly observed realm withholds its price and names the evidence gap instead of presenting a confident comparison."
+msgstr "Un reino con pocas observaciones oculta su precio e indica qué evidencia falta, en lugar de presentar una comparación segura."
+
+#: crates/app-web/templates/partials/arbitrage.html
+msgid "Back to market"
+msgstr "Volver al mercado"
+
+#: crates/app-web/templates/partials/arbitrage.html
+msgid "Cross-realm arbitrage"
+msgstr "Arbitraje entre reinos"
+
+#: crates/app-web/templates/partials/deals.html
+msgid "Cross-realm listings below their evidence-gated deal price."
+msgstr "Subastas entre reinos por debajo de su precio de oportunidad, calculado con evidencia suficiente."
+
+#: crates/app-web/templates/auctions.html
+msgid "Current price"
+msgstr "Precio actual"
+
+#: crates/app-web/templates/partials/deals.html
+msgid "Deal price"
+msgstr "Precio de oportunidad"
+
+#: crates/app-web/templates/deals.html
+msgid "Deals"
+msgstr "Ofertas"
+
+#: crates/app-web/src/i18n.rs
+msgid "Extreme"
+msgstr "Extremo"
+
+#: crates/app-web/src/i18n.rs
+msgid "How does each realm compare?"
+msgstr "¿Cómo se compara cada reino?"
+
+#: crates/app-web/src/i18n.rs
+msgid "How have price and listed supply moved together?"
+msgstr "¿Cómo han evolucionado juntos el precio y la oferta en subastas?"
+
+#: crates/app-web/templates/partials/deals.html
+msgid "No current listings clear the deal threshold with enough evidence."
+msgstr "Ninguna subasta actual supera el umbral de oportunidad con evidencia suficiente."
+
+#: crates/app-web/templates/partials/arbitrage.html
+msgid "No listings in the latest collected snapshots."
+msgstr "No hay subastas en las últimas instantáneas recopiladas."
+
+#: crates/app-web/templates/auctions.html
+msgid "No token price collected for this region yet."
+msgstr "Aún no se ha recopilado ningún precio de WoW Token para esta región."
+
+#: crates/app-web/src/i18n.rs
+msgid "Not enough history yet — the chart appears after a few collections."
+msgstr "Aún no hay suficiente historial; el gráfico aparecerá tras unas cuantas recopilaciones."
+
+#: crates/app-web/src/i18n.rs
+msgid "Ordinary"
+msgstr "Habitual"
+
+#: crates/app-web/templates/wow_token.html
+msgid "Price history"
+msgstr "Historial de precios"
+
+#: crates/app-web/templates/partials/arbitrage.html
+msgid "Prices are each realm's cheapest listed copy. The median counts only realms listing now; it is not an average of every auction."
+msgstr "Los precios son la copia más barata listada en cada reino. La mediana solo cuenta los reinos que tienen subastas ahora; no es la media de todas las subastas."
+
+#: crates/app-web/templates/wow_token.html
+msgid "Prices are recorded from Blizzard's WoW Token endpoint for this region."
+msgstr "Los precios se registran desde el servicio de WoW Token de Blizzard para esta región."
+
+#: crates/app-web/src/i18n.rs
+msgid "Realm arbitrage"
+msgstr "Arbitraje entre reinos"
+
+#: crates/app-web/templates/partials/deals.html
+msgid "Saving"
+msgstr "Ahorro"
+
+#: crates/app-web/templates/wow_token.html
+msgid "The current token price and the history recorded for this region."
+msgstr "El precio actual de WoW Token y el historial registrado para esta región."
+
+#: crates/app-web/templates/partials/item.html
+msgid "The left axis tracks price: the filled band is P25–P75, the solid line is the rolling median, and the faint line is each observation. The right axis tracks units listed — what is on the shelf, not what sold. A drop in supply with a falling price can mean somebody undercutting an empty market. A break in either series is an interval nothing was collected in, not a price of zero."
+msgstr "El eje izquierdo sigue el precio: la banda rellena representa P25–P75, la línea continua es la mediana móvil y la línea tenue cada observación. El eje derecho sigue las unidades listadas —lo que hay en la estantería, no lo que se ha vendido—. Una bajada de la oferta con un precio a la baja puede indicar que alguien está rebajando un mercado vacío. Una interrupción en cualquiera de las series es un intervalo sin recopilaciones, no un precio de cero."
+
+#: crates/app-web/src/i18n.rs
+msgid "Unusual"
+msgstr "Inusual"
+
+#: crates/app-web/templates/auctions.html
+msgid "View WoW Token history"
+msgstr "Ver historial de WoW Token"
+
+#: crates/app-web/src/i18n.rs
+msgid "What is the current WoW Token price for this region?"
+msgstr "¿Cuál es el precio actual de WoW Token en esta región?"
+
+#: crates/app-web/src/i18n.rs
+msgid "Where is this item cheapest right now?"
+msgstr "¿Dónde está este objeto más barato ahora mismo?"
+
+#: crates/app-web/src/i18n.rs
+msgid "Which cross-realm listings are genuinely cheap?"
+msgstr "¿Qué subastas entre reinos son realmente baratas?"
+
+#: crates/app-web/templates/wow_token.html
+msgid "WoW Token"
+msgstr "WoW Token"
+
+#: crates/app-web/templates/partials/item.html
+msgid "distinct listings behind the stock"
+msgstr "subastas distintas que componen las existencias"
+
+#: crates/app-web/src/i18n.rs
+msgid "gold and units listed"
+msgstr "oro y unidades listadas"
+
+#: crates/app-web/src/i18n.rs
+msgid "gold per item"
+msgstr "oro por objeto"
+
+#: crates/app-web/src/i18n.rs
+msgid "latest collection"
+msgstr "última recopilación"
+
+#: crates/app-web/src/i18n.rs
+msgid "latest snapshot on each collected realm"
+msgstr "última instantánea de cada reino recopilado"
+
+#: crates/app-web/templates/partials/arbitrage.html
+msgid "median of each realm's cheapest copy"
+msgstr "mediana de la copia más barata de cada reino"
+
+#: crates/app-web/src/i18n.rs
+msgid "no token price collected"
+msgstr "no se ha recopilado ningún precio de WoW Token"
+
+#: crates/app-web/src/i18n.rs
+msgid "one regional token price"
+msgstr "un precio regional de WoW Token"
+
+#: crates/app-web/src/i18n.rs
+msgid "published history and latest realm snapshots"
+msgstr "historial publicado y últimas instantáneas de los reinos"
+
+#: crates/app-web/src/i18n.rs
+msgid "the last {} days"
+msgstr "los últimos {} días"
+
+#: crates/app-web/templates/partials/item.html
+msgid "units listed now, not sold"
+msgstr "unidades listadas ahora, no vendidas"
+
+#: crates/app-web/src/i18n.rs
+msgid "{} deals after evidence gates"
+msgstr "{} oportunidades tras los filtros de evidencia"
+
+#: crates/app-web/templates/partials/deals.html
+msgid "{} markets had candidate prices but too little evidence to rank."
+msgstr "{} mercados tenían precios candidatos, pero pruebas insuficientes para clasificarlos."
+
+#: crates/app-web/src/i18n.rs
+msgid "{} of {} realms listing"
+msgstr "{} de {} reinos con subastas"
+
+#: crates/app-web/src/i18n.rs
+msgid "stock"
+msgstr "existencias"
+
+#: crates/app-web/src/i18n.rs
+msgid "price"
+msgstr "precio"
+
+#: crates/app-web/src/i18n.rs
+msgid "median"
+msgstr "mediana"
+
+#: crates/app-web/src/i18n.rs
+msgid "nothing collected"
+msgstr "sin recopilaciones"
+
+#: crates/app-web/src/i18n.rs
+msgid "now: {}"
+msgstr "ahora: {}"
+
+#: crates/app-web/src/i18n.rs
+msgid "{} in {} auctions"
+msgstr "{} en {} subastas"
+
+#: crates/app-web/src/i18n.rs
+msgid "around {}"
+msgstr "alrededor de {}"
+
+#: crates/app-web/src/i18n.rs
+msgid "{} hours"
+msgstr "{} horas"
+
+#: crates/app-web/src/i18n.rs
+msgid "{} units"
+msgstr "{} unidades"
+
+#: crates/app-web/src/i18n.rs
+msgid "{} units at this price"
+msgstr "{} unidades a este precio"
+
+#: crates/app-web/src/i18n.rs
+msgid "{} units at or below it"
+msgstr "{} unidades a este precio o menos"
+
+#: crates/app-web/src/i18n.rs
+msgid "at price"
+msgstr "a este precio"
+
+#: crates/app-web/src/i18n.rs
+msgid "cumulative"
+msgstr "acumulado"
+
+#: crates/app-web/src/i18n.rs
+msgid "Price · gold"
+msgstr "Precio · oro"
+
+#: crates/app-web/src/i18n.rs
+msgid "Stock · units listed"
+msgstr "Existencias · unidades listadas"
+
+#: crates/app-web/src/i18n.rs
+msgid "Not enough history to show a distribution yet."
+msgstr "Aún no hay suficiente historial para mostrar una distribución."
+
+#: crates/app-web/src/i18n.rs
+msgid "Needs most of a week of observations before a weekly rhythm means anything."
+msgstr "Hace falta observar la mayor parte de una semana para que un patrón semanal signifique algo."
+
+#: crates/app-web/src/i18n.rs
+msgid "{} of 168 hours of the week"
+msgstr "{} de las 168 horas de la semana"
+
+#: crates/app-web/src/i18n.rs
+msgid "Not enough of the ladder to draw a curve."
+msgstr "No hay suficiente profundidad para dibujar una curva."
+
+#: crates/app-web/src/i18n.rs
+msgid "listed right now"
+msgstr "listado ahora"
+
+#: crates/app-web/src/i18n.rs
+msgid "the whole history"
+msgstr "todo el historial"
+
+#: crates/app-web/src/i18n.rs
+msgid "{} paired observations"
+msgstr "{} observaciones emparejadas"
+
+#: crates/app-web/src/i18n.rs
+msgid "one row per patch"
+msgstr "una fila por parche"
+
+#: crates/app-web/src/i18n.rs
+msgid "Price over time"
+msgstr "Precio a lo largo del tiempo"
+
+#: crates/app-web/src/i18n.rs
+msgid "Item details are unavailable right now; prices below are unaffected."
+msgstr "Los detalles del objeto no están disponibles ahora; los precios de abajo no se ven afectados."
+
 #~ msgid "By weekday"
 #~ msgstr "Por día de la semana"
 

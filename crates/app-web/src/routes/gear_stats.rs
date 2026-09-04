@@ -12,6 +12,7 @@
 //! statistic this page exists to show.
 
 use app_core::Ports;
+use app_core::locale::Locale;
 use app_core::market::materialise::{MarketRollup, Scope};
 use app_core::market::{Catalog, Copper, ItemId, ItemKind, Point, Realm, Track};
 use app_core::repo::{ReadModelRepository, RealmPriceRepository, Store};
@@ -269,7 +270,8 @@ async fn build<E: Ports>(
                 share_percent: wall.share_percent,
             })
             .collect(),
-        chart: chart::depth_chart(
+        chart: chart::depth_chart_localised(
+            prefs.locale,
             &stats.ladder,
             depth.target,
             crate::i18n::translate(prefs.locale, "Not enough of the ladder to draw a curve."),
@@ -371,12 +373,14 @@ async fn build<E: Ports>(
         // scope charge for the cheapest copy, the listings line is how many
         // are behind it.
         price_chart: draw_series(
+            prefs.locale,
             &stats.series,
             series_label(selected, prefs),
             |p| p.price,
             Unit::Gold,
         ),
         listings_chart: draw_series(
+            prefs.locale,
             &stats.series,
             series_label(selected, prefs),
             |p| Copper(p.quantity),
@@ -397,6 +401,7 @@ fn series_label(selected: Option<&Realm>, prefs: MarketPrefs) -> String {
 
 /// Draw one stored series, reading one of its two axes.
 fn draw_series(
+    locale: Locale,
     series: &[Point],
     label: String,
     value: impl Fn(&Point) -> Copper,
@@ -410,7 +415,8 @@ fn draw_series(
             quantity: p.quantity,
         })
         .collect();
-    chart::line_chart(
+    chart::line_chart_localised(
+        locale,
         &[Series {
             label: &label,
             points: &points,
@@ -418,6 +424,9 @@ fn draw_series(
             show_stock: true,
         }],
         unit,
-        "Not enough history yet \u{2014} the chart appears after a few collections.",
+        crate::i18n::translate(
+            locale,
+            "Not enough history yet — the chart appears after a few collections.",
+        ),
     )
 }

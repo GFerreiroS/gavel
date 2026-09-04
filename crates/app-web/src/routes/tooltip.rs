@@ -16,6 +16,7 @@
 use std::collections::BTreeMap;
 
 use app_core::market::{Catalog, CatalogItem, ItemId};
+use app_core::locale::Locale;
 use app_core::repo::Store;
 use app_core::service::{Freshness, ItemTooltipService};
 use app_core::{AppError, Ports};
@@ -64,7 +65,7 @@ pub async fn tooltip<E: Ports>(
         &TooltipFragment {
             tip: TooltipView::new(
                 &tooltip,
-                rank_line(&entry, item),
+                rank_line(prefs.locale, &entry, item),
                 freshness != Freshness::Unavailable,
             ),
         },
@@ -81,7 +82,11 @@ pub(crate) async fn cached_one<E: Ports>(
     now: Millis,
 ) -> Option<TooltipView> {
     let tooltip = service(env).cached(prefs.locale, item, now).await?;
-    Some(TooltipView::new(&tooltip, rank_line(entry, item), true))
+    Some(TooltipView::new(
+        &tooltip,
+        rank_line(prefs.locale, entry, item),
+        true,
+    ))
 }
 
 /// Every cached tooltip in a catalog, keyed by item id.
@@ -115,7 +120,7 @@ pub(crate) async fn cached_all<E: Ports>(
             let entry = owners.get(&item.get())?;
             Some((
                 item.get(),
-                TooltipView::new(&tooltip, rank_line(entry, item), true),
+                TooltipView::new(&tooltip, rank_line(prefs.locale, entry, item), true),
             ))
         })
         .collect()
@@ -123,9 +128,13 @@ pub(crate) async fn cached_all<E: Ports>(
 
 /// Which market this icon leads to. The game has no concept of our ranks being
 /// separate markets, so this line is ours.
-fn rank_line(entry: &CatalogItem, item: ItemId) -> Option<String> {
+fn rank_line(locale: Locale, entry: &CatalogItem, item: ItemId) -> Option<String> {
     match (entry.ranks.len(), entry.rank_of(item)) {
-        (total, Some(rank)) if total > 1 => Some(format!("Rank {rank} of {total}")),
+        (total, Some(rank)) if total > 1 => Some(
+            crate::i18n::translate(locale, "Rank {} of {}")
+                .replacen("{}", &rank.to_string(), 1)
+                .replacen("{}", &total.to_string(), 1),
+        ),
         _ => None,
     }
 }
