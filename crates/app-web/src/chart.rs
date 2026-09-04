@@ -111,6 +111,103 @@ fn escape(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
+/// Width of the styled tooltip box in SVG viewBox units.
+///
+/// Wide enough for the longest line the tooltip can hold (a price + stock
+/// line at maximum). At the chart's 760-unit viewBox this is roughly 200 of
+/// the 632 plot-area units.
+const TIP_W: f64 = 200.0;
+
+/// Line height inside the tooltip, in SVG units (≈ 11 px font × 1.4).
+const TIP_LINE_H: f64 = 15.4;
+
+/// Vertical padding inside the tooltip box (top and bottom).
+const TIP_PAD_V: f64 = 6.0;
+
+/// Horizontal padding inside the tooltip box (left inset for text).
+const TIP_PAD_H: f64 = 8.0;
+
+/// Emits a `<g class="hit-group">` wrapping both the invisible hit rect and
+/// the styled CSS tooltip.
+///
+/// # Accessibility
+///
+/// The `<title>` element is kept inside the hit `<rect>`.  Screen readers
+/// (VoiceOver, NVDA, JAWS) announce the `<title>` of an SVG element when it
+/// receives keyboard focus or is reached by the accessibility tree, so
+/// removing it would make the chart silent to assistive technology.  The
+/// visual tooltip is marked `aria-hidden="true"` so it is not double-read.
+///
+/// # Edge clamping
+///
+/// `cx` is the x-centre of the hit column.  The tooltip is placed to the
+/// right of `cx` but flipped leftward when there is not enough room before
+/// the right edge of the viewBox (`W`).  The y position is fixed just below
+/// the top padding so it never clips off the top.
+fn hit_group(
+    cx: f64,
+    rect_x: f64,
+    rect_w: f64,
+    title_text: &str,
+    lines: &[(&str, &str)],
+) -> String {
+    // Each entry in `lines` is (label, value). The first entry is the header
+    // (date/price) and has no label part; pass ("", value) for that.
+    let n_lines = lines.len() as f64;
+    let tip_h = TIP_PAD_V * 2.0 + n_lines * TIP_LINE_H;
+
+    // Clamp tooltip left edge: prefer opening to the right of cx, but flip
+    // left if that would overflow the right edge of the plot area.
+    let tip_x = if cx + TIP_W <= W - PAD_R {
+        cx
+    } else {
+        (cx - TIP_W).max(PAD_L)
+    };
+    // Y: just below the top padding. The tooltip is always inside the viewBox.
+    let tip_y = PAD_T + 2.0;
+
+    let mut out = format!(
+        r#"<g class="hit-group"><rect class="hit" x="{:.1}" y="{PAD_T}" width="{:.1}" height="{:.1}"><title>{}</title></rect>"#,
+        rect_x,
+        rect_w,
+        H - PAD_T - PAD_B,
+        escape(title_text)
+    );
+
+    // Visual tooltip, hidden at rest and faded in on hover by CSS.
+    out.push_str(&format!(
+        r#"<g class="chart-tip" aria-hidden="true" transform="translate({tip_x:.1},{tip_y:.1})">"#
+    ));
+    out.push_str(&format!(
+        r#"<rect class="tip-bg" x="0" y="0" width="{TIP_W}" height="{tip_h:.1}" rx="3" ry="3"/>"#
+    ));
+    out.push_str(r#"<text class="tip-text" dominant-baseline="hanging">"#);
+    let mut dy = TIP_PAD_V;
+    for (label, value) in lines {
+        if label.is_empty() {
+            // Header line (e.g. timestamp): rendered as a plain label-coloured
+            // line so it reads as context rather than as a data row.
+            out.push_str(&format!(
+                r#"<tspan class="tip-label" x="{TIP_PAD_H}" y="{dy:.1}">{}</tspan>"#,
+                escape(value)
+            ));
+        } else {
+            // Data row: muted label, then value in the normal text colour.
+            out.push_str(&format!(
+                r#"<tspan class="tip-label" x="{TIP_PAD_H}" y="{dy:.1}">{}: </tspan>"#,
+                escape(label)
+            ));
+            out.push_str(&format!(
+                r#"<tspan class="tip-text">{}</tspan>"#,
+                escape(value)
+            ));
+        }
+        dy += TIP_LINE_H;
+    }
+    out.push_str("</text></g></g>");
+    out
+}
+
 /// A "nice" axis step: 1, 2, 2.5 or 5 times a power of ten.
 ///
 /// Ticks used to be plain fractions of the maximum, which produced axes like
@@ -189,10 +286,12 @@ const CHART_STYLE: &str = concat!(
     "svg.chart .bar{fill:var(--series-1)}",
     "svg.chart .bar.best{fill:var(--series-2)}",
     "svg.chart path.bar{stroke:none}",
-    // Invisible until hovered: the wide rects exist to give a pointer
-    // somewhere to land for the native <title> tooltip.
-    "svg.chart .hit{fill:transparent}",
-    "svg.chart .hit:hover{fill:var(--chart-line);fill-opacity:.35}",
+    // Hit group: the <g> that owns both the invisible hit rect and the
+    // styled tooltip, so :hover on the group keeps the tooltip visible while
+    // the pointer is anywhere inside the column.
+    "svg.chart .hit-group{cursor:crosshair}",
+    "svg.chart .hit-group .hit{fill:transparent}",
+    "svg.chart .hit-group:hover .hit{fill:var(--chart-line);fill-opacity:.35}",
     // The price band. The fill is the same hue as the median line at low
     // opacity, so the two read as one statement about one market rather than
     // as two series -- which is what they are.
@@ -222,6 +321,39 @@ const CHART_STYLE: &str = concat!(
     "svg.chart .heat-cell{fill:var(--series-1);stroke:none}",
     "svg.chart .heat-gap{fill:none;stroke:var(--chart-line);stroke-width:.5;",
     "stroke-dasharray:2 2}",
+    // Styled tooltip: hidden at rest, revealed when the hit-group is hovered.
+    // `pointer-events:none` prevents the tooltip itself from stealing the
+    // hover and causing a flicker loop.
+    //
+    // Delay on the *appear* transition (500 ms) keeps accidental mouse-overs
+    // quiet. The disappear has no delay so it clears immediately when the
+    // pointer leaves. Both transitions use the same duration (150 ms).
+    //
+    // The tooltip is positioned in SVG coordinates; Rust clamps it so it
+    // never overflows the viewBox edge at any chart width.
+    "svg.chart .chart-tip{",
+    "opacity:0;pointer-events:none;",
+    "transition:opacity .15s ease 0s}",
+    "svg.chart .hit-group:hover .chart-tip{",
+    "opacity:1;",
+    "transition:opacity .15s ease .5s}",
+    // Tooltip box: Pico card background and muted border, matching the panels
+    // and stat tiles that surround the chart. Falls back to literals.
+    "svg.chart .tip-bg{",
+    "fill:var(--pico-card-background-color,#fff);",
+    "stroke:var(--pico-muted-border-color,#4a5568);",
+    "stroke-width:1}",
+    // Tooltip text inherits the page font; label lines use the muted colour.
+    "svg.chart .tip-text{",
+    "fill:var(--pico-color,#1a202c);",
+    "font-size:11px;font-family:inherit}",
+    "svg.chart .tip-label{fill:var(--chart-text,#8b93a7)}",
+    // Respect the user's motion preference: skip the fade entirely when they
+    // have asked for less animation. The tooltip still appears; it just does
+    // so without a transition.
+    "@media(prefers-reduced-motion:reduce){",
+    "svg.chart .chart-tip,svg.chart .hit-group:hover .chart-tip{",
+    "transition:none}}",
     "</style>",
 );
 
@@ -316,31 +448,49 @@ pub fn line_chart(series: &[Series<'_>], unit: Unit, empty_note: &str) -> String
         );
     }
 
-    // Hover strips: one transparent column per sample, carrying a native
-    // tooltip. Cheaper than a script and works without one.
+    // Hover columns: one per sample. Each column is a `hit-group` containing
+    // an accessible `<title>` for screen readers and a styled CSS tooltip for
+    // sighted users. No JavaScript required; the tooltip is revealed on :hover
+    // with a CSS transition-delay.
     if let Some(first) = series.first() {
         let step_x = (W - PAD_L - PAD_R) / first.points.len().max(1) as f64;
         for (i, p) in first.points.iter().enumerate() {
             let cx = x(p.at.get());
-            let mut tip = format!("{}\n", p.at.to_utc_string());
+            // Build the accessible text (kept in <title> for screen readers).
+            let mut title_text = format!("{}\n", p.at.to_utc_string());
             for s in series {
                 if let Some(sp) = s.points.get(i) {
-                    let _ = writeln!(tip, "{}: {}", s.label, unit.value(sp.price.get()));
+                    let _ = writeln!(title_text, "{}: {}", s.label, unit.value(sp.price.get()));
                 }
             }
             if unit == Unit::Gold && first.show_stock {
-                let _ = write!(tip, "stock: {}", p.quantity);
+                let _ = write!(title_text, "stock: {}", p.quantity);
             }
-            let _ = write!(
-                svg,
-                r#"<rect class="hit" x="{:.1}" y="{PAD_T}" width="{:.1}" height="{:.1}"><title>{}</title></rect>"#,
+            // Build the visual tooltip lines: (label, value) pairs.
+            let mut vis_lines: Vec<(String, String)> = Vec::new();
+            vis_lines.push((String::new(), p.at.to_utc_string()));
+            for s in series {
+                if let Some(sp) = s.points.get(i) {
+                    vis_lines.push((s.label.to_string(), unit.value(sp.price.get())));
+                }
+            }
+            if unit == Unit::Gold && first.show_stock {
+                vis_lines.push(("stock".to_string(), p.quantity.to_string()));
+            }
+            let vis_refs: Vec<(&str, &str)> = vis_lines
+                .iter()
+                .map(|(l, v)| (l.as_str(), v.as_str()))
+                .collect();
+            svg.push_str(&hit_group(
+                cx,
                 cx - step_x / 2.0,
                 step_x.max(2.0),
-                H - PAD_T - PAD_B,
-                escape(tip.trim_end())
-            );
+                title_text.trim_end(),
+                &vis_refs,
+            ));
         }
     }
+
 
     let _ = write!(
         svg,
@@ -617,6 +767,8 @@ pub fn band_chart(
     // Where the market is now, as a rule across the plot. §6 asks for the
     // current value on this panel: without it the reader has to find the right
     // edge of a line that may end in a gap.
+    // The `<title>` on the line is kept for accessibility; the line itself is
+    // not a hover target the user is expected to hit, so no styled tooltip.
     if let Some(price) = current
         && price.get() >= lo as u64
         && price.get() <= hi as u64
@@ -630,34 +782,83 @@ pub fn band_chart(
         );
     }
 
-    // Hover strips, as on every other chart: a native tooltip, no script. A
-    // gap gets one too, and says so -- "nothing collected" is the answer the
-    // reader came for when they see a break.
+    // Hover columns: one per slot. Each column is a `hit-group` carrying both
+    // a `<title>` for screen readers and a styled CSS tooltip. A gap slot says
+    // "nothing collected" -- that is the answer the reader came for.
     let step_x = (W - PAD_L - PAD_R) / series.points.len().max(1) as f64;
     for point in &series.points {
         let cx = x(point.at.get());
-        let tip = if point.observed {
-            format!(
+        let (title_text, vis_lines): (String, Vec<(&str, &str)>) = if point.observed {
+            let price_s = unit_gold().value(point.price.get());
+            let median_s = unit_gold().value(point.median.get());
+            let p25_s = unit_gold().value(point.p25.get());
+            let p75_s = unit_gold().value(point.p75.get());
+            let qty_s = point.quantity.to_string();
+            let auctions_s = point.listings.to_string();
+            let title = format!(
                 "{}\nprice: {}\nmedian: {}\nP25-P75: {} - {}\nstock: {} in {} auctions",
                 point.at.to_utc_string(),
-                unit_gold().value(point.price.get()),
-                unit_gold().value(point.median.get()),
-                unit_gold().value(point.p25.get()),
-                unit_gold().value(point.p75.get()),
-                point.quantity,
-                point.listings,
-            )
+                price_s,
+                median_s,
+                p25_s,
+                p75_s,
+                qty_s,
+                auctions_s,
+            );
+            // Borrow from the owned strings stored in `title` is not possible
+            // here, so we use static-lifetime label strings and short-lived
+            // value references by re-formatting inline.
+            let vis: Vec<(&str, &str)> = vec![
+                ("", ""),   // placeholder; replaced below
+            ];
+            // We cannot borrow from temporaries inside the vec literal, so
+            // build the hit_group with a separate owned-string step.
+            let _ = vis; // discard placeholder
+            (title, vec![])
         } else {
-            format!("{}\nnothing collected", point.at.to_utc_string())
+            (
+                format!("{}\nnothing collected", point.at.to_utc_string()),
+                vec![],
+            )
         };
-        let _ = write!(
-            svg,
-            r#"<rect class="hit" x="{:.1}" y="{PAD_T}" width="{:.1}" height="{:.1}"><title>{}</title></rect>"#,
+        // Re-build structured lines from the title text (avoids double-
+        // ownership of intermediate Strings inside a single expression).
+        let structured: Vec<(String, String)> = if point.observed {
+            vec![
+                (String::new(), point.at.to_utc_string()),
+                ("price".to_string(), unit_gold().value(point.price.get())),
+                ("median".to_string(), unit_gold().value(point.median.get())),
+                (
+                    "P25–P75".to_string(),
+                    format!(
+                        "{} – {}",
+                        unit_gold().value(point.p25.get()),
+                        unit_gold().value(point.p75.get())
+                    ),
+                ),
+                (
+                    "stock".to_string(),
+                    format!("{} in {} auctions", point.quantity, point.listings),
+                ),
+            ]
+        } else {
+            vec![
+                (String::new(), point.at.to_utc_string()),
+                (String::new(), "nothing collected".to_string()),
+            ]
+        };
+        let _ = vis_lines; // consumed by structured
+        let vis_refs: Vec<(&str, &str)> = structured
+            .iter()
+            .map(|(l, v)| (l.as_str(), v.as_str()))
+            .collect();
+        svg.push_str(&hit_group(
+            cx,
             cx - step_x / 2.0,
             step_x.max(2.0),
-            H - PAD_T - PAD_B,
-            escape(&tip)
-        );
+            &title_text,
+            &vis_refs,
+        ));
     }
 
     time_axis(&mut svg, min_t, max_t);
@@ -744,19 +945,56 @@ pub fn histogram_chart(histogram: &Histogram, current: Option<Copper>, empty_not
         } else {
             "bar"
         };
+        let tip_title = format!("around {}\n{count} hours", Unit::Gold.value(price));
+        let vis_lines: Vec<(&str, &str)> = {
+            let price_s = Unit::Gold.value(price);
+            let count_s = format!("{count}");
+            // These temporaries don't live long enough for borrowing into
+            // vis_lines; build the hit_group call below with owned Strings.
+            drop(price_s);
+            drop(count_s);
+            vec![]
+        };
+        // Build structured lines for the visual tooltip.
+        let price_s = Unit::Gold.value(price);
+        let count_s = format!("{count}");
+        let _ = vis_lines;
+        let vis_owned = vec![
+            (String::new(), format!("around {}", price_s)),
+            (String::new(), format!("{count_s} hours")),
+        ];
+        let vis_refs: Vec<(&str, &str)> =
+            vis_owned.iter().map(|(l, v)| (l.as_str(), v.as_str())).collect();
+        // cx is the centre of the bar; tooltip positions from there.
+        let cx = bx + width / 2.0;
+        // The bar itself carries both the visual bar rect and the hit-group
+        // tooltip. The bar rect has a `<title>` for screen readers.
         let _ = write!(
             svg,
-            r#"<rect class="{class}" x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}"><title>{}</title></rect>"#,
+            r#"<g class="hit-group"><rect class="{class}" x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}"><title>{}</title></rect>"#,
             bx + 1.0,
             H - PAD_B - height,
             (width - 2.0).max(1.0),
             height,
-            escape(&format!(
-                "around {}\n{count} hours",
-                Unit::Gold.value(price)
-            ))
+            escape(&tip_title)
+        );
+        // Append the visual tooltip group (aria-hidden so it is not double-read).
+        let tip_h = TIP_PAD_V * 2.0 + 2.0 * TIP_LINE_H;
+        let tip_x = if cx + TIP_W <= W - PAD_R {
+            cx
+        } else {
+            (cx - TIP_W).max(PAD_L)
+        };
+        let tip_y = PAD_T + 2.0;
+        let _ = write!(
+            svg,
+            r#"<g class="chart-tip" aria-hidden="true" transform="translate({tip_x:.1},{tip_y:.1})"><rect class="tip-bg" x="0" y="0" width="{TIP_W}" height="{tip_h:.1}" rx="3" ry="3"/><text class="tip-text" dominant-baseline="hanging"><tspan class="tip-label" x="{TIP_PAD_H}" y="{TIP_PAD_V:.1}">{}</tspan><tspan class="tip-label" x="{TIP_PAD_H}" y="{:.1}">{}</tspan></text></g></g>"#,
+            escape(&vis_refs[0].1),
+            TIP_PAD_V + TIP_LINE_H,
+            escape(&vis_refs[1].1),
         );
     }
+
 
     // The axis is prices, so it is labelled with prices: the two ends and the
     // middle, which is as many as fit without overlapping.
@@ -831,6 +1069,15 @@ pub fn heatmap_chart(map: &Heatmap, weekdays: &[String], empty_note: &str) -> St
         );
         for hour in 0..24 {
             let x = LABEL_W + hour as f64 * cell_w;
+            let cx = x + cell_w / 2.0;
+            // Clamp tooltip to the right edge of the heatmap viewBox.
+            let tip_x = if cx + TIP_W <= W {
+                cx
+            } else {
+                (cx - TIP_W).max(0.0)
+            };
+            // Place tooltip at a fixed y near the top of the chart.
+            let tip_y = top + 2.0;
             match map.cells.get(day * 24 + hour).copied().flatten() {
                 Some(price) => {
                     // Cheap is dark, dear is pale: one hue at varying opacity
@@ -838,27 +1085,36 @@ pub fn heatmap_chart(map: &Heatmap, weekdays: &[String], empty_note: &str) -> St
                     // without a legend and survives being colour-blind.
                     let share = (price.get() - lo.get()) as f64 / span as f64;
                     let opacity = 0.88 - share * 0.72;
+                    let header = format!("{label} {hour:02}:00 UTC");
+                    let price_s = Unit::Gold.value(price.get());
+                    let tip_title = format!("{header}\n{price_s}");
+                    let tip_h = TIP_PAD_V * 2.0 + 2.0 * TIP_LINE_H;
                     let _ = write!(
                         svg,
-                        r#"<rect class="heat-cell" x="{x:.1}" y="{y:.1}" width="{:.1}" height="{:.1}" opacity="{opacity:.2}"><title>{}</title></rect>"#,
+                        r#"<g class="hit-group"><rect class="heat-cell" x="{x:.1}" y="{y:.1}" width="{:.1}" height="{:.1}" opacity="{opacity:.2}"><title>{}</title></rect><g class="chart-tip" aria-hidden="true" transform="translate({tip_x:.1},{tip_y:.1})"><rect class="tip-bg" x="0" y="0" width="{TIP_W}" height="{tip_h:.1}" rx="3" ry="3"/><text class="tip-text" dominant-baseline="hanging"><tspan class="tip-label" x="{TIP_PAD_H}" y="{TIP_PAD_V:.1}">{}</tspan><tspan class="tip-label" x="{TIP_PAD_H}" y="{:.1}">{}</tspan></text></g></g>"#,
                         cell_w - 1.0,
                         ROW_H - 1.0,
-                        escape(&format!(
-                            "{label} {hour:02}:00 UTC\n{}",
-                            Unit::Gold.value(price.get())
-                        ))
+                        escape(&tip_title),
+                        escape(&header),
+                        TIP_PAD_V + TIP_LINE_H,
+                        escape(&price_s),
                     );
                 }
                 // A hole: outlined, empty, and hoverable so it can say what it
                 // is. Drawing nothing at all would leave the page background
                 // showing, which reads as one more shade of the scale.
                 None => {
+                    let header = format!("{label} {hour:02}:00 UTC");
+                    let tip_title = format!("{header}\nnothing collected");
+                    let tip_h = TIP_PAD_V * 2.0 + 2.0 * TIP_LINE_H;
                     let _ = write!(
                         svg,
-                        r#"<rect class="heat-gap" x="{x:.1}" y="{y:.1}" width="{:.1}" height="{:.1}"><title>{}</title></rect>"#,
+                        r#"<g class="hit-group"><rect class="heat-gap" x="{x:.1}" y="{y:.1}" width="{:.1}" height="{:.1}"><title>{}</title></rect><g class="chart-tip" aria-hidden="true" transform="translate({tip_x:.1},{tip_y:.1})"><rect class="tip-bg" x="0" y="0" width="{TIP_W}" height="{tip_h:.1}" rx="3" ry="3"/><text class="tip-text" dominant-baseline="hanging"><tspan class="tip-label" x="{TIP_PAD_H}" y="{TIP_PAD_V:.1}">{}</tspan><tspan class="tip-label" x="{TIP_PAD_H}" y="{:.1}">nothing collected</tspan></text></g></g>"#,
                         cell_w - 1.0,
                         ROW_H - 1.0,
-                        escape(&format!("{label} {hour:02}:00 UTC\nnothing collected"))
+                        escape(&tip_title),
+                        escape(&header),
+                        TIP_PAD_V + TIP_LINE_H,
                     );
                 }
             }
@@ -956,7 +1212,8 @@ pub fn depth_chart(ladder: &Ladder, target: u64, empty_note: &str) -> String {
         );
     }
 
-    // Hover strips per rung.
+    // Hover columns per rung: each carries an accessible <title> and the
+    // styled CSS tooltip. The cx for positioning is the midpoint of the rung.
     for (index, rung) in ladder.steps.iter().enumerate() {
         let left = if index == 0 {
             x(lo)
@@ -964,19 +1221,28 @@ pub fn depth_chart(ladder: &Ladder, target: u64, empty_note: &str) -> String {
             x(ladder.steps[index - 1].price.get())
         };
         let right = x(rung.price.get());
-        let _ = write!(
-            svg,
-            r#"<rect class="hit" x="{:.1}" y="{PAD_T}" width="{:.1}" height="{:.1}"><title>{}</title></rect>"#,
+        let cx = (left + right) / 2.0;
+        let title_text = format!(
+            "{}\n{} units at this price\n{} units at or below it",
+            Unit::Gold.value(rung.price.get()),
+            rung.quantity,
+            rung.cumulative
+        );
+        let price_s = Unit::Gold.value(rung.price.get());
+        let qty_s = rung.quantity.to_string();
+        let cum_s = rung.cumulative.to_string();
+        let vis_lines = [
+            ("", price_s.as_str()),
+            ("at price", qty_s.as_str()),
+            ("cumulative", cum_s.as_str()),
+        ];
+        svg.push_str(&hit_group(
+            cx,
             left,
             (right - left).max(2.0),
-            H - PAD_T - PAD_B,
-            escape(&format!(
-                "{}\n{} units at this price\n{} units at or below it",
-                Unit::Gold.value(rung.price.get()),
-                rung.quantity,
-                rung.cumulative
-            ))
-        );
+            &title_text,
+            &vis_lines,
+        ));
     }
 
     // The axis is prices.
