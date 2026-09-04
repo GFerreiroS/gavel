@@ -7,7 +7,7 @@
 //! Colours come from the validated two-slot categorical palette (blue, then
 //! orange, assigned in fixed order and never cycled) and are emitted as CSS
 //! custom properties so the light and dark steps swap in one place. Hover is
-//! native `<title>`: a real tooltip with no script.
+//! native SVG and CSS: a real tooltip with no script.
 
 use std::fmt::Write;
 
@@ -97,8 +97,8 @@ impl Unit {
 /// module builds the markup itself.
 ///
 /// Quotes as well as the three characters element text needs. Everything
-/// interpolated here today lands in element content -- a `<title>`, a `<text>`
-/// -- where `&<>` would be enough, and one of those `<title>`s carries a
+/// interpolated here today lands in element content -- a `<text>` or
+/// `aria-label` -- where `&<>` would be enough, and one of those labels carries a
 /// series label, which on the gear pages is a realm name that came from
 /// Blizzard. The day somebody puts one of these in an `x="…"` instead, the
 /// quotes are the difference between a chart and an injection, and finding
@@ -132,10 +132,9 @@ const TIP_PAD_H: f64 = 8.0;
 ///
 /// # Accessibility
 ///
-/// The `<title>` element is kept inside the hit `<rect>`.  Screen readers
-/// (VoiceOver, NVDA, JAWS) announce the `<title>` of an SVG element when it
-/// receives keyboard focus or is reached by the accessibility tree, so
-/// removing it would make the chart silent to assistive technology.  The
+/// The hit `<rect>` is focusable and names itself with `role="img"` and an
+/// `aria-label`, which preserves the data the native SVG title announced
+/// without also asking browsers to show their unstyled native tooltip. The
 /// visual tooltip is marked `aria-hidden="true"` so it is not double-read.
 ///
 /// # Edge clamping
@@ -167,11 +166,11 @@ fn hit_group(
     let tip_y = PAD_T + 2.0;
 
     let mut out = format!(
-        r#"<g class="hit-group"><rect class="hit" x="{:.1}" y="{PAD_T}" width="{:.1}" height="{:.1}"><title>{}</title></rect>"#,
+        r#"<g class="hit-group"><rect class="hit" tabindex="0" role="img" aria-label="{}" x="{:.1}" y="{PAD_T}" width="{:.1}" height="{:.1}"/>"#,
+        escape(title_text),
         rect_x,
         rect_w,
-        H - PAD_T - PAD_B,
-        escape(title_text)
+        H - PAD_T - PAD_B
     );
 
     // Visual tooltip, hidden at rest and faded in on hover by CSS.
@@ -321,39 +320,6 @@ const CHART_STYLE: &str = concat!(
     "svg.chart .heat-cell{fill:var(--series-1);stroke:none}",
     "svg.chart .heat-gap{fill:none;stroke:var(--chart-line);stroke-width:.5;",
     "stroke-dasharray:2 2}",
-    // Styled tooltip: hidden at rest, revealed when the hit-group is hovered.
-    // `pointer-events:none` prevents the tooltip itself from stealing the
-    // hover and causing a flicker loop.
-    //
-    // Delay on the *appear* transition (500 ms) keeps accidental mouse-overs
-    // quiet. The disappear has no delay so it clears immediately when the
-    // pointer leaves. Both transitions use the same duration (150 ms).
-    //
-    // The tooltip is positioned in SVG coordinates; Rust clamps it so it
-    // never overflows the viewBox edge at any chart width.
-    "svg.chart .chart-tip{",
-    "opacity:0;pointer-events:none;",
-    "transition:opacity .15s ease 0s}",
-    "svg.chart .hit-group:hover .chart-tip{",
-    "opacity:1;",
-    "transition:opacity .15s ease .5s}",
-    // Tooltip box: Pico card background and muted border, matching the panels
-    // and stat tiles that surround the chart. Falls back to literals.
-    "svg.chart .tip-bg{",
-    "fill:var(--pico-card-background-color,#fff);",
-    "stroke:var(--pico-muted-border-color,#4a5568);",
-    "stroke-width:1}",
-    // Tooltip text inherits the page font; label lines use the muted colour.
-    "svg.chart .tip-text{",
-    "fill:var(--pico-color,#1a202c);",
-    "font-size:11px;font-family:inherit}",
-    "svg.chart .tip-label{fill:var(--chart-text,#8b93a7)}",
-    // Respect the user's motion preference: skip the fade entirely when they
-    // have asked for less animation. The tooltip still appears; it just does
-    // so without a transition.
-    "@media(prefers-reduced-motion:reduce){",
-    "svg.chart .chart-tip,svg.chart .hit-group:hover .chart-tip{",
-    "transition:none}}",
     "</style>",
 );
 
@@ -364,7 +330,7 @@ fn open_svg(svg: &mut String) {
     // CHART_STYLE keeps the geometry honest.
     let _ = write!(
         svg,
-        r#"<svg class="chart" viewBox="0 0 {W} {H}" role="img">"#
+        r#"<svg class="chart" viewBox="0 0 {W} {H}" role="group">"#
     );
     svg.push_str(CHART_STYLE);
 }
@@ -449,14 +415,15 @@ pub fn line_chart(series: &[Series<'_>], unit: Unit, empty_note: &str) -> String
     }
 
     // Hover columns: one per sample. Each column is a `hit-group` containing
-    // an accessible `<title>` for screen readers and a styled CSS tooltip for
+    // an accessible name for screen readers and a styled CSS tooltip for
     // sighted users. No JavaScript required; the tooltip is revealed on :hover
     // with a CSS transition-delay.
     if let Some(first) = series.first() {
         let step_x = (W - PAD_L - PAD_R) / first.points.len().max(1) as f64;
         for (i, p) in first.points.iter().enumerate() {
             let cx = x(p.at.get());
-            // Build the accessible text (kept in <title> for screen readers).
+            // Build the accessible text, exposed through the hit rect's
+            // aria-label for screen readers and keyboard users.
             let mut title_text = format!("{}\n", p.at.to_utc_string());
             for s in series {
                 if let Some(sp) = s.points.get(i) {
@@ -490,7 +457,6 @@ pub fn line_chart(series: &[Series<'_>], unit: Unit, empty_note: &str) -> String
             ));
         }
     }
-
 
     let _ = write!(
         svg,
@@ -767,8 +733,8 @@ pub fn band_chart(
     // Where the market is now, as a rule across the plot. §6 asks for the
     // current value on this panel: without it the reader has to find the right
     // edge of a line that may end in a gap.
-    // The `<title>` on the line is kept for accessibility; the line itself is
-    // not a hover target the user is expected to hit, so no styled tooltip.
+    // The accessible name on the line preserves its value. The line itself is
+    // not a hover target the user is expected to hit, so it has no tooltip.
     if let Some(price) = current
         && price.get() >= lo as u64
         && price.get() <= hi as u64
@@ -776,14 +742,14 @@ pub fn band_chart(
         let cy = y(price.get());
         let _ = write!(
             svg,
-            r#"<line class="band-now" x1="{PAD_L}" y1="{cy:.1}" x2="{:.1}" y2="{cy:.1}"><title>{}</title></line>"#,
+            r#"<line class="band-now" role="img" aria-label="{}" x1="{PAD_L}" y1="{cy:.1}" x2="{:.1}" y2="{cy:.1}"/>"#,
+            escape(&format!("now: {}", unit_gold().value(price.get()))),
             W - PAD_R,
-            escape(&format!("now: {}", unit_gold().value(price.get())))
         );
     }
 
-    // Hover columns: one per slot. Each column is a `hit-group` carrying both
-    // a `<title>` for screen readers and a styled CSS tooltip. A gap slot says
+    // Hover columns: one per slot. Each column is a `hit-group` carrying an
+    // accessible name and a styled CSS tooltip. A gap slot says
     // "nothing collected" -- that is the answer the reader came for.
     let step_x = (W - PAD_L - PAD_R) / series.points.len().max(1) as f64;
     for point in &series.points {
@@ -809,7 +775,7 @@ pub fn band_chart(
             // here, so we use static-lifetime label strings and short-lived
             // value references by re-formatting inline.
             let vis: Vec<(&str, &str)> = vec![
-                ("", ""),   // placeholder; replaced below
+                ("", ""), // placeholder; replaced below
             ];
             // We cannot borrow from temporaries inside the vec literal, so
             // build the hit_group with a separate owned-string step.
@@ -959,24 +925,26 @@ pub fn histogram_chart(histogram: &Histogram, current: Option<Copper>, empty_not
         let price_s = Unit::Gold.value(price);
         let count_s = format!("{count}");
         let _ = vis_lines;
-        let vis_owned = vec![
+        let vis_owned = [
             (String::new(), format!("around {}", price_s)),
             (String::new(), format!("{count_s} hours")),
         ];
-        let vis_refs: Vec<(&str, &str)> =
-            vis_owned.iter().map(|(l, v)| (l.as_str(), v.as_str())).collect();
+        let vis_refs: Vec<(&str, &str)> = vis_owned
+            .iter()
+            .map(|(l, v)| (l.as_str(), v.as_str()))
+            .collect();
         // cx is the centre of the bar; tooltip positions from there.
         let cx = bx + width / 2.0;
-        // The bar itself carries both the visual bar rect and the hit-group
-        // tooltip. The bar rect has a `<title>` for screen readers.
+        // The bar itself is the focusable tooltip target, so the data stays on
+        // the visible mark instead of expanding the hover target to the plot.
         let _ = write!(
             svg,
-            r#"<g class="hit-group"><rect class="{class}" x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}"><title>{}</title></rect>"#,
+            r#"<g class="hit-group"><rect class="{class}" tabindex="0" role="img" aria-label="{}" x="{:.1}" y="{:.1}" width="{:.1}" height="{:.1}"/>"#,
+            escape(&tip_title),
             bx + 1.0,
             H - PAD_B - height,
             (width - 2.0).max(1.0),
             height,
-            escape(&tip_title)
         );
         // Append the visual tooltip group (aria-hidden so it is not double-read).
         let tip_h = TIP_PAD_V * 2.0 + 2.0 * TIP_LINE_H;
@@ -989,12 +957,11 @@ pub fn histogram_chart(histogram: &Histogram, current: Option<Copper>, empty_not
         let _ = write!(
             svg,
             r#"<g class="chart-tip" aria-hidden="true" transform="translate({tip_x:.1},{tip_y:.1})"><rect class="tip-bg" x="0" y="0" width="{TIP_W}" height="{tip_h:.1}" rx="3" ry="3"/><text class="tip-text" dominant-baseline="hanging"><tspan class="tip-label" x="{TIP_PAD_H}" y="{TIP_PAD_V:.1}">{}</tspan><tspan class="tip-label" x="{TIP_PAD_H}" y="{:.1}">{}</tspan></text></g></g>"#,
-            escape(&vis_refs[0].1),
+            escape(vis_refs[0].1),
             TIP_PAD_V + TIP_LINE_H,
-            escape(&vis_refs[1].1),
+            escape(vis_refs[1].1),
         );
     }
-
 
     // The axis is prices, so it is labelled with prices: the two ends and the
     // middle, which is as many as fit without overlapping.
@@ -1046,7 +1013,7 @@ pub fn heatmap_chart(map: &Heatmap, weekdays: &[String], empty_note: &str) -> St
     let mut svg = String::with_capacity(24 * 1024);
     let _ = write!(
         svg,
-        r#"<svg class="chart heat" viewBox="0 0 {W} {height:.0}" role="img">"#
+        r#"<svg class="chart heat" viewBox="0 0 {W} {height:.0}" role="group">"#
     );
     svg.push_str(CHART_STYLE);
 
@@ -1091,10 +1058,10 @@ pub fn heatmap_chart(map: &Heatmap, weekdays: &[String], empty_note: &str) -> St
                     let tip_h = TIP_PAD_V * 2.0 + 2.0 * TIP_LINE_H;
                     let _ = write!(
                         svg,
-                        r#"<g class="hit-group"><rect class="heat-cell" x="{x:.1}" y="{y:.1}" width="{:.1}" height="{:.1}" opacity="{opacity:.2}"><title>{}</title></rect><g class="chart-tip" aria-hidden="true" transform="translate({tip_x:.1},{tip_y:.1})"><rect class="tip-bg" x="0" y="0" width="{TIP_W}" height="{tip_h:.1}" rx="3" ry="3"/><text class="tip-text" dominant-baseline="hanging"><tspan class="tip-label" x="{TIP_PAD_H}" y="{TIP_PAD_V:.1}">{}</tspan><tspan class="tip-label" x="{TIP_PAD_H}" y="{:.1}">{}</tspan></text></g></g>"#,
+                        r#"<g class="hit-group"><rect class="heat-cell" tabindex="0" role="img" aria-label="{}" x="{x:.1}" y="{y:.1}" width="{:.1}" height="{:.1}" opacity="{opacity:.2}"/><g class="chart-tip" aria-hidden="true" transform="translate({tip_x:.1},{tip_y:.1})"><rect class="tip-bg" x="0" y="0" width="{TIP_W}" height="{tip_h:.1}" rx="3" ry="3"/><text class="tip-text" dominant-baseline="hanging"><tspan class="tip-label" x="{TIP_PAD_H}" y="{TIP_PAD_V:.1}">{}</tspan><tspan class="tip-label" x="{TIP_PAD_H}" y="{:.1}">{}</tspan></text></g></g>"#,
+                        escape(&tip_title),
                         cell_w - 1.0,
                         ROW_H - 1.0,
-                        escape(&tip_title),
                         escape(&header),
                         TIP_PAD_V + TIP_LINE_H,
                         escape(&price_s),
@@ -1109,10 +1076,10 @@ pub fn heatmap_chart(map: &Heatmap, weekdays: &[String], empty_note: &str) -> St
                     let tip_h = TIP_PAD_V * 2.0 + 2.0 * TIP_LINE_H;
                     let _ = write!(
                         svg,
-                        r#"<g class="hit-group"><rect class="heat-gap" x="{x:.1}" y="{y:.1}" width="{:.1}" height="{:.1}"><title>{}</title></rect><g class="chart-tip" aria-hidden="true" transform="translate({tip_x:.1},{tip_y:.1})"><rect class="tip-bg" x="0" y="0" width="{TIP_W}" height="{tip_h:.1}" rx="3" ry="3"/><text class="tip-text" dominant-baseline="hanging"><tspan class="tip-label" x="{TIP_PAD_H}" y="{TIP_PAD_V:.1}">{}</tspan><tspan class="tip-label" x="{TIP_PAD_H}" y="{:.1}">nothing collected</tspan></text></g></g>"#,
+                        r#"<g class="hit-group"><rect class="heat-gap" tabindex="0" role="img" aria-label="{}" x="{x:.1}" y="{y:.1}" width="{:.1}" height="{:.1}"/><g class="chart-tip" aria-hidden="true" transform="translate({tip_x:.1},{tip_y:.1})"><rect class="tip-bg" x="0" y="0" width="{TIP_W}" height="{tip_h:.1}" rx="3" ry="3"/><text class="tip-text" dominant-baseline="hanging"><tspan class="tip-label" x="{TIP_PAD_H}" y="{TIP_PAD_V:.1}">{}</tspan><tspan class="tip-label" x="{TIP_PAD_H}" y="{:.1}">nothing collected</tspan></text></g></g>"#,
+                        escape(&tip_title),
                         cell_w - 1.0,
                         ROW_H - 1.0,
-                        escape(&tip_title),
                         escape(&header),
                         TIP_PAD_V + TIP_LINE_H,
                     );
@@ -1206,13 +1173,13 @@ pub fn depth_chart(ladder: &Ladder, target: u64, empty_note: &str) -> String {
         let ty = y(target);
         let _ = write!(
             svg,
-            r#"<line class="band-now" x1="{PAD_L}" y1="{ty:.1}" x2="{:.1}" y2="{ty:.1}"><title>{}</title></line>"#,
+            r#"<line class="band-now" role="img" aria-label="{}" x1="{PAD_L}" y1="{ty:.1}" x2="{:.1}" y2="{ty:.1}"/>"#,
+            escape(&format!("{target} units")),
             W - PAD_R,
-            escape(&format!("{target} units"))
         );
     }
 
-    // Hover columns per rung: each carries an accessible <title> and the
+    // Hover columns per rung: each carries an accessible name and the
     // styled CSS tooltip. The cx for positioning is the midpoint of the rung.
     for (index, rung) in ladder.steps.iter().enumerate() {
         let left = if index == 0 {
@@ -1470,8 +1437,51 @@ mod tests {
             "non-uniform scaling distorts every glyph"
         );
         assert!(svg.contains("viewBox=\"0 0 760 260\""));
+        assert!(svg.contains("role=\"group\""));
         assert!(svg.contains("<path"), "the series was not drawn");
-        assert!(svg.contains("<title>"), "hover tooltips are missing");
+        assert!(
+            svg.contains("class=\"chart-tip\"") && svg.contains("aria-label="),
+            "tooltips need visible and accessible representations"
+        );
+        assert!(
+            !svg.contains("<title>"),
+            "native browser tooltips must not leak through"
+        );
+    }
+
+    #[test]
+    fn tooltip_styles_delay_the_entrance_and_respect_reduced_motion() {
+        let stylesheet = include_str!("../static/style.css");
+        for rule in [
+            "svg.chart .chart-tip",
+            "pointer-events: none",
+            "transition: opacity .15s ease .5s",
+            "var(--pico-card-background-color)",
+            "var(--pico-muted-border-color)",
+            "@media (prefers-reduced-motion: reduce)",
+            "transition: none",
+        ] {
+            assert!(stylesheet.contains(rule), "missing tooltip CSS: {rule}");
+        }
+    }
+
+    #[test]
+    fn a_right_edge_tooltip_flips_inside_the_viewbox() {
+        let svg = hit_group(
+            W - PAD_R,
+            W - PAD_R - 1.0,
+            1.0,
+            "right edge",
+            &[("", "right edge")],
+        );
+        assert!(
+            svg.contains(&format!(
+                "translate({:.1},{:.1})",
+                W - PAD_R - TIP_W,
+                PAD_T + 2.0
+            )),
+            "the right-edge tooltip should open leftward inside the plot"
+        );
     }
 
     #[test]
@@ -1490,12 +1500,13 @@ mod tests {
         assert!(!svg.contains("stock:"));
     }
 
-    /// A chart must not depend on the app stylesheet.
+    /// Core chart geometry must not depend on the app stylesheet.
     ///
     /// This is the regression that broke every graph at once: the rules lived
     /// in `style.css`, a rewrite of that file dropped them, and nothing failed
     /// to build. The charts rendered unsized, unlabelled, with the invisible
-    /// hover targets showing as solid slabs.
+    /// hover targets showing as solid slabs. Tooltip presentation deliberately
+    /// lives in the page stylesheet so it can use Pico's theme variables.
     #[test]
     fn a_chart_carries_everything_it_needs_to_render() {
         let svg = line_chart(
@@ -1624,6 +1635,9 @@ mod tests {
         assert!(svg.contains("<svg"), "the grid was drawn at all");
         assert!(!svg.contains("<script>"), "label was not escaped");
         assert!(svg.contains("&lt;script&gt;"));
+        assert!(svg.contains("class=\"chart-tip\""));
+        assert!(svg.contains("aria-label="));
+        assert!(!svg.contains("<title>"));
     }
 
     /// Everything this module writes goes to the page through `|safe`, so this
@@ -1669,6 +1683,9 @@ mod tests {
             svg.contains("class=\"bar best\""),
             "the current price's bin is marked"
         );
+        assert!(svg.contains("class=\"chart-tip\""));
+        assert!(svg.contains("aria-label="));
+        assert!(!svg.contains("<title>"));
     }
 
     /// The y + height of every `rect.bar`, which is where its foot sits.
