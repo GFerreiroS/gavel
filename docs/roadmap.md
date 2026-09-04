@@ -751,3 +751,34 @@ Audit of the four 34.9 MB realm indexes (measured pre-§7 `variant_id`; true sav
 **Note on Audit Methodology:** The recorded plan set in `scripts/query-plans.py` is the audit's real limiting factor. An unchanged plan output only proves the recorded file matches the code, not that no queries regressed.
 
 **Recovered:** ~34.9 MB (pre-§7).
+
+### 16.6 §4's measured outcome
+
+§4 landed as three sequenced slices (ledger, behaviour-neutral read expansion,
+then suppression). The implementing agent could not measure the saving — no
+realistic fixture exists on a worker's disk, and the synthetic fixture returns
+0% because its prices are randomised — so the figures below were measured
+directly against the production snapshot, 1,103,876 consecutive comparisons.
+
+- **Expected saving: 75.8% of realm rows.** §16.2 reported 77.0% using
+  `min_price`/`median_price`/`max_price`/`listings`. The shipped predicate is
+  `min_price`/`median_price`/`listings`/ladder `steps`; including `steps` is
+  what accounts for the difference.
+- **Excluding `max_price` from the predicate costs nothing.** Zero rows would be
+  suppressed while `max_price` alone changed. It never moves independently of
+  the other four in this data.
+- **`listings = 0` is a safe tombstone sentinel.** There are zero genuine
+  zero-listing rows in 1,142,669: a market with nothing listed never appears in
+  a snapshot at all, so the value is unused by real data and cannot collide.
+
+`characterization.rs` stays green with no expectation edited, which is the
+evidence that expansion reconstructs the identical series from fewer rows.
+
+**A tooling gap found while integrating.** `scripts/query-plans.py --check`
+passed on the feature branch and failed after the merge, because it reuses a
+cached `target/bench/market-synthetic.db` without validating that fixture
+against the current migrations — it had been built before `0030` existed. The
+check can therefore report green against a stale schema. This is the same shape
+as the §16.5 problem: the audit is only as good as the evidence set it runs
+against. Deleting `target/bench` fixes it today; validating fixture freshness
+against `migrations/` would fix it properly.
