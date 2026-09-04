@@ -151,7 +151,7 @@ fn parse_region_items(
             historical: Copper(number(&row, historical, "historical")?),
             avg_sale_price: Copper(number(&row, avg_sale_price, "avgSalePrice")?),
             sale_rate_bp: basis_points(value(&row, sale_rate, "saleRate")?)?,
-            sold_per_day: number(&row, sold_per_day, "soldPerDay")?,
+            sold_per_day: decimal(&row, sold_per_day, "soldPerDay")?,
             updated_at,
         });
     }
@@ -166,18 +166,29 @@ struct CsvTable {
 
 impl CsvTable {
     fn new(input: &str) -> AppResult<Self> {
-        let mut lines = input.lines().filter(|line| !line.trim().is_empty());
-        let header = lines
-            .next()
-            .ok_or_else(|| AppError::Integration("TSM CSV has no header".into()))?;
+        let mut reader = csv::ReaderBuilder::new()
+            .has_headers(true)
+            .flexible(false)
+            .from_reader(input.as_bytes());
+        let header = reader
+            .headers()
+            .map_err(|e| AppError::Integration(format!("TSM CSV header is invalid: {e}")))?;
+        if header.is_empty() {
+            return Err(AppError::Integration("TSM CSV has no header".into()));
+        }
         let mut columns = BTreeMap::new();
-        for (index, name) in csv_fields(header).into_iter().enumerate() {
+        for (index, name) in header.iter().enumerate() {
             columns.insert(name.trim_start_matches('\u{feff}').to_string(), index);
         }
-        Ok(Self {
-            columns,
-            rows: lines.map(csv_fields).collect(),
-        })
+        let rows = reader
+            .records()
+            .map(|record| {
+                record
+                    .map(|record| record.iter().map(str::to_owned).collect())
+                    .map_err(|e| AppError::Integration(format!("TSM CSV row is invalid: {e}")))
+            })
+            .collect::<AppResult<Vec<_>>>()?;
+        Ok(Self { columns, rows })
     }
 
     fn required(&self, name: &str) -> AppResult<usize> {
@@ -197,28 +208,6 @@ impl CsvTable {
     }
 }
 
-/// The feeds are numeric, but this accepts quoted values too so a later name
-/// column cannot shift the fields we use.
-fn csv_fields(line: &str) -> Vec<String> {
-    let mut fields = Vec::new();
-    let mut current = String::new();
-    let mut quoted = false;
-    let mut chars = line.chars().peekable();
-    while let Some(ch) = chars.next() {
-        match ch {
-            '"' if quoted && chars.peek() == Some(&'"') => {
-                current.push('"');
-                chars.next();
-            }
-            '"' => quoted = !quoted,
-            ',' if !quoted => fields.push(std::mem::take(&mut current)),
-            _ => current.push(ch),
-        }
-    }
-    fields.push(current);
-    fields
-}
-
 fn value<'a>(row: &'a [String], index: usize, column: &str) -> AppResult<&'a str> {
     row.get(index)
         .map(String::as_str)
@@ -230,6 +219,18 @@ fn number(row: &[String], index: usize, column: &str) -> AppResult<u64> {
     value(row, index, column)?
         .parse()
         .map_err(|e| AppError::Integration(format!("TSM {column} is not an unsigned integer: {e}")))
+}
+
+fn decimal(row: &[String], index: usize, column: &str) -> AppResult<f64> {
+    let raw = value(row, index, column)?;
+    raw.parse::<f64>()
+        .ok()
+        .filter(|value| value.is_finite() && *value >= 0.0)
+        .ok_or_else(|| {
+            AppError::Integration(format!(
+                "TSM {column} is not a non-negative decimal: {raw:?}"
+            ))
+        })
 }
 
 fn timestamp(row: &[String], index: usize) -> AppResult<Millis> {
@@ -353,9 +354,16 @@ mod tests {
     #[test]
     fn parses_real_tsm_iso_8601_feeds_and_filters_before_storage() {
         let commodities = "itemId,name,marketValue,minBuyout,recent,historical,updatedAt\n222505,Ironclaw Razorstone,32787241,39900000,39900000,1800400,2026-09-04T05:23:31Z\n241311,Haranir Phial of Finesse,198929,230000,230000,155500,2026-09-04T05:23:31Z\n";
-        let region_items = "itemId,name,marketValue,historical,avgSalePrice,saleRate,soldPerDay,updatedAt\n2824,Hurricane,157894953,169722325,9499050,0.013,0,2026-09-03T01:35:57Z\n";
+        let region_items = "itemId,name,marketValue,historical,avgSalePrice,saleRate,soldPerDay,updatedAt\n2824,Hurricane,157894953,169722325,9499050,0.013,0,2026-09-03T01:35:57Z\n94582,\"Thunder, Reborn\",470449678,453546000,94999810,0.001,0.001,2026-09-03T01:35:57Z\n94583,\"Deep Thunder, Reborn\",999994892,999990000,84369975,0.002,0.002,2026-09-03T01:35:57Z\n94584,\"Dragonmaw, Reborn\",990993984,999990000,0,0,0,2026-09-03T01:35:57Z\n67387,\"\"\"Carriage\"\" Signature Bag\",1263092,475000,855000,0.01,0,2026-09-03T01:35:57Z\n56540,Bloodied Wyrmhide Shoulders,11715960898,17499990100,237500095,1,1,2026-09-03T01:35:57Z\n";
         let commodity_wanted = [ItemId(222505)];
-        let region_wanted = [ItemId(2824)];
+        let region_wanted = [
+            ItemId(2824),
+            ItemId(94582),
+            ItemId(94583),
+            ItemId(94584),
+            ItemId(67387),
+            ItemId(56540),
+        ];
 
         let commodity = parse_commodities(commodities, Region::Eu, &commodity_wanted).unwrap();
         let daily = parse_region_items(region_items, Region::Eu, &region_wanted).unwrap();
@@ -363,10 +371,29 @@ mod tests {
         assert_eq!(commodity.len(), 1);
         assert_eq!(commodity[0].min_buyout, Copper(39_900_000));
         assert_eq!(commodity[0].observed_at, Millis(1_788_499_411_000));
-        assert_eq!(daily.len(), 1);
-        assert_eq!(daily[0].sale_rate_bp, 130);
-        assert_eq!(daily[0].sold_per_day, 0);
-        assert_eq!(daily[0].day, Millis(1_788_393_600_000));
+        assert_eq!(daily.len(), 6);
+        let item = |id| {
+            daily
+                .iter()
+                .find(|sample| sample.item == ItemId(id))
+                .unwrap()
+        };
+        assert_eq!(item(2824).sale_rate_bp, 130);
+        assert_eq!(item(2824).sold_per_day, 0.0);
+        assert_eq!(item(2824).day, Millis(1_788_393_600_000));
+
+        // The comma in the quoted name must not shift subsequent values.
+        assert_eq!(item(94582).market_value, Copper(470_449_678));
+        assert_eq!(item(94582).sale_rate_bp, 10);
+        assert_eq!(item(94582).sold_per_day, 0.001);
+        assert_eq!(item(94583).sold_per_day, 0.002);
+        assert_eq!(item(94584).sale_rate_bp, 0);
+        assert_eq!(item(94584).sold_per_day, 0.0);
+
+        // Doubled RFC 4180 quote escapes also leave later columns aligned.
+        assert_eq!(item(67387).market_value, Copper(1_263_092));
+        assert_eq!(item(67387).sale_rate_bp, 100);
+        assert_eq!(item(56540).sale_rate_bp, 10_000);
     }
 
     #[test]

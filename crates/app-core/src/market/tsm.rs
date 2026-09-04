@@ -9,7 +9,7 @@ use cluster_core::Millis;
 use super::{Copper, ItemId, Region};
 
 /// One daily regional sales observation published by TSM.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TsmRegionDaily {
     pub item: ItemId,
     pub region: Region,
@@ -20,7 +20,8 @@ pub struct TsmRegionDaily {
     pub avg_sale_price: Copper,
     /// Sale rate expressed in basis points, not a rendered float.
     pub sale_rate_bp: u16,
-    pub sold_per_day: u64,
+    /// TSM's average daily sales volume, including fractional items per day.
+    pub sold_per_day: f64,
     pub updated_at: Millis,
 }
 
