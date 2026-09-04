@@ -194,12 +194,6 @@ pub struct Cli {
     #[arg(long, env = "APP_MARKET_RETAIN_DAYS", default_value_t = 0)]
     pub market_retain_days: u64,
 
-    /// How long samples stay at full resolution, in days. Older days are
-    /// collapsed to one row each: the archive survives, its resolution does
-    /// not. Zero disables it.
-    #[arg(long, env = "APP_MARKET_DOWNSAMPLE_DAYS", default_value_t = 14)]
-    pub market_downsample_days: u64,
-
     /// How long price ladders are kept, in days -- the depth "hot window".
     ///
     /// Their own policy because they are bulky: a ladder is every rung of a

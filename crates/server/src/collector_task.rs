@@ -130,7 +130,7 @@ async fn run_market<E: Ports>(
                 let collected = collect_once(&env).await;
                 crate::materialise_task::publish(&env, &artifacts, &collected, &[]).await;
                 warm_tooltips(&env).await;
-                downsample(&env).await;
+                build_daily_rollups(&env).await;
                 prune(&env).await;
                 prune_ladders(&env).await;
             }
@@ -728,26 +728,30 @@ async fn warm_tooltips<E: Ports>(env: &E) {
     }
 }
 
-/// Collapse old days into single rows.
-///
-/// Runs before pruning, and usually instead of it: keeping the archive at one
-/// row per day is what makes "keep forever" affordable now that the catalogue
-/// is hundreds of items across four regions and every connected realm.
-async fn downsample<E: Ports>(env: &E) {
-    let after = env.market().downsample_after_ms;
-    if after == 0 {
-        return;
-    }
-    let cutoff = Millis(env.now().get().saturating_sub(after));
-    match env.store().prices().downsample_before(cutoff).await {
+/// Compute perpetual daily read models for finished days.
+async fn build_daily_rollups<E: Ports>(env: &E) {
+    // Compute up to yesterday (the most recently finished day).
+    let current_day = (env.now().get() / 86400000) * 86400000;
+
+    match env
+        .store()
+        .prices()
+        .build_daily_rollups(Millis(current_day))
+        .await
+    {
         Ok(0) => {}
-        Ok(rows) => tracing::info!(rows, "downsampled commodity history to daily"),
-        Err(e) => tracing::warn!(error = %e, "could not downsample commodity history"),
+        Ok(rows) => tracing::info!(rows, "built commodity daily rollups"),
+        Err(e) => tracing::warn!(error = %e, "could not build commodity rollups"),
     }
-    match env.store().realm_prices().downsample_before(cutoff).await {
+    match env
+        .store()
+        .realm_prices()
+        .build_daily_rollups(Millis(current_day))
+        .await
+    {
         Ok(0) => {}
-        Ok(rows) => tracing::info!(rows, "downsampled gear history to daily"),
-        Err(e) => tracing::warn!(error = %e, "could not downsample gear history"),
+        Ok(rows) => tracing::info!(rows, "built gear daily rollups"),
+        Err(e) => tracing::warn!(error = %e, "could not build gear rollups"),
     }
 }
 

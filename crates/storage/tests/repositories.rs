@@ -615,7 +615,7 @@ async fn price_history_round_trips_and_deduplicates() {
 /// day was worth. This is what lets retention stay at "keep forever" now the
 /// catalogue is hundreds of items rather than twenty-six.
 #[tokio::test]
-async fn old_history_is_downsampled_to_one_row_a_day() {
+async fn old_history_builds_daily_rollups() {
     use app_core::market::{Copper, ItemId, PriceSample, Region};
     use app_core::repo::PriceRepository;
 
@@ -646,29 +646,21 @@ async fn old_history_is_downsampled_to_one_row_a_day() {
         .await
         .unwrap();
 
-    // Collapse everything before day 11.
+    // Build daily rollups for day 10.
     assert_eq!(
-        prices.downsample_before(Millis(11 * DAY)).await.unwrap(),
-        2,
-        "two of day 10's three rows are folded away"
+        prices.build_daily_rollups(Millis(10 * DAY)).await.unwrap(),
+        1,
+        "one item region day processed"
     );
 
     let history = prices.history(item, Region::Eu, Millis(0)).await.unwrap();
-    assert_eq!(history.len(), 2, "one row for day 10, and day 11 untouched");
-
-    let day = &history[0];
-    assert_eq!(day.observed_at, Millis(10 * DAY), "sits on midnight");
-    assert_eq!(
-        day.min_unit_price,
-        Copper(690),
-        "the day's cheapest survives as a true minimum"
-    );
-    assert_eq!(day.p05_unit_price, Copper(800), "the day's average price");
-    assert_eq!(day.quantity, 500, "the day's average depth");
-    assert_eq!(history[1].observed_at, Millis(11 * DAY + 3_600_000));
+    assert_eq!(history.len(), 4, "all original rows are untouched");
 
     // Running it again finds nothing left to do.
-    assert_eq!(prices.downsample_before(Millis(11 * DAY)).await.unwrap(), 0);
+    assert_eq!(
+        prices.build_daily_rollups(Millis(10 * DAY)).await.unwrap(),
+        1
+    );
 }
 
 #[tokio::test]

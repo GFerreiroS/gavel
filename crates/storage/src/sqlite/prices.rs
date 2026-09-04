@@ -267,46 +267,88 @@ impl PriceRepository for SqlitePrices {
     /// Idempotent: a second run finds nothing left to collapse, because the
     /// rows it wrote sit exactly on midnight and every other row older than
     /// the cutoff has gone.
-    async fn downsample_before(&self, before: Millis) -> RepoResult<u64> {
-        let mut tx = self.pool.begin().await.map_err(map_err)?;
-        // Written first, so a failure between the two statements leaves the
-        // full-resolution rows in place rather than losing the day.
-        sqlx::query(
-            "INSERT INTO price_samples
-                 (item_id, region, observed_at, min_unit, p05_unit, median_unit,
-                  quantity, listings)
-             SELECT item_id, region, (observed_at / 86400000) * 86400000,
-                    MIN(min_unit),
-                    CAST(AVG(p05_unit) AS INTEGER),
-                    CAST(AVG(median_unit) AS INTEGER),
-                    CAST(AVG(quantity) AS INTEGER),
-                    CAST(AVG(listings) AS INTEGER)
+    #[allow(clippy::type_complexity)]
+    async fn build_daily_rollups(&self, day_start: Millis) -> RepoResult<u64> {
+        let day_end = Millis(day_start.0 + 86400000);
+        let rows = sqlx::query(
+            "SELECT item_id, region, observed_at, min_unit, quantity, listings
                FROM price_samples
-              WHERE observed_at < ?
-              GROUP BY item_id, region, (observed_at / 86400000)
-             ON CONFLICT(item_id, region, observed_at) DO UPDATE SET
-                    min_unit    = excluded.min_unit,
-                    p05_unit    = excluded.p05_unit,
-                    median_unit = excluded.median_unit,
-                    quantity    = excluded.quantity,
-                    listings    = excluded.listings",
+              WHERE observed_at >= ? AND observed_at < ?
+              ORDER BY item_id, region, observed_at",
         )
-        .bind(before.get() as i64)
-        .execute(&mut *tx)
+        .bind(day_start.0 as i64)
+        .bind(day_end.0 as i64)
+        .fetch_all(&self.pool)
         .await
         .map_err(map_err)?;
 
-        let removed = sqlx::query(
-            "DELETE FROM price_samples
-              WHERE observed_at < ? AND observed_at % 86400000 != 0",
-        )
-        .bind(before.get() as i64)
-        .execute(&mut *tx)
-        .await
-        .map_err(map_err)?;
+        let mut grouped: std::collections::BTreeMap<(u32, String), Vec<(Millis, u64, u64, u64)>> =
+            std::collections::BTreeMap::new();
+        for row in rows {
+            grouped
+                .entry((
+                    row.get::<i64, _>("item_id") as u32,
+                    row.get::<String, _>("region"),
+                ))
+                .or_default()
+                .push((
+                    Millis(row.get::<i64, _>("observed_at") as u64),
+                    row.get::<i64, _>("min_unit") as u64,
+                    row.get::<i64, _>("quantity") as u64,
+                    row.get::<i64, _>("listings") as u64,
+                ));
+        }
 
+        let mut tx = self.pool.begin().await.map_err(map_err)?;
+        let mut count = 0;
+
+        for ((item_id, region), obs) in grouped {
+            let rollup = app_core::market::DailyRollup::compute(&obs);
+
+            sqlx::query(
+                "INSERT OR REPLACE INTO price_daily
+                 (item_id, region, day, open_price, close_price, low_price, low_at, high_price, high_at,
+                  mean_price, p05_price, p25_price, median_price, p75_price, p95_price,
+                  open_quantity, close_quantity, mean_quantity,
+                  open_listings, close_listings, mean_listings,
+                  samples, observed_buckets, insufficient, insufficient_have, insufficient_need)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 "
+            )
+            .bind(item_id as i64)
+            .bind(&region)
+            .bind(day_start.0 as i64)
+            .bind(rollup.open_price as i64)
+            .bind(rollup.close_price as i64)
+            .bind(rollup.low_price as i64)
+            .bind(rollup.low_at.0 as i64)
+            .bind(rollup.high_price as i64)
+            .bind(rollup.high_at.0 as i64)
+            .bind(rollup.mean_price as i64)
+            .bind(rollup.p05_price as i64)
+            .bind(rollup.p25_price as i64)
+            .bind(rollup.median_price as i64)
+            .bind(rollup.p75_price as i64)
+            .bind(rollup.p95_price as i64)
+            .bind(rollup.open_quantity as i64)
+            .bind(rollup.close_quantity as i64)
+            .bind(rollup.mean_quantity as i64)
+            .bind(rollup.open_listings as i64)
+            .bind(rollup.close_listings as i64)
+            .bind(rollup.mean_listings as i64)
+            .bind(rollup.samples as i32)
+            .bind(rollup.observed_buckets as i32)
+            .bind(rollup.insufficient)
+            .bind(rollup.insufficient_have.map(|x| x as i32))
+            .bind(rollup.insufficient_need.map(|x| x as i32))
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+
+            count += 1;
+        }
         tx.commit().await.map_err(map_err)?;
-        Ok(removed.rows_affected())
+        Ok(count)
     }
 
     async fn prune_before(&self, before: Millis) -> RepoResult<u64> {
