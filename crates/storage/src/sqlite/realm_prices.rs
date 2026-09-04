@@ -451,22 +451,33 @@ impl RealmPriceRepository for SqliteRealmPrices {
         // instant. Pre-seam rows have no ledger evidence and remain raw: they
         // are history, not a claim that an otherwise unrecorded hour was seen.
         let rows = sqlx::query(
-            "WITH expanded AS (
+            "WITH changes AS (
                  SELECT samples.item_id, samples.region, samples.realm_id, samples.variant_id,
-                        snapshots.observed_at, samples.min_price, samples.median_price,
-                        samples.max_price, samples.listings
-                   FROM collection_snapshots AS snapshots
-                   JOIN realm_price_samples AS samples
-                     ON samples.region = snapshots.region AND samples.realm_id = snapshots.realm_id
-                  WHERE snapshots.region = ? AND snapshots.observed_at >= ?
-                    AND samples.observed_at = (
-                        SELECT MAX(previous.observed_at) FROM realm_price_samples AS previous
-                         WHERE previous.region = snapshots.region
-                           AND previous.realm_id = snapshots.realm_id
-                           AND previous.item_id = samples.item_id
-                           AND previous.variant_id = samples.variant_id
-                           AND previous.observed_at <= snapshots.observed_at
+                        samples.observed_at, samples.min_price, samples.median_price,
+                        samples.max_price, samples.listings,
+                        LEAD(samples.observed_at) OVER (
+                            PARTITION BY samples.item_id, samples.region, samples.realm_id, samples.variant_id
+                            ORDER BY samples.observed_at
+                        ) AS next_observed_at
+                   FROM realm_price_samples AS samples
+                  WHERE samples.region = ?
+                    -- No snapshot can expand a later row.  Besides avoiding
+                    -- needless window work, this keeps raw post-ledger rows
+                    -- in the UNION below, where they remain not observed.
+                    AND samples.observed_at <= (
+                        SELECT MAX(observed_at) FROM collection_snapshots WHERE region = ?
                     )
+             ), expanded AS (
+                 SELECT changes.item_id, changes.region, changes.realm_id, changes.variant_id,
+                        snapshots.observed_at, changes.min_price, changes.median_price,
+                        changes.max_price, changes.listings
+                   FROM changes JOIN collection_snapshots AS snapshots
+                     ON snapshots.region = changes.region
+                    AND snapshots.realm_id = changes.realm_id
+                    AND snapshots.observed_at >= changes.observed_at
+                    AND (changes.next_observed_at IS NULL
+                         OR snapshots.observed_at < changes.next_observed_at)
+                  WHERE snapshots.region = ? AND snapshots.observed_at >= ?
              )
              SELECT expanded.item_id, expanded.region, expanded.realm_id, variants.variant,
                     expanded.observed_at, expanded.min_price, expanded.median_price,
@@ -488,6 +499,8 @@ impl RealmPriceRepository for SqliteRealmPrices {
               ORDER BY item_id, realm_id, variant, observed_at",
         )
         .bind(region.as_str())
+        .bind(region.as_str())
+        .bind(region.as_str())
         .bind(since.get() as i64)
         .bind(region.as_str())
         .bind(since.get() as i64)
@@ -505,17 +518,31 @@ impl RealmPriceRepository for SqliteRealmPrices {
         since: Millis,
     ) -> RepoResult<Vec<RealmSample>> {
         let rows = sqlx::query(
-            "WITH expanded AS (
+            "WITH changes AS (
                  SELECT samples.item_id, samples.region, samples.realm_id, samples.variant_id,
-                        snapshots.observed_at, samples.min_price, samples.median_price, samples.max_price, samples.listings
-                   FROM collection_snapshots AS snapshots JOIN realm_price_samples AS samples
-                     ON samples.region = snapshots.region AND samples.realm_id = snapshots.realm_id
+                        samples.observed_at, samples.min_price, samples.median_price,
+                        samples.max_price, samples.listings,
+                        LEAD(samples.observed_at) OVER (
+                            PARTITION BY samples.item_id, samples.region, samples.realm_id, samples.variant_id
+                            ORDER BY samples.observed_at
+                        ) AS next_observed_at
+                   FROM realm_price_samples AS samples
+                  WHERE samples.region = ? AND samples.item_id = ? AND samples.realm_id = ?
+                    AND samples.observed_at <= (
+                        SELECT MAX(observed_at) FROM collection_snapshots
+                         WHERE region = ? AND realm_id = ?
+                    )
+             ), expanded AS (
+                 SELECT changes.item_id, changes.region, changes.realm_id, changes.variant_id,
+                        snapshots.observed_at, changes.min_price, changes.median_price,
+                        changes.max_price, changes.listings
+                   FROM changes JOIN collection_snapshots AS snapshots
+                     ON snapshots.region = changes.region
+                    AND snapshots.realm_id = changes.realm_id
+                    AND snapshots.observed_at >= changes.observed_at
+                    AND (changes.next_observed_at IS NULL
+                         OR snapshots.observed_at < changes.next_observed_at)
                   WHERE snapshots.region = ? AND snapshots.observed_at >= ?
-                    AND samples.item_id = ? AND samples.realm_id = ?
-                    AND samples.observed_at = (SELECT MAX(previous.observed_at) FROM realm_price_samples AS previous
-                         WHERE previous.region = snapshots.region AND previous.realm_id = snapshots.realm_id
-                           AND previous.item_id = samples.item_id AND previous.variant_id = samples.variant_id
-                           AND previous.observed_at <= snapshots.observed_at)
              )
              SELECT expanded.item_id, expanded.region, expanded.realm_id, variants.variant, expanded.observed_at,
                     expanded.min_price, expanded.median_price, expanded.max_price, expanded.listings
@@ -530,7 +557,9 @@ impl RealmPriceRepository for SqliteRealmPrices {
                                   AND snapshots.realm_id = samples.realm_id AND snapshots.observed_at = samples.observed_at)
               ORDER BY observed_at",
         )
-        .bind(region.as_str()).bind(since.get() as i64).bind(item.get() as i64).bind(realm.get() as i64)
+        .bind(region.as_str()).bind(item.get() as i64).bind(realm.get() as i64)
+        .bind(region.as_str()).bind(realm.get() as i64)
+        .bind(region.as_str()).bind(since.get() as i64)
         .bind(region.as_str()).bind(since.get() as i64).bind(item.get() as i64).bind(realm.get() as i64)
         .fetch_all(&self.pool)
         .await
@@ -545,16 +574,30 @@ impl RealmPriceRepository for SqliteRealmPrices {
         since: Millis,
     ) -> RepoResult<Vec<RealmSample>> {
         let rows = sqlx::query(
-            "WITH expanded AS (
+            "WITH changes AS (
                  SELECT samples.item_id, samples.region, samples.realm_id, samples.variant_id,
-                        snapshots.observed_at, samples.min_price, samples.median_price, samples.max_price, samples.listings
-                   FROM collection_snapshots AS snapshots JOIN realm_price_samples AS samples
-                     ON samples.region = snapshots.region AND samples.realm_id = snapshots.realm_id
-                  WHERE snapshots.region = ? AND snapshots.observed_at >= ? AND samples.item_id = ?
-                    AND samples.observed_at = (SELECT MAX(previous.observed_at) FROM realm_price_samples AS previous
-                         WHERE previous.region = snapshots.region AND previous.realm_id = snapshots.realm_id
-                           AND previous.item_id = samples.item_id AND previous.variant_id = samples.variant_id
-                           AND previous.observed_at <= snapshots.observed_at)
+                        samples.observed_at, samples.min_price, samples.median_price,
+                        samples.max_price, samples.listings,
+                        LEAD(samples.observed_at) OVER (
+                            PARTITION BY samples.item_id, samples.region, samples.realm_id, samples.variant_id
+                            ORDER BY samples.observed_at
+                        ) AS next_observed_at
+                   FROM realm_price_samples AS samples
+                  WHERE samples.region = ? AND samples.item_id = ?
+                    AND samples.observed_at <= (
+                        SELECT MAX(observed_at) FROM collection_snapshots WHERE region = ?
+                    )
+             ), expanded AS (
+                 SELECT changes.item_id, changes.region, changes.realm_id, changes.variant_id,
+                        snapshots.observed_at, changes.min_price, changes.median_price,
+                        changes.max_price, changes.listings
+                   FROM changes JOIN collection_snapshots AS snapshots
+                     ON snapshots.region = changes.region
+                    AND snapshots.realm_id = changes.realm_id
+                    AND snapshots.observed_at >= changes.observed_at
+                    AND (changes.next_observed_at IS NULL
+                         OR snapshots.observed_at < changes.next_observed_at)
+                  WHERE snapshots.region = ? AND snapshots.observed_at >= ?
              )
              SELECT expanded.item_id, expanded.region, expanded.realm_id, variants.variant, expanded.observed_at,
                     expanded.min_price, expanded.median_price, expanded.max_price, expanded.listings
@@ -569,7 +612,8 @@ impl RealmPriceRepository for SqliteRealmPrices {
                                   AND snapshots.realm_id = samples.realm_id AND snapshots.observed_at = samples.observed_at)
               ORDER BY observed_at",
         )
-        .bind(region.as_str()).bind(since.get() as i64).bind(item.get() as i64)
+        .bind(region.as_str()).bind(item.get() as i64).bind(region.as_str())
+        .bind(region.as_str()).bind(since.get() as i64)
         .bind(region.as_str()).bind(since.get() as i64).bind(item.get() as i64)
         .fetch_all(&self.pool)
         .await
@@ -858,7 +902,20 @@ mod atomic_tests {
             .await
             .unwrap();
         let prices = store.realm_prices();
-        for (at, price) in [(Millis(1_000), 10), (Millis(2_000), 20)] {
+        // This row predates the ledger seam. It is raw history, not evidence
+        // that the first ledger snapshot observed it unchanged.
+        sqlx::query(
+            "INSERT INTO market_variants (variant) VALUES ('pre-seam');
+             INSERT INTO realm_price_samples
+                 (item_id, region, realm_id, variant_id, observed_at, min_price, median_price, max_price, listings)
+             VALUES (2, 'eu', 1, (SELECT variant_id FROM market_variants WHERE variant = 'pre-seam'),
+                     500, 7, 7, 7, 1)",
+        )
+        .execute(&prices.pool)
+        .await
+        .unwrap();
+
+        for (at, listings) in [(Millis(1_000), 1), (Millis(3_000), 0)] {
             prices
                 .record_snapshot(
                     &[RealmSample {
@@ -867,10 +924,10 @@ mod atomic_tests {
                         realm: RealmId(1),
                         variant: "plain".into(),
                         observed_at: at,
-                        min_price: Copper(price),
-                        median_price: Copper(price),
-                        max_price: Copper(price),
-                        listings: 1,
+                        min_price: Copper(10),
+                        median_price: Copper(10),
+                        max_price: Copper(10),
+                        listings,
                     }],
                     Region::Eu,
                     RealmId(1),
@@ -880,16 +937,37 @@ mod atomic_tests {
                 .await
                 .unwrap();
         }
+        // An observed but unchanged state expands. An observation after the
+        // tombstone must not bring the disappeared market back.
+        for at in [Millis(2_000), Millis(4_000)] {
+            prices
+                .record_snapshot(&[], Region::Eu, RealmId(1), at, &[])
+                .await
+                .unwrap();
+        }
         let window = prices
             .window_in_region(Region::Eu, Millis::ZERO)
             .await
             .unwrap();
+        let mut window = window
+            .iter()
+            .map(|sample| {
+                (
+                    sample.item,
+                    sample.variant.as_str(),
+                    sample.observed_at,
+                    sample.min_price,
+                )
+            })
+            .collect::<Vec<_>>();
+        window.sort_by_key(|sample| sample.2);
         assert_eq!(
-            window
-                .iter()
-                .map(|sample| (sample.observed_at, sample.min_price))
-                .collect::<Vec<_>>(),
-            vec![(Millis(1_000), Copper(10)), (Millis(2_000), Copper(20))]
+            window,
+            vec![
+                (ItemId(2), "pre-seam", Millis(500), Copper(7)),
+                (ItemId(1), "plain", Millis(1_000), Copper(10)),
+                (ItemId(1), "plain", Millis(2_000), Copper(10)),
+            ]
         );
         let history = prices
             .history(ItemId(1), Region::Eu, RealmId(1), Millis::ZERO)
@@ -900,7 +978,7 @@ mod atomic_tests {
                 .iter()
                 .map(|sample| (sample.observed_at, sample.min_price))
                 .collect::<Vec<_>>(),
-            vec![(Millis(1_000), Copper(10)), (Millis(2_000), Copper(20))]
+            vec![(Millis(1_000), Copper(10)), (Millis(2_000), Copper(10))]
         );
     }
 }
