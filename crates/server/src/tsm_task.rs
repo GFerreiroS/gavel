@@ -65,7 +65,12 @@ async fn commodities<E: Ports>(env: E, client: TsmClient) {
                         Err(error) => tracing::warn!(%region, %error, "TSM contrast test failed"),
                     },
                     Err(error) => {
-                        tracing::warn!(%region, %error, "storing TSM commodity data failed")
+                        tracing::error!(
+                            %region,
+                            %error,
+                            data_lost = true,
+                            "TSM commodity collection was lost after a storage failure"
+                        )
                     }
                 },
                 Err(error) => {
@@ -90,7 +95,12 @@ async fn region_items<E: Ports>(env: E, client: TsmClient) {
                 Ok(samples) => match env.store().tsm().record_region_daily(&samples).await {
                     Ok(rows) => tracing::info!(%region, rows, "collected TSM regional sales data"),
                     Err(error) => {
-                        tracing::warn!(%region, %error, "storing TSM regional sales data failed")
+                        tracing::error!(
+                            %region,
+                            %error,
+                            data_lost = true,
+                            "TSM regional sales collection was lost after a storage failure"
+                        )
                     }
                 },
                 Err(error) => {

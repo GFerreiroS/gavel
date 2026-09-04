@@ -9,7 +9,7 @@ use app_core::error::RepoResult;
 use app_core::repo::SettingsRepository;
 use sqlx::{Pool, Row, Sqlite};
 
-use super::map_err;
+use super::{map_err, write_guard};
 
 #[derive(Clone)]
 pub struct SqliteSettings {
@@ -24,6 +24,7 @@ impl SqliteSettings {
 
 impl SettingsRepository for SqliteSettings {
     async fn set_enabled(&self, name: &str, enabled: bool) -> RepoResult<()> {
+        let _write = write_guard("collection setting").await;
         sqlx::query(
             "INSERT INTO collection_settings (name, enabled) VALUES (?, ?)
              ON CONFLICT(name) DO UPDATE SET enabled = excluded.enabled",

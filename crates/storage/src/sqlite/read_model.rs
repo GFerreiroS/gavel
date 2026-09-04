@@ -32,7 +32,7 @@ use cluster_core::Millis;
 use serde::{Deserialize, Serialize};
 use sqlx::{Pool, Row, Sqlite};
 
-use super::{corrupt, map_err};
+use super::{corrupt, map_err, write_guard};
 
 pub struct SqliteReadModel {
     pool: Pool<Sqlite>,
@@ -565,6 +565,7 @@ const CARD_WINDOW_COLUMNS: &str = "market_key, window, low, low_at, high, high_a
 
 impl ReadModelRepository for SqliteReadModel {
     async fn begin(&self, algorithm: u32, now: Millis) -> RepoResult<u64> {
+        let _write = write_guard("read-model begin").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
 
         // Anything still staging belongs to a candidate that died. Mark it
@@ -618,6 +619,7 @@ impl ReadModelRepository for SqliteReadModel {
         if markets.is_empty() {
             return Ok(0);
         }
+        let _write = write_guard("read-model staging").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let mut written = 0u64;
 
@@ -803,6 +805,7 @@ impl ReadModelRepository for SqliteReadModel {
         if rollups.is_empty() {
             return Ok(0);
         }
+        let _write = write_guard("read-model rollup staging").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let mut written = 0u64;
         for rollup in rollups {
@@ -1015,6 +1018,7 @@ impl ReadModelRepository for SqliteReadModel {
         source: (Option<Millis>, Option<Millis>),
         now: Millis,
     ) -> RepoResult<()> {
+        let _write = write_guard("read-model publish").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
 
         let candidate: Option<(String,)> =
@@ -1078,6 +1082,7 @@ impl ReadModelRepository for SqliteReadModel {
     }
 
     async fn abandon(&self, version: u64, note: &str) -> RepoResult<()> {
+        let _write = write_guard("read-model abandonment").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         sqlx::query("DELETE FROM market_current WHERE state = 'staging' AND version = ?")
             .bind(version as i64)

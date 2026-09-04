@@ -5,7 +5,7 @@ use cluster_core::Millis;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Pool, Row, Sqlite};
 
-use super::{corrupt, map_err};
+use super::{corrupt, map_err, write_guard};
 
 #[derive(Clone)]
 pub struct SqlitePrices {
@@ -40,6 +40,7 @@ impl PriceRepository for SqlitePrices {
         observed_at: Millis,
         ladders: &[(ItemId, Ladder)],
     ) -> RepoResult<(u64, u64)> {
+        let _write = write_guard("commodity snapshot").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let mut sample_rows = 0u64;
         for sample in samples {
@@ -90,6 +91,7 @@ impl PriceRepository for SqlitePrices {
         if samples.is_empty() {
             return Ok(0);
         }
+        let _write = write_guard("commodity samples").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let mut written = 0u64;
         for sample in samples {
@@ -184,6 +186,7 @@ impl PriceRepository for SqlitePrices {
     }
 
     async fn record_alert(&self, alert: &Alert) -> RepoResult<()> {
+        let _write = write_guard("price alert").await;
         sqlx::query(
             "INSERT INTO price_alerts
                (item_id, region, severity, observed_at, current_c, baseline_c, threshold_c, discount, quantity)
@@ -299,6 +302,7 @@ impl PriceRepository for SqlitePrices {
                 ));
         }
 
+        let _write = write_guard("commodity daily rollups").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let mut count = 0;
 
@@ -352,6 +356,7 @@ impl PriceRepository for SqlitePrices {
     }
 
     async fn prune_before(&self, before: Millis) -> RepoResult<u64> {
+        let _write = write_guard("commodity history pruning").await;
         let result = sqlx::query("DELETE FROM price_samples WHERE observed_at < ?")
             .bind(before.get() as i64)
             .execute(&self.pool)
@@ -372,6 +377,7 @@ impl PriceRepository for SqlitePrices {
         // One transaction for the whole snapshot, like `record_samples`: two
         // thousand ladders is two thousand statements, and a commit apiece
         // would make a collection cycle a disk-sync storm.
+        let _write = write_guard("commodity ladders").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let mut written = 0;
         for (item, ladder) in ladders {
@@ -429,6 +435,7 @@ impl PriceRepository for SqlitePrices {
     }
 
     async fn prune_ladders_before(&self, before: Millis) -> RepoResult<u64> {
+        let _write = write_guard("commodity ladder pruning").await;
         let result = sqlx::query("DELETE FROM price_ladders WHERE observed_at < ?")
             .bind(before.get() as i64)
             .execute(&self.pool)

@@ -173,7 +173,12 @@ where
                 }
                 Ok(false) => tracing::debug!(region = %region, "WoW Token price already recorded"),
                 Err(error) => {
-                    tracing::warn!(region = %region, %error, "could not store WoW Token price")
+                    tracing::error!(
+                        region = %region,
+                        %error,
+                        data_lost = true,
+                        "WoW Token collection was lost after a storage failure"
+                    )
                 }
             },
             Err(error) => tracing::warn!(region = %region, %error, "WoW Token collection failed"),
@@ -541,7 +546,12 @@ async fn collect_one_realm<E: Ports>(
                     Outcome::Collected
                 }
                 Err(e) => {
-                    tracing::warn!(realm = %realm.name, error = %e, "storing gear snapshot failed");
+                    tracing::error!(
+                        realm = %realm.name,
+                        error = %e,
+                        data_lost = true,
+                        "gear collection was lost after a storage failure"
+                    );
                     save_realm_cadence(
                         env,
                         realm,

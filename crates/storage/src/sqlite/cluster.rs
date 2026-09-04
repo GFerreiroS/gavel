@@ -14,7 +14,7 @@ use sqlx::{Pool, Row, Sqlite};
 
 use super::events::SqliteEvents;
 use super::jobs::SqliteJobs;
-use super::map_err;
+use super::{map_err, write_guard};
 
 #[derive(Clone)]
 pub struct SqliteClusterStore {
@@ -31,6 +31,7 @@ impl SqliteClusterStore {
 
 impl ClusterStore for SqliteClusterStore {
     async fn save_node_roles(&self, node: NodeId, roles: RoleSet, now: Millis) -> StoreResult<()> {
+        let _write = write_guard("cluster node roles").await;
         sqlx::query(
             "INSERT INTO node_roles(node_id, roles, updated_at) VALUES(?, ?, ?)
              ON CONFLICT(node_id) DO UPDATE SET roles = excluded.roles, updated_at = excluded.updated_at",
