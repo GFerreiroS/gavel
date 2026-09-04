@@ -88,6 +88,33 @@
   <div class="stat has-icon">{% call tips::icon("snapshot") %}<span class="stat-text"><span class="label">{{ "Last snapshot"|t }}</span><span class="value">{{ auctions.last_observed }}</span></span></div>
 </div>
 
+<article class="panel">
+  {% call tips::panel_head(auctions.token.panel) %}
+  <div class="stat-grid">
+    <div class="stat">
+      <span class="label">{{ "Region"|t }}</span>
+      <span class="value">{{ auctions.token.region }}</span>
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Current price"|t }}</span>
+      {% if auctions.token.has_price %}
+      <span class="value">{{ auctions.token.current }}</span>
+      {% else %}
+      <span class="value muted">{{ "No token price collected for this region yet."|t }}</span>
+      {% endif %}
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Updated"|t }}</span>
+      <span class="value">{{ auctions.token.updated }}</span>
+    </div>
+    <div class="stat">
+      <span class="label">{{ "Observations"|t }}</span>
+      <span class="value">{{ auctions.token.observations }}</span>
+    </div>
+  </div>
+  <a href="{{ auctions.token.href }}">{{ "View WoW Token history"|t }} →</a>
+</article>
+
 <div class="card-grid">
   {% for category in auctions.categories %}
   <article class="item-card">

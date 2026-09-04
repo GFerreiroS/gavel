@@ -77,7 +77,26 @@ pub struct AuctionsView {
     /// expansion and the region do.
     pub baseline_days: u64,
     pub baselines: Vec<BaselineOption>,
+    /// The region's latest WoW Token price. It is a small landing-page
+    /// summary; the complete history remains at `/wow/token`.
+    pub token: TokenSummaryView,
     pub categories: Vec<AuctionCategory>,
+}
+
+/// The WoW Token's current regional price, in the compact form used on the
+/// Auction House landing page.
+#[derive(Debug, Clone)]
+pub struct TokenSummaryView {
+    /// Every panel declares the same five terms as item analysis panels.
+    pub panel: PanelHead,
+    pub region: String,
+    /// False means no collection has reached this region yet; a price of zero
+    /// would be a false claim in that case.
+    pub has_price: bool,
+    pub current: String,
+    pub updated: String,
+    pub observations: usize,
+    pub href: String,
 }
 
 /// One window on the baseline picker.
@@ -1404,7 +1423,10 @@ pub struct ItemAnalysis {
     pub samples: usize,
     pub observed_buckets: u32,
     pub expected_buckets: Option<u32>,
-    pub coverage_percent: Option<u32>,
+    /// Always displayable: a percentage where one exists, otherwise the
+    /// explicit answer that the selected period has no denominator.
+    pub coverage: String,
+    pub coverage_is_fraction: bool,
     pub largest_gap: String,
     pub first_seen: String,
     pub observed_at: String,
