@@ -74,7 +74,7 @@
   {% if let Some(line) = tip.sell_price %}<p class="tip-line muted">{{ line }}</p>{% endif %}
 
   {% if let Some(line) = tip.rank_line %}<p class="tip-line tip-rank">{{ line }}</p>{% endif %}
-  {% if let Some(note) = tip.note %}<p class="tip-line tip-note">{{ note }}</p>{% endif %}
+  {% if let Some(note) = tip.note %}<p class="tip-line tip-note">{{ note|t }}</p>{% endif %}
 </div>
 {% endmacro %}
 
@@ -421,7 +421,7 @@
 <header class="panel-head">
   <h2>{{ head.question|t }}</h2>
   <p class="panel-terms">
-    <span class="term"><span class="term-label">{{ "Window"|t }}</span>{{ head.window }}</span>
+    <span class="term"><span class="term-label">{{ "Window"|t }}</span>{{ head.window|t }}</span>
     <span class="term"><span class="term-label">{{ "Units"|t }}</span>{{ head.units|t }}</span>
     {% if let Some(coverage) = head.coverage %}
     <span class="term"><span class="term-label">{{ "Coverage"|t }}</span>{{ coverage }}</span>

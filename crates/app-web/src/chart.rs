@@ -11,6 +11,7 @@
 
 use std::fmt::Write;
 
+use app_core::locale::Locale;
 use app_core::market::correlate::Heatmap;
 use app_core::market::depth::Ladder;
 use app_core::market::engine::Spark;
@@ -357,7 +358,18 @@ fn y_axis(svg: &mut String, lo: f64, hi: f64, step: f64, unit: Unit) {
 }
 
 /// Price (or stock) over time. Up to two series.
+#[cfg(test)]
 pub fn line_chart(series: &[Series<'_>], unit: Unit, empty_note: &str) -> String {
+    line_chart_localised(Locale::EnGb, series, unit, empty_note)
+}
+
+pub fn line_chart_localised(
+    locale: Locale,
+    series: &[Series<'_>],
+    unit: Unit,
+    empty_note: &str,
+) -> String {
+    let stock_label = crate::i18n::translate(locale, "stock");
     let all: Vec<&Point> = series.iter().flat_map(|s| s.points.iter()).collect();
     if all.len() < 2 {
         return placeholder(empty_note);
@@ -431,7 +443,7 @@ pub fn line_chart(series: &[Series<'_>], unit: Unit, empty_note: &str) -> String
                 }
             }
             if unit == Unit::Gold && first.show_stock {
-                let _ = write!(title_text, "stock: {}", p.quantity);
+                let _ = write!(title_text, "{}: {}", stock_label, p.quantity);
             }
             // Build the visual tooltip lines: (label, value) pairs.
             let mut vis_lines: Vec<(String, String)> = Vec::new();
@@ -442,7 +454,7 @@ pub fn line_chart(series: &[Series<'_>], unit: Unit, empty_note: &str) -> String
                 }
             }
             if unit == Unit::Gold && first.show_stock {
-                vis_lines.push(("stock".to_string(), p.quantity.to_string()));
+                vis_lines.push((stock_label.to_string(), p.quantity.to_string()));
             }
             let vis_refs: Vec<(&str, &str)> = vis_lines
                 .iter()
@@ -581,12 +593,27 @@ fn right_y_axis(svg: &mut String, lo: f64, hi: f64, step: f64, unit: Unit) {
 /// line and the band; §15's rule that unavailable data is never invented
 /// applies most sharply to a chart, which will happily draw a confident
 /// straight line across a week nobody looked at.
+#[cfg(test)]
 pub fn band_chart(
     series: &ChartSeries,
     current: Option<Copper>,
     empty_note: &str,
     daily: bool,
 ) -> String {
+    band_chart_localised(Locale::EnGb, series, current, empty_note, daily)
+}
+
+pub fn band_chart_localised(
+    locale: Locale,
+    series: &ChartSeries,
+    current: Option<Copper>,
+    empty_note: &str,
+    daily: bool,
+) -> String {
+    let price_label = crate::i18n::translate(locale, "price");
+    let median_label = crate::i18n::translate(locale, "median");
+    let stock_label = crate::i18n::translate(locale, "stock");
+    let nothing_collected = crate::i18n::translate(locale, "nothing collected");
     let observed: Vec<&ChartPoint> = series.points.iter().filter(|p| p.observed).collect();
     if let Err(reason) = chart_admission(series) {
         return refused_chart(empty_note, reason);
@@ -644,8 +671,10 @@ pub fn band_chart(
     right_y_axis(&mut svg, stock_lo, stock_hi, stock_step, Unit::Count);
     let _ = write!(
         svg,
-        r#"<text class="axis axis-price" x="{PAD_L}" y="12">Price · gold</text><text class="axis axis-stock" x="{:.1}" y="12" text-anchor="end">Stock · units listed</text>"#,
-        W - PAD_R
+        r#"<text class="axis axis-price" x="{PAD_L}" y="12">{}</text><text class="axis axis-stock" x="{:.1}" y="12" text-anchor="end">{}</text>"#,
+        escape(crate::i18n::translate(locale, "Price · gold")),
+        W - PAD_R,
+        escape(crate::i18n::translate(locale, "Stock · units listed")),
     );
 
     // One band and one line per *run* of observed slots. A run is what a break
@@ -743,7 +772,11 @@ pub fn band_chart(
         let _ = write!(
             svg,
             r#"<line class="band-now" role="img" aria-label="{}" x1="{PAD_L}" y1="{cy:.1}" x2="{:.1}" y2="{cy:.1}"/>"#,
-            escape(&format!("now: {}", unit_gold().value(price.get()))),
+            escape(&crate::i18n::translate(locale, "now: {}").replacen(
+                "{}",
+                &unit_gold().value(price.get()),
+                1,
+            ),),
             W - PAD_R,
         );
     }
@@ -762,14 +795,18 @@ pub fn band_chart(
             let qty_s = point.quantity.to_string();
             let auctions_s = point.listings.to_string();
             let title = format!(
-                "{}\nprice: {}\nmedian: {}\nP25-P75: {} - {}\nstock: {} in {} auctions",
+                "{}\n{}: {}\n{}: {}\nP25-P75: {} - {}\n{}: {}",
                 point.at.to_utc_string(),
+                price_label,
                 price_s,
+                median_label,
                 median_s,
                 p25_s,
                 p75_s,
-                qty_s,
-                auctions_s,
+                stock_label,
+                crate::i18n::translate(locale, "{} in {} auctions")
+                    .replacen("{}", &qty_s, 1)
+                    .replacen("{}", &auctions_s, 1),
             );
             // Borrow from the owned strings stored in `title` is not possible
             // here, so we use static-lifetime label strings and short-lived
@@ -783,7 +820,7 @@ pub fn band_chart(
             (title, vec![])
         } else {
             (
-                format!("{}\nnothing collected", point.at.to_utc_string()),
+                format!("{}\n{nothing_collected}", point.at.to_utc_string()),
                 vec![],
             )
         };
@@ -792,8 +829,14 @@ pub fn band_chart(
         let structured: Vec<(String, String)> = if point.observed {
             vec![
                 (String::new(), point.at.to_utc_string()),
-                ("price".to_string(), unit_gold().value(point.price.get())),
-                ("median".to_string(), unit_gold().value(point.median.get())),
+                (
+                    price_label.to_string(),
+                    unit_gold().value(point.price.get()),
+                ),
+                (
+                    median_label.to_string(),
+                    unit_gold().value(point.median.get()),
+                ),
                 (
                     "P25–P75".to_string(),
                     format!(
@@ -803,14 +846,16 @@ pub fn band_chart(
                     ),
                 ),
                 (
-                    "stock".to_string(),
-                    format!("{} in {} auctions", point.quantity, point.listings),
+                    stock_label.to_string(),
+                    crate::i18n::translate(locale, "{} in {} auctions")
+                        .replacen("{}", &point.quantity.to_string(), 1)
+                        .replacen("{}", &point.listings.to_string(), 1),
                 ),
             ]
         } else {
             vec![
                 (String::new(), point.at.to_utc_string()),
-                (String::new(), "nothing collected".to_string()),
+                (String::new(), nothing_collected.to_string()),
             ]
         };
         let _ = vis_lines; // consumed by structured
@@ -884,7 +929,19 @@ fn time_axis(svg: &mut String, min_t: u64, max_t: u64) {
 ///
 /// Bars count **hours**, not observations: the same equal-duration buckets
 /// every other historical statistic here is computed over.
+#[cfg(test)]
 pub fn histogram_chart(histogram: &Histogram, current: Option<Copper>, empty_note: &str) -> String {
+    histogram_chart_localised(Locale::EnGb, histogram, current, empty_note)
+}
+
+pub fn histogram_chart_localised(
+    locale: Locale,
+    histogram: &Histogram,
+    current: Option<Copper>,
+    empty_note: &str,
+) -> String {
+    let around = crate::i18n::translate(locale, "around {}");
+    let hours = crate::i18n::translate(locale, "{} hours");
     if histogram.is_empty() {
         return placeholder(empty_note);
     }
@@ -911,7 +968,11 @@ pub fn histogram_chart(histogram: &Histogram, current: Option<Copper>, empty_not
         } else {
             "bar"
         };
-        let tip_title = format!("around {}\n{count} hours", Unit::Gold.value(price));
+        let tip_title = format!(
+            "{}\n{}",
+            around.replacen("{}", &Unit::Gold.value(price), 1),
+            hours.replacen("{}", &count.to_string(), 1)
+        );
         let vis_lines: Vec<(&str, &str)> = {
             let price_s = Unit::Gold.value(price);
             let count_s = format!("{count}");
@@ -926,8 +987,8 @@ pub fn histogram_chart(histogram: &Histogram, current: Option<Copper>, empty_not
         let count_s = format!("{count}");
         let _ = vis_lines;
         let vis_owned = [
-            (String::new(), format!("around {}", price_s)),
-            (String::new(), format!("{count_s} hours")),
+            (String::new(), around.replacen("{}", &price_s, 1)),
+            (String::new(), hours.replacen("{}", &count_s, 1)),
         ];
         let vis_refs: Vec<(&str, &str)> = vis_owned
             .iter()
@@ -993,7 +1054,18 @@ pub fn histogram_chart(histogram: &Histogram, current: Option<Copper>, empty_not
 /// failure mode this panel has: a reader looking at a mostly-empty grid reads
 /// the gaps as cheapness, which is why `Heatmap::is_usable` refuses to draw
 /// one at all below its gate.
+#[cfg(test)]
 pub fn heatmap_chart(map: &Heatmap, weekdays: &[String], empty_note: &str) -> String {
+    heatmap_chart_localised(Locale::EnGb, map, weekdays, empty_note)
+}
+
+pub fn heatmap_chart_localised(
+    locale: Locale,
+    map: &Heatmap,
+    weekdays: &[String],
+    empty_note: &str,
+) -> String {
+    let nothing_collected = crate::i18n::translate(locale, "nothing collected");
     if !map.is_usable() {
         return placeholder(empty_note);
     }
@@ -1072,16 +1144,17 @@ pub fn heatmap_chart(map: &Heatmap, weekdays: &[String], empty_note: &str) -> St
                 // showing, which reads as one more shade of the scale.
                 None => {
                     let header = format!("{label} {hour:02}:00 UTC");
-                    let tip_title = format!("{header}\nnothing collected");
+                    let tip_title = format!("{header}\n{nothing_collected}");
                     let tip_h = TIP_PAD_V * 2.0 + 2.0 * TIP_LINE_H;
                     let _ = write!(
                         svg,
-                        r#"<g class="hit-group"><rect class="heat-gap" tabindex="0" role="img" aria-label="{}" x="{x:.1}" y="{y:.1}" width="{:.1}" height="{:.1}"/><g class="chart-tip" aria-hidden="true" transform="translate({tip_x:.1},{tip_y:.1})"><rect class="tip-bg" x="0" y="0" width="{TIP_W}" height="{tip_h:.1}" rx="3" ry="3"/><text class="tip-text" dominant-baseline="hanging"><tspan class="tip-label" x="{TIP_PAD_H}" y="{TIP_PAD_V:.1}">{}</tspan><tspan class="tip-label" x="{TIP_PAD_H}" y="{:.1}">nothing collected</tspan></text></g></g>"#,
+                        r#"<g class="hit-group"><rect class="heat-gap" tabindex="0" role="img" aria-label="{}" x="{x:.1}" y="{y:.1}" width="{:.1}" height="{:.1}"/><g class="chart-tip" aria-hidden="true" transform="translate({tip_x:.1},{tip_y:.1})"><rect class="tip-bg" x="0" y="0" width="{TIP_W}" height="{tip_h:.1}" rx="3" ry="3"/><text class="tip-text" dominant-baseline="hanging"><tspan class="tip-label" x="{TIP_PAD_H}" y="{TIP_PAD_V:.1}">{}</tspan><tspan class="tip-label" x="{TIP_PAD_H}" y="{:.1}">{}</tspan></text></g></g>"#,
                         escape(&tip_title),
                         cell_w - 1.0,
                         ROW_H - 1.0,
                         escape(&header),
                         TIP_PAD_V + TIP_LINE_H,
+                        escape(nothing_collected),
                     );
                 }
             }
@@ -1103,7 +1176,15 @@ pub fn heatmap_chart(map: &Heatmap, weekdays: &[String], empty_note: &str) -> St
 /// Reading it: how far right you have to go to get the height you need is what
 /// buying that many costs. A curve that climbs steeply near the left is a deep
 /// market; one that is flat until it jumps is a thin market with a wall on it.
-pub fn depth_chart(ladder: &Ladder, target: u64, empty_note: &str) -> String {
+pub fn depth_chart_localised(
+    locale: Locale,
+    ladder: &Ladder,
+    target: u64,
+    empty_note: &str,
+) -> String {
+    let units = crate::i18n::translate(locale, "{} units");
+    let at_price = crate::i18n::translate(locale, "at price");
+    let cumulative = crate::i18n::translate(locale, "cumulative");
     if ladder.levels() < 2 {
         return placeholder(empty_note);
     }
@@ -1174,7 +1255,7 @@ pub fn depth_chart(ladder: &Ladder, target: u64, empty_note: &str) -> String {
         let _ = write!(
             svg,
             r#"<line class="band-now" role="img" aria-label="{}" x1="{PAD_L}" y1="{ty:.1}" x2="{:.1}" y2="{ty:.1}"/>"#,
-            escape(&format!("{target} units")),
+            escape(&units.replacen("{}", &target.to_string(), 1)),
             W - PAD_R,
         );
     }
@@ -1190,18 +1271,26 @@ pub fn depth_chart(ladder: &Ladder, target: u64, empty_note: &str) -> String {
         let right = x(rung.price.get());
         let cx = (left + right) / 2.0;
         let title_text = format!(
-            "{}\n{} units at this price\n{} units at or below it",
+            "{}\n{}\n{}",
             Unit::Gold.value(rung.price.get()),
-            rung.quantity,
-            rung.cumulative
+            crate::i18n::translate(locale, "{} units at this price").replacen(
+                "{}",
+                &rung.quantity.to_string(),
+                1
+            ),
+            crate::i18n::translate(locale, "{} units at or below it").replacen(
+                "{}",
+                &rung.cumulative.to_string(),
+                1
+            )
         );
         let price_s = Unit::Gold.value(rung.price.get());
         let qty_s = rung.quantity.to_string();
         let cum_s = rung.cumulative.to_string();
         let vis_lines = [
             ("", price_s.as_str()),
-            ("at price", qty_s.as_str()),
-            ("cumulative", cum_s.as_str()),
+            (at_price, qty_s.as_str()),
+            (cumulative, cum_s.as_str()),
         ];
         svg.push_str(&hit_group(
             cx,

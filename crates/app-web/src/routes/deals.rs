@@ -69,17 +69,19 @@ pub async fn page_handler<E: Ports>(
             (entry.kind == deal.kind).then(|| DealRow {
                 name: entry.display_name(deal.item),
                 kind: deal.kind.label(),
-                realm: realms
-                    .get(&deal.realm)
-                    .cloned()
-                    .unwrap_or_else(|| format!("Realm {}", deal.realm.get())),
+                realm: realms.get(&deal.realm).cloned().unwrap_or_else(|| {
+                    format!(
+                        "{} {}",
+                        crate::i18n::translate(prefs.locale, "Realm"),
+                        deal.realm.get()
+                    )
+                }),
                 price: deal.price.to_string(),
                 threshold: deal.threshold.to_string(),
                 saving_percent: deal.saving_percent,
-                coverage: format!(
-                    "{} of {} realms listing",
-                    deal.realms_listing, deal.realms_collected
-                ),
+                coverage: crate::i18n::translate(prefs.locale, "{} of {} realms listing")
+                    .replacen("{}", &deal.realms_listing.to_string(), 1)
+                    .replacen("{}", &deal.realms_collected.to_string(), 1),
                 href: deal_href(&deal),
             })
         })
@@ -99,7 +101,7 @@ pub async fn page_handler<E: Ports>(
             layout: Layout::new(
                 env.config(),
                 prefs.locale,
-                "Deals",
+                crate::i18n::translate(prefs.locale, "Deals"),
                 "/wow/auctions",
                 &uri,
                 user.as_ref(),
@@ -110,7 +112,10 @@ pub async fn page_handler<E: Ports>(
                     question: "Which cross-realm listings are genuinely cheap?",
                     window: "published history and latest realm snapshots".into(),
                     units: "gold per item",
-                    coverage: Some(format!("{count} deals after evidence gates")),
+                    coverage: Some(
+                        crate::i18n::translate(prefs.locale, "{} deals after evidence gates")
+                            .replacen("{}", &count.to_string(), 1),
+                    ),
                     freshness: observed.map(|at| crate::format::ago(prefs.locale, now.since(at))),
                 },
                 rows: visible,

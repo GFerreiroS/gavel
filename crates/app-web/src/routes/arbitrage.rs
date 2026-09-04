@@ -100,10 +100,9 @@ async fn render<E: Ports>(
     let regional = regional
         .cloned()
         .unwrap_or_else(|| MarketRollup::empty(prefs.region, item, entry.kind, track));
-    let coverage = format!(
-        "{} of {} realms listing",
-        regional.realms_listing, regional.realms_collected
-    );
+    let coverage = crate::i18n::translate(prefs.locale, "{} of {} realms listing")
+        .replacen("{}", &regional.realms_listing.to_string(), 1)
+        .replacen("{}", &regional.realms_collected.to_string(), 1);
     let freshness = regional
         .observed_at
         .map(|at| crate::format::ago(prefs.locale, now.since(at)));
@@ -130,10 +129,9 @@ async fn render<E: Ports>(
         .map(|(id, row)| {
             realm_view(
                 row,
-                names
-                    .get(&id)
-                    .cloned()
-                    .unwrap_or_else(|| format!("Realm {id}")),
+                names.get(&id).cloned().unwrap_or_else(|| {
+                    format!("{} {id}", crate::i18n::translate(prefs.locale, "Realm"))
+                }),
                 row.observed_at
                     .map(|at| crate::format::ago(prefs.locale, now.since(at)))
                     .unwrap_or_else(|| "—".into()),
@@ -148,7 +146,7 @@ async fn render<E: Ports>(
             layout: Layout::new(
                 env.config(),
                 prefs.locale,
-                "Realm arbitrage",
+                crate::i18n::translate(prefs.locale, "Realm arbitrage"),
                 "/wow/auctions",
                 &uri,
                 user.as_ref(),
