@@ -502,7 +502,7 @@ fn summarise(
     // The analysis page's chart, over the same span the sparkline covers, so
     // that the small picture on the card and the large one on the page are the
     // same picture. Reduced once here rather than per view: the item page
-    // called `downsample` on every request, which is a small reduction and
+    // reduced history on every request, which is a small reduction and
     // still the one Phase 6 names.
     let series = ChartSeries::over(
         inside.iter().map(|s| Observation {

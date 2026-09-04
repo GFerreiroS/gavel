@@ -121,6 +121,8 @@ EMPTIED = {
     "market_current": "derived: rebuilt from the observations on first start",
     "market_windows": "derived: rebuilt from the observations on first start",
     "market_rollup": "derived: rebuilt from the per-realm observations on first start",
+    "price_daily": "derived daily read model: rebuilt from retained commodity observations",
+    "realm_price_daily": "derived daily read model: rebuilt from ledger-expanded realm observations",
 }
 
 # The tooltip cache is copied, but only the item tooltips: a category page's

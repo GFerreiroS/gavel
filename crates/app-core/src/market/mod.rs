@@ -13,6 +13,7 @@ pub mod bonuses;
 pub mod catalog;
 pub mod collector;
 pub mod correlate;
+pub mod daily;
 pub mod deals;
 pub mod depth;
 pub mod engine;
@@ -25,6 +26,7 @@ pub mod series;
 pub mod stats;
 pub mod tsm;
 pub mod window;
+pub use daily::DailyRollup;
 
 use std::fmt;
 
@@ -281,7 +283,6 @@ pub struct MarketConfig {
     /// which is the default: the point of this feature is the archive, and a
     /// retention window would quietly delete the oldest expansion first.
     ///
-    /// Volume is handled by [`Self::downsample_after_ms`] instead, which keeps
     /// the archive and drops only its resolution.
     pub retain_ms: u64,
     /// How long samples stay at full resolution before each day of them is
@@ -293,7 +294,6 @@ pub struct MarketConfig {
     /// every connected realm, is millions of rows a year at hourly
     /// resolution. A day-old price is worth knowing; the fact that it was
     /// collected at 14:00 rather than 15:00 is not.
-    pub downsample_after_ms: u64,
     /// How long price ladders are kept: the **hot window**.
     ///
     /// Their own policy, and a much shorter one, because they are a different
@@ -322,7 +322,6 @@ impl Default for MarketConfig {
             realm_min_interval_ms: 60 * 1000,
             realm_max_interval_ms: 30 * 60 * 1000,
             retain_ms: 0,
-            downsample_after_ms: 14 * 24 * 60 * 60 * 1000,
             // Fourteen days, matching the longest comparison window a card
             // offers, so that "how deep is this market" can be asked about
             // every window the rest of the app talks in. A starting point

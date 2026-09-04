@@ -13,6 +13,90 @@ Two phrases are worth grepping for. `USE TEMP B-TREE FOR ORDER BY`
 means the index did not deliver the order the query asked for.
 `SCAN` without `USING INDEX` means the whole table was read.
 
+## daily rollup commodity history
+
+Loads the day's raw history for the commodity daily rollup..
+`crates/storage/src/sqlite/prices.rs`
+
+```sql
+SELECT item_id, region, observed_at, min_unit, quantity, listings
+   FROM price_samples
+  WHERE observed_at >= ? AND observed_at < ?
+  ORDER BY item_id, region, observed_at
+```
+
+```text
+SEARCH price_samples USING INDEX idx_prices_time (ANY(region) AND observed_at>? AND observed_at<?)
+USE TEMP B-TREE FOR ORDER BY
+```
+
+## daily rollup commodity insert
+
+Persists the computed daily row for a commodity market..
+`crates/storage/src/sqlite/prices.rs`
+
+```sql
+INSERT OR REPLACE INTO price_daily
+     (item_id, region, day, open_price, close_price, low_price, low_at, high_price, high_at,
+      mean_price, p05_price, p25_price, median_price, p75_price, p95_price,
+      open_quantity, close_quantity, mean_quantity,
+      open_listings, close_listings, mean_listings,
+      samples, observed_buckets, insufficient, insufficient_have, insufficient_need)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+```
+
+```text
+```
+
+## daily rollup realm history
+
+Expands the day's change rows for the gear/recipe daily rollup..
+`crates/storage/src/sqlite/realm_prices.rs`
+
+```sql
+WITH expanded AS (
+     SELECT samples.item_id, samples.region, samples.realm_id, samples.variant_id,
+            snapshots.observed_at, samples.min_price, samples.median_price, samples.max_price, samples.listings
+       FROM collection_snapshots AS snapshots JOIN realm_price_samples AS samples
+         ON samples.region = snapshots.region AND samples.realm_id = snapshots.realm_id
+      WHERE snapshots.observed_at >= ? AND snapshots.observed_at < ?
+        AND samples.observed_at = (SELECT MAX(previous.observed_at) FROM realm_price_samples AS previous
+             WHERE previous.region = snapshots.region AND previous.realm_id = snapshots.realm_id
+               AND previous.item_id = samples.item_id AND previous.variant_id = samples.variant_id
+               AND previous.observed_at <= snapshots.observed_at)
+ )
+ SELECT expanded.item_id, expanded.region, expanded.realm_id, expanded.variant_id, expanded.observed_at,
+        expanded.min_price, expanded.median_price, expanded.max_price, expanded.listings
+   FROM expanded
+  WHERE expanded.listings > 0
+  ORDER BY expanded.item_id, expanded.region, expanded.realm_id, expanded.variant_id, expanded.observed_at
+```
+
+```text
+SCAN samples
+SEARCH snapshots USING PRIMARY KEY (region=? AND realm_id=? AND observed_at>? AND observed_at<?)
+CORRELATED SCALAR SUBQUERY 1
+  SEARCH previous USING PRIMARY KEY (item_id=? AND region=? AND realm_id=? AND variant_id=? AND observed_at<?)
+USE TEMP B-TREE FOR RIGHT PART OF ORDER BY
+```
+
+## daily rollup realm insert
+
+Persists the computed daily row for a gear/recipe market..
+`crates/storage/src/sqlite/realm_prices.rs`
+
+```sql
+INSERT OR REPLACE INTO realm_price_daily
+     (item_id, region, realm_id, variant_id, day, open_price, close_price, low_price, low_at, high_price, high_at,
+      mean_price, p05_price, p25_price, median_price, p75_price, p95_price,
+      open_listings, close_listings, mean_listings,
+      samples, observed_buckets, insufficient, insufficient_have, insufficient_need)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+```
+
+```text
+```
+
 ## commodity latest, one region
 
 every commodity category page: one row per market, newest first.

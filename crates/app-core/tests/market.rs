@@ -631,7 +631,7 @@ impl PriceRepository for FakePrices {
             .collect())
     }
 
-    async fn downsample_before(&self, _before: Millis) -> RepoResult<u64> {
+    async fn build_daily_rollups(&self, _day_start: Millis) -> RepoResult<u64> {
         Ok(0)
     }
 

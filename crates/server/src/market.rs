@@ -172,7 +172,6 @@ pub fn config(
     interval_minutes: u64,
     realm_intervals_minutes: (u64, u64),
     retain_days: u64,
-    downsample_days: u64,
     ladder_days: u64,
 ) -> MarketConfig {
     const DAY_MS: u64 = 24 * 60 * 60 * 1000;
@@ -188,7 +187,6 @@ pub fn config(
             * MINUTE_MS,
         // Zero means forever in all three cases, and must survive as zero.
         retain_ms: retain_days * DAY_MS,
-        downsample_after_ms: downsample_days * DAY_MS,
         ladder_hot_ms: ladder_days * DAY_MS,
         ..MarketConfig::default()
     }

@@ -615,7 +615,7 @@ async fn price_history_round_trips_and_deduplicates() {
 /// day was worth. This is what lets retention stay at "keep forever" now the
 /// catalogue is hundreds of items rather than twenty-six.
 #[tokio::test]
-async fn old_history_is_downsampled_to_one_row_a_day() {
+async fn old_history_builds_daily_rollups() {
     use app_core::market::{Copper, ItemId, PriceSample, Region};
     use app_core::repo::PriceRepository;
 
@@ -635,40 +635,76 @@ async fn old_history_is_downsampled_to_one_row_a_day() {
         listings: 12,
     };
 
-    // Three snapshots on day 10, one on day 11.
-    prices
-        .record_samples(&[
-            sample(10 * DAY, 900, 400),
-            sample(10 * DAY + 3_600_000, 700, 600),
-            sample(10 * DAY + 7_200_000, 800, 500),
-            sample(11 * DAY + 3_600_000, 1_000, 100),
-        ])
-        .await
-        .unwrap();
+    let mut well_observed = Vec::new();
+    for i in 0..12 {
+        well_observed.push(sample(12 * DAY + i * 3_600_000, 1000 + i * 10, 500));
+    }
 
-    // Collapse everything before day 11.
+    let mut samples = vec![
+        sample(10 * DAY, 900, 400),
+        sample(10 * DAY + 3_600_000, 700, 600),
+        sample(10 * DAY + 7_200_000, 800, 500),
+        sample(11 * DAY + 3_600_000, 1_000, 100),
+    ];
+    samples.extend(well_observed);
+
+    prices.record_samples(&samples).await.unwrap();
+
+    // Build daily rollups for day 10.
     assert_eq!(
-        prices.downsample_before(Millis(11 * DAY)).await.unwrap(),
-        2,
-        "two of day 10's three rows are folded away"
+        prices.build_daily_rollups(Millis(10 * DAY)).await.unwrap(),
+        1,
+        "one item region day processed"
+    );
+
+    // Build daily rollups for day 12.
+    assert_eq!(
+        prices.build_daily_rollups(Millis(12 * DAY)).await.unwrap(),
+        1,
+        "one item region day processed for well-observed day"
     );
 
     let history = prices.history(item, Region::Eu, Millis(0)).await.unwrap();
-    assert_eq!(history.len(), 2, "one row for day 10, and day 11 untouched");
+    assert_eq!(history.len(), 16, "all original rows are untouched");
 
-    let day = &history[0];
-    assert_eq!(day.observed_at, Millis(10 * DAY), "sits on midnight");
+    // Re-running overwrites idempotently, returning the same group count.
     assert_eq!(
-        day.min_unit_price,
-        Copper(690),
-        "the day's cheapest survives as a true minimum"
+        prices.build_daily_rollups(Millis(10 * DAY)).await.unwrap(),
+        1
     );
-    assert_eq!(day.p05_unit_price, Copper(800), "the day's average price");
-    assert_eq!(day.quantity, 500, "the day's average depth");
-    assert_eq!(history[1].observed_at, Millis(11 * DAY + 3_600_000));
 
-    // Running it again finds nothing left to do.
-    assert_eq!(prices.downsample_before(Millis(11 * DAY)).await.unwrap(), 0);
+    let row_sparse =
+        sqlx::query("SELECT median_price, insufficient FROM price_daily WHERE day = ?")
+            .bind(10 * DAY as i64)
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
+    use sqlx::Row;
+    assert_eq!(
+        row_sparse.get::<i64, _>("median_price"),
+        0,
+        "sparse day has no stats"
+    );
+    assert!(
+        row_sparse
+            .get::<Option<String>, _>("insufficient")
+            .is_some(),
+        "sparse day marked insufficient"
+    );
+
+    let row_well = sqlx::query("SELECT median_price, insufficient FROM price_daily WHERE day = ?")
+        .bind(12 * DAY as i64)
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    assert!(
+        row_well.get::<i64, _>("median_price") > 0,
+        "well-observed day has stats"
+    );
+    assert!(
+        row_well.get::<Option<String>, _>("insufficient").is_none(),
+        "well-observed day is not insufficient"
+    );
 }
 
 #[tokio::test]

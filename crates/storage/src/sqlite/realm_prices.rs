@@ -598,43 +598,107 @@ impl RealmPriceRepository for SqliteRealmPrices {
     /// As [`super::prices`], but a gear market is keyed by realm and variant
     /// too. The cheapest and the dearest of the day both survive: on one realm
     /// the spread is the only comparison there is.
-    async fn downsample_before(&self, before: Millis) -> RepoResult<u64> {
+    #[allow(clippy::type_complexity)]
+    async fn build_daily_rollups(&self, day_start: Millis) -> RepoResult<u64> {
+        let day_end = Millis(day_start.0 + 86400000);
+
+        // Let's use the DB's CTE to expand it, since it's the safest way and matches the other functions exactly.
+        // It might be slow for a whole day at once, but this is a background job.
+        let rows = sqlx::query(
+            "WITH expanded AS (
+                 SELECT samples.item_id, samples.region, samples.realm_id, samples.variant_id,
+                        snapshots.observed_at, samples.min_price, samples.median_price, samples.max_price, samples.listings
+                   FROM collection_snapshots AS snapshots JOIN realm_price_samples AS samples
+                     ON samples.region = snapshots.region AND samples.realm_id = snapshots.realm_id
+                  WHERE snapshots.observed_at >= ? AND snapshots.observed_at < ?
+                    AND samples.observed_at = (SELECT MAX(previous.observed_at) FROM realm_price_samples AS previous
+                         WHERE previous.region = snapshots.region AND previous.realm_id = snapshots.realm_id
+                           AND previous.item_id = samples.item_id AND previous.variant_id = samples.variant_id
+                           AND previous.observed_at <= snapshots.observed_at)
+             )
+             SELECT expanded.item_id, expanded.region, expanded.realm_id, expanded.variant_id, expanded.observed_at,
+                    expanded.min_price, expanded.median_price, expanded.max_price, expanded.listings
+               FROM expanded
+              WHERE expanded.listings > 0
+             UNION ALL
+             SELECT samples.item_id, samples.region, samples.realm_id, samples.variant_id, samples.observed_at,
+                    samples.min_price, samples.median_price, samples.max_price, samples.listings
+               FROM realm_price_samples AS samples
+              WHERE samples.observed_at >= ? AND samples.observed_at < ?
+                AND NOT EXISTS (SELECT 1 FROM collection_snapshots AS snapshots WHERE snapshots.region = samples.region
+                                  AND snapshots.realm_id = samples.realm_id AND snapshots.observed_at = samples.observed_at)
+              ORDER BY item_id, region, realm_id, variant_id, observed_at"
+        ).bind(day_start.0 as i64).bind(day_end.0 as i64).bind(day_start.0 as i64).bind(day_end.0 as i64).fetch_all(&self.pool).await.map_err(map_err)?;
+
+        let mut grouped: std::collections::BTreeMap<
+            (u32, String, u32, u32),
+            Vec<(Millis, u64, u64, u64)>,
+        > = std::collections::BTreeMap::new();
+        for row in rows {
+            grouped
+                .entry((
+                    row.get::<i64, _>("item_id") as u32,
+                    row.get::<String, _>("region").clone(),
+                    row.get::<i64, _>("realm_id") as u32,
+                    row.get::<i64, _>("variant_id") as u32,
+                ))
+                .or_default()
+                .push((
+                    Millis(row.get::<i64, _>("observed_at") as u64),
+                    row.get::<i64, _>("min_price") as u64,
+                    0, // quantity not tracked in realm_price_samples in the same way, pass 0
+                    row.get::<i64, _>("listings") as u64,
+                ));
+        }
+
         let mut tx = self.pool.begin().await.map_err(map_err)?;
-        sqlx::query(
-            "INSERT INTO realm_price_samples
-                 (item_id, region, realm_id, variant_id, observed_at,
-                  min_price, median_price, max_price, listings)
-             SELECT item_id, region, realm_id, variant_id,
-                    (observed_at / 86400000) * 86400000,
-                    MIN(min_price),
-                    CAST(AVG(median_price) AS INTEGER),
-                    MAX(max_price),
-                    CAST(AVG(listings) AS INTEGER)
-               FROM realm_price_samples
-              WHERE observed_at < ?
-              GROUP BY item_id, region, realm_id, variant_id, (observed_at / 86400000)
-             ON CONFLICT(item_id, region, realm_id, variant_id, observed_at) DO UPDATE SET
-                    min_price    = excluded.min_price,
-                    median_price = excluded.median_price,
-                    max_price    = excluded.max_price,
-                    listings     = excluded.listings",
-        )
-        .bind(before.get() as i64)
-        .execute(&mut *tx)
-        .await
-        .map_err(map_err)?;
+        let mut count = 0;
 
-        let removed = sqlx::query(
-            "DELETE FROM realm_price_samples
-              WHERE observed_at < ? AND observed_at % 86400000 != 0",
-        )
-        .bind(before.get() as i64)
-        .execute(&mut *tx)
-        .await
-        .map_err(map_err)?;
+        for ((item_id, region, realm_id, variant_id), obs) in grouped {
+            let rollup = app_core::market::DailyRollup::compute(&obs);
 
+            sqlx::query(
+                "INSERT OR REPLACE INTO realm_price_daily
+                 (item_id, region, realm_id, variant_id, day, open_price, close_price, low_price, low_at, high_price, high_at,
+                  mean_price, p05_price, p25_price, median_price, p75_price, p95_price,
+                  open_listings, close_listings, mean_listings,
+                  samples, observed_buckets, insufficient, insufficient_have, insufficient_need)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 "
+            )
+            .bind(item_id as i64)
+            .bind(&region)
+            .bind(realm_id as i64)
+            .bind(variant_id as i64)
+            .bind(day_start.0 as i64)
+            .bind(rollup.open_price as i64)
+            .bind(rollup.close_price as i64)
+            .bind(rollup.low_price as i64)
+            .bind(rollup.low_at.0 as i64)
+            .bind(rollup.high_price as i64)
+            .bind(rollup.high_at.0 as i64)
+            .bind(rollup.mean_price as i64)
+            .bind(rollup.p05_price as i64)
+            .bind(rollup.p25_price as i64)
+            .bind(rollup.median_price as i64)
+            .bind(rollup.p75_price as i64)
+            .bind(rollup.p95_price as i64)
+            .bind(rollup.open_listings as i64)
+            .bind(rollup.close_listings as i64)
+            .bind(rollup.mean_listings as i64)
+            .bind(rollup.samples as i32)
+            .bind(rollup.observed_buckets as i32)
+            .bind(rollup.insufficient)
+            .bind(rollup.insufficient_have.map(|x| x as i32))
+            .bind(rollup.insufficient_need.map(|x| x as i32))
+            .execute(&mut *tx)
+            .await
+            .map_err(map_err)?;
+
+            count += 1;
+        }
         tx.commit().await.map_err(map_err)?;
-        Ok(removed.rows_affected())
+        Ok(count)
     }
 
     /// Remember a realm, without overriding whether it is collected.
