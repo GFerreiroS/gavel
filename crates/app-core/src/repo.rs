@@ -836,6 +836,13 @@ pub trait ReadModelRepository: Send + Sync + 'static {
         item: ItemId,
     ) -> impl Future<Output = RepoResult<Vec<MarketRollup>>> + Send;
 
+    /// Every published regional and per-realm roll-up in one region, ordered
+    /// so a caller can group one item's tracks without scanning the archive.
+    fn deal_rollups(
+        &self,
+        region: Region,
+    ) -> impl Future<Output = RepoResult<Vec<MarketRollup>>> + Send;
+
     /// One roll-up: one item's track, in a region or on a realm.
     fn rollup(
         &self,

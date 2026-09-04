@@ -233,6 +233,18 @@ QUERIES = [
         why="the background materialiser expanding ledger evidence into a window",
     ),
     Query(
+        name="deals, every published realm market in one region",
+        source="crates/storage/src/sqlite/read_model.rs",
+        anchor="ORDER BY item_id, track, realm_id",
+        sql="""
+            SELECT * FROM market_rollup
+             WHERE state = 'published' AND region = ?
+             ORDER BY item_id, track, realm_id
+        """,
+        params=(REGION,),
+        why="Deals: one regional evidence row plus its purchasable realm rows per item",
+    ),
+    Query(
         name="tooltips for a whole category",
         source="crates/storage/src/sqlite/cache.rs",
         anchor="SELECT key, value FROM cache WHERE key IN ({placeholders}) AND expires_at > ?",
@@ -302,7 +314,7 @@ def render(database: Path, db: sqlite3.Connection) -> str:
     for query in QUERIES:
         out.append(f"## {query.name}")
         out.append("")
-        out.append(f"{query.why}.  ")
+        out.append(f"{query.why}.")
         out.append(f"`{query.source}`")
         out.append("")
         out.append("```sql")

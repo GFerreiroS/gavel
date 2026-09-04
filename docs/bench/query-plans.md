@@ -15,7 +15,7 @@ means the index did not deliver the order the query asked for.
 
 ## commodity latest, one region
 
-every commodity category page: one row per market, newest first.  
+every commodity category page: one row per market, newest first.
 `crates/storage/src/sqlite/prices.rs`
 
 ```sql
@@ -38,7 +38,7 @@ USE TEMP B-TREE FOR ORDER BY
 
 ## commodity window statistics
 
-the card's comparison window, and the all-time extremes beside it.  
+the card's comparison window, and the all-time extremes beside it.
 `crates/storage/src/sqlite/prices.rs`
 
 ```sql
@@ -60,7 +60,7 @@ USE TEMP B-TREE FOR GROUP BY
 
 ## commodity history, one market
 
-the analysis page's full-history reduction, which Phase 2 removes.  
+the analysis page's full-history reduction, which Phase 2 removes.
 `crates/storage/src/sqlite/prices.rs`
 
 ```sql
@@ -75,7 +75,7 @@ SEARCH price_samples USING PRIMARY KEY (item_id=? AND region=? AND observed_at>?
 
 ## per-realm latest, whole region
 
-the gear and recipe pages: 18k markets rebuilt to draw nine cards.  
+the gear and recipe pages: 18k markets rebuilt to draw nine cards.
 `crates/storage/src/sqlite/realm_prices.rs`
 
 ```sql
@@ -95,7 +95,7 @@ SEARCH variants USING INTEGER PRIMARY KEY (rowid=?)
 
 ## per-realm latest, one realm
 
-the same pages once a realm is chosen.  
+the same pages once a realm is chosen.
 `crates/storage/src/sqlite/realm_prices.rs`
 
 ```sql
@@ -115,7 +115,7 @@ SEARCH variants USING INTEGER PRIMARY KEY (rowid=?)
 
 ## per-realm history, one item across a region
 
-the BoE analysis page: one track on every realm of a region.  
+the BoE analysis page: one track on every realm of a region.
 `crates/storage/src/sqlite/realm_prices.rs`
 
 ```sql
@@ -162,7 +162,7 @@ MERGE (UNION ALL)
 
 ## per-realm history, one item on one realm
 
-the single-realm full history view.  
+the single-realm full history view.
 `crates/storage/src/sqlite/realm_prices.rs`
 
 ```sql
@@ -208,7 +208,7 @@ MERGE (UNION ALL)
 
 ## per-realm window, whole region
 
-the background materialiser expanding ledger evidence into a window.  
+the background materialiser expanding ledger evidence into a window.
 `crates/storage/src/sqlite/realm_prices.rs`
 
 ```sql
@@ -263,9 +263,24 @@ MERGE (UNION ALL)
     USE TEMP B-TREE FOR RIGHT PART OF ORDER BY
 ```
 
+## deals, every published realm market in one region
+
+Deals: one regional evidence row plus its purchasable realm rows per item.
+`crates/storage/src/sqlite/read_model.rs`
+
+```sql
+SELECT * FROM market_rollup
+ WHERE state = 'published' AND region = ?
+ ORDER BY item_id, track, realm_id
+```
+
+```text
+SEARCH market_rollup USING PRIMARY KEY (region=?)
+```
+
 ## tooltips for a whole category
 
-`get_many`, which replaced 1316 single reads per page (§11b).  
+`get_many`, which replaced 1316 single reads per page (§11b).
 `crates/storage/src/sqlite/cache.rs`
 
 ```sql
