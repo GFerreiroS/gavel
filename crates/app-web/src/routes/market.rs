@@ -130,6 +130,7 @@ pub async fn index<E: Ports>(
     // rather than one category of it. One query, from the published version:
     // the index is a shell and has to paint before anything else arrives.
     let (markets, last_observed) = env.store().read_model().commodity_summary(region).await?;
+    let token = super::wow_token::summary(&env, prefs).await?;
     let samples_held = markets as usize;
     let now = env.now();
 
@@ -163,6 +164,7 @@ pub async fn index<E: Ports>(
                 selected: days == prefs.baseline_days,
             })
             .collect(),
+        token,
         categories,
     };
 
@@ -564,5 +566,106 @@ fn cell(stats: Option<&MarketWindow>) -> PatchCell {
             has_data: true,
         },
         _ => PatchCell::empty(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use askama::Template;
+    use axum::http::Uri;
+
+    use super::*;
+    use crate::views::TokenSummaryView;
+
+    fn token(has_price: bool) -> TokenSummaryView {
+        TokenSummaryView {
+            panel: crate::views::PanelHead {
+                question: "What is the current WoW Token price for this region?",
+                window: "latest collection".into(),
+                units: "gold",
+                coverage: Some(
+                    if has_price {
+                        "one regional token price"
+                    } else {
+                        "no token price collected"
+                    }
+                    .into(),
+                ),
+                freshness: Some(
+                    if has_price {
+                        "2m ago"
+                    } else {
+                        "not applicable"
+                    }
+                    .into(),
+                ),
+            },
+            region: "EU".into(),
+            has_price,
+            current: if has_price {
+                "275,000g".into()
+            } else {
+                String::new()
+            },
+            updated: if has_price {
+                "2m ago"
+            } else {
+                "not applicable"
+            }
+            .into(),
+            observations: usize::from(has_price),
+            href: "/wow/token?region=eu".into(),
+        }
+    }
+
+    fn page_with_token(has_price: bool) -> String {
+        let uri: Uri = "/wow/auctions".parse().expect("valid URI");
+        AuctionsPage {
+            layout: Layout::new(
+                &app_core::WebConfig::default(),
+                app_core::locale::Locale::EnGb,
+                "Auction House",
+                "/wow/auctions",
+                &uri,
+                None,
+                String::new(),
+            ),
+            auctions: AuctionsView {
+                picker: MarketPicker::new(
+                    "/wow/auctions".into(),
+                    &[],
+                    app_core::market::Region::Eu,
+                ),
+                expansion: "Midnight".into(),
+                region: "EU".into(),
+                archived: false,
+                tracked_items: 0,
+                samples_held: 0,
+                last_observed: "never".into(),
+                baseline_days: 7,
+                baselines: Vec::new(),
+                token: token(has_price),
+                categories: Vec::new(),
+            },
+        }
+        .render()
+        .expect("auction-house template renders")
+    }
+
+    #[test]
+    fn auctions_page_shows_the_token_panel_with_the_current_price() {
+        let rendered = page_with_token(true);
+
+        assert!(rendered.contains("What is the current WoW Token price for this region?"));
+        assert!(rendered.contains("275,000g"));
+        assert!(rendered.contains("/wow/token?region=eu"));
+    }
+
+    #[test]
+    fn auctions_page_names_a_missing_token_price_without_inventing_zero() {
+        let rendered = page_with_token(false);
+
+        assert!(rendered.contains("No token price collected for this region yet."));
+        assert!(!rendered.contains(">0g</span>"));
     }
 }

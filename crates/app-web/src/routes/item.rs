@@ -344,6 +344,8 @@ async fn build<E: Ports>(
         .observed_at
         .map(|at| crate::format::ago(locale, now.since(at)));
     let coverage_text = window.and_then(coverage_of);
+    let coverage_percent = window.and_then(|w| w.coverage_percent());
+    let coverage = coverage_value(locale, coverage_percent);
     let heatmap_coverage = (state.heatmap.filled > 0).then(|| {
         crate::i18n::translate(locale, "{} of 168 hours of the week").replacen(
             "{}",
@@ -475,13 +477,17 @@ async fn build<E: Ports>(
         quality_panel: panel(
             "How much of this window did we actually see?",
             "hours",
-            coverage_text,
+            // Unlike a price chart, this panel is *about* coverage. An
+            // all-history window has no denominator, and that fact belongs in
+            // the panel terms instead of silently removing its Coverage term.
+            Some(coverage.clone()),
             freshness.clone(),
         ),
         samples: state.samples as usize,
         observed_buckets: window.map(|w| w.observed_buckets).unwrap_or(0),
         expected_buckets: window.and_then(|w| w.expected_buckets),
-        coverage_percent: window.and_then(|w| w.coverage_percent()),
+        coverage,
+        coverage_is_fraction: coverage_percent.is_some(),
         largest_gap: dash(
             window
                 .filter(|w| w.largest_gap_ms > 0)
@@ -597,6 +603,15 @@ fn coverage_of(window: &MarketWindow) -> Option<String> {
     ))
 }
 
+/// The quality stat always needs an answer. `None` is not a zero-percent
+/// window: it is a period, such as all history, with no fixed denominator.
+fn coverage_value(locale: app_core::locale::Locale, coverage: Option<u32>) -> String {
+    coverage.map_or_else(
+        || crate::i18n::translate(locale, "not applicable").to_string(),
+        |percent| format!("{percent}%"),
+    )
+}
+
 /// Public events overlapping the reader's window, with what the market did
 /// around each.
 ///
@@ -695,4 +710,104 @@ pub(super) fn scope_text(
         parts.push(category.as_str().to_string());
     }
     parts.join(" · ")
+}
+
+#[cfg(test)]
+mod tests {
+    use askama::Template;
+
+    use super::*;
+
+    fn panel() -> PanelHead {
+        PanelHead {
+            question: "How much of this window did we actually see?",
+            window: "the last 7 days".into(),
+            units: "hours",
+            coverage: Some("168 / 168 (100%)".into()),
+            freshness: Some("just now".into()),
+        }
+    }
+
+    fn analysis(coverage_percent: Option<u32>) -> ItemAnalysis {
+        let coverage = coverage_value(app_core::locale::Locale::EnGb, coverage_percent);
+        ItemAnalysis {
+            has_data: true,
+            price_panel: panel(),
+            current: "1g".into(),
+            band: None,
+            band_slug: "none",
+            rank_percent: None,
+            from_median_percent: None,
+            insufficient: Some("Not enough history"),
+            insufficient_have: 1,
+            insufficient_need: 24,
+            anomaly: "ordinary",
+            anomaly_slug: "ordinary",
+            median: "1g".into(),
+            p25: "1g".into(),
+            p75: "1g".into(),
+            iqr: "0c".into(),
+            mad: "0c".into(),
+            distribution_panel: panel(),
+            quantity: 1,
+            listings: 1,
+            depth: None,
+            depth_panel: panel(),
+            quality_panel: panel(),
+            samples: 1,
+            observed_buckets: 1,
+            expected_buckets: Some(168),
+            coverage,
+            coverage_is_fraction: coverage_percent.is_some(),
+            largest_gap: "—".into(),
+            first_seen: "today".into(),
+            observed_at: "just now".into(),
+            trends: Vec::new(),
+            swing_percent: 0,
+            cheapest_cell: None,
+            cycle_panel: panel(),
+            movement_panel: panel(),
+            association: None,
+            association_rho: 0,
+            association_pairs: 0,
+            association_strength: "none",
+            drawdown_percent: 0,
+            rise_percent: 0,
+            typical_move_percent: None,
+            stability_changes: 0,
+            events_panel: panel(),
+            events: Vec::new(),
+            price_chart: String::new(),
+            distribution_chart: String::new(),
+            heatmap_chart: String::new(),
+            series_labels: Vec::new(),
+            patch_panel: panel(),
+            patches: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn coverage_stat_renders_a_percentage_when_the_window_has_a_denominator() {
+        let rendered = AnalysisFragment {
+            analysis: analysis(Some(73)),
+        }
+        .render()
+        .expect("item analysis template renders");
+
+        assert!(rendered.contains(">73%</span>"), "{rendered}");
+    }
+
+    #[test]
+    fn coverage_stat_names_when_the_window_has_no_denominator() {
+        let rendered = AnalysisFragment {
+            analysis: analysis(None),
+        }
+        .render()
+        .expect("item analysis template renders");
+
+        assert!(
+            rendered.contains("<span class=\"value muted\">not applicable</span>"),
+            "{rendered}"
+        );
+    }
 }
