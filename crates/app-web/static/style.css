@@ -609,6 +609,40 @@ progress.bar { margin: .35rem 0 .1rem; }
    already a Pico card and supplies the frame. A second box would double the
    border and shrink the usable viewBox, clipping the right-axis labels on
    narrow screens. */
+/* Chart hover details are SVG groups, not browser titles: CSS keeps the
+   interaction native while the generated SVG owns the data and geometry.
+   The group delays only its entrance; leaving starts the same fade straight
+   away. `pointer-events: none` prevents the detail itself stealing hover. */
+svg.chart .chart-tip {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease 0s;
+}
+svg.chart .hit-group:hover .chart-tip,
+svg.chart .hit-group:focus-within .chart-tip {
+  opacity: 1;
+  transition: opacity .15s ease .5s;
+}
+svg.chart .tip-bg {
+  fill: var(--pico-card-background-color);
+  stroke: var(--pico-muted-border-color);
+  stroke-width: 1;
+}
+svg.chart .tip-text {
+  fill: var(--pico-color);
+  font-family: inherit;
+  font-size: .75rem;
+}
+svg.chart .tip-label { fill: var(--pico-muted-color); }
+svg.chart .hit-group:focus-visible > rect {
+  stroke: var(--pico-primary);
+  stroke-width: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  svg.chart .chart-tip,
+  svg.chart .hit-group:hover .chart-tip,
+  svg.chart .hit-group:focus-within .chart-tip { transition: none; }
+}
 
 /* --- analysis panels -----------------------------------------------------
    A panel is a question with an answer under it. Phase 6's exit gate is that
