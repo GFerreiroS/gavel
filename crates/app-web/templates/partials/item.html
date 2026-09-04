@@ -125,12 +125,10 @@
     </div>
     <div class="stat">
       <span class="label">{{ "Coverage"|t }}</span>
-      {% if let Some(coverage) = analysis.coverage_percent %}
-      <span class="value">{{ coverage }}%</span>
-      {% else %}
-      {# §2: no start to be a fraction of is a real answer, and it is not zero. #}
-      <span class="value muted">{{ "not applicable"|t }}</span>
-      {% endif %}
+      {# This is deliberately one already-worded value rather than an Askama
+         branch. The quality panel must never contain a label with no answer:
+         §2 treats both a percentage and no denominator as evidence. #}
+      <span class="value{% if !analysis.coverage_is_fraction %} muted{% endif %}">{{ analysis.coverage }}</span>
     </div>
     <div class="stat">
       <span class="label">{{ "Longest gap"|t }}</span>
