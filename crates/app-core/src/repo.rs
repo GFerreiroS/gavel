@@ -239,7 +239,10 @@ pub trait PriceRepository: Send + Sync + 'static {
     /// forever": an expansion's archive survives, at one row per item per
     /// region per day, instead of being deleted to save space. Returns the
     /// number of rows removed.
-    fn downsample_before(&self, before: Millis) -> impl Future<Output = RepoResult<u64>> + Send;
+    fn build_daily_rollups(
+        &self,
+        day_start: Millis,
+    ) -> impl Future<Output = RepoResult<u64>> + Send;
 
     // --- market depth (Phase 7) -------------------------------------------
     //
@@ -470,7 +473,10 @@ pub trait RealmPriceRepository: Send + Sync + 'static {
 
     /// Collapse each day of history older than `before` into one row per
     /// (item, realm, variant). See [`PriceRepository::downsample_before`].
-    fn downsample_before(&self, before: Millis) -> impl Future<Output = RepoResult<u64>> + Send;
+    fn build_daily_rollups(
+        &self,
+        day_start: Millis,
+    ) -> impl Future<Output = RepoResult<u64>> + Send;
 }
 
 /// What the tracker collects, as switches an administrator can flip.
