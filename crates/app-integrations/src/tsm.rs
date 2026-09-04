@@ -233,14 +233,80 @@ fn number(row: &[String], index: usize, column: &str) -> AppResult<u64> {
 }
 
 fn timestamp(row: &[String], index: usize) -> AppResult<Millis> {
-    let raw = number(row, index, "updatedAt")?;
-    // TSM's feeds use Unix seconds. Accept milliseconds too, so a feed-side
-    // precision upgrade cannot move all observations to 1970.
-    Ok(Millis(if raw < 100_000_000_000 {
-        raw.saturating_mul(1_000)
-    } else {
-        raw
-    }))
+    let raw = value(row, index, "updatedAt")?;
+    if let Some(at) = rfc3339_utc(raw) {
+        return Ok(at);
+    }
+    if let Ok(raw) = raw.parse::<u64>() {
+        // Numeric feeds may use Unix seconds or milliseconds. Accept both so
+        // a feed-side precision upgrade cannot move observations to 1970.
+        return Ok(Millis(if raw < 100_000_000_000 {
+            raw.saturating_mul(1_000)
+        } else {
+            raw
+        }));
+    }
+
+    let shown: String = raw.chars().take(120).collect();
+    Err(AppError::Integration(format!(
+        "TSM updatedAt is invalid; expected RFC 3339 UTC or Unix seconds/milliseconds, got {shown:?}"
+    )))
+}
+
+/// Parse TSM's fixed UTC RFC 3339 form (`YYYY-MM-DDTHH:MM:SSZ`) without a
+/// date dependency. Reject variants rather than risk converting them wrongly.
+fn rfc3339_utc(raw: &str) -> Option<Millis> {
+    let bytes = raw.as_bytes();
+    if bytes.len() != 20
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+        || bytes[19] != b'Z'
+    {
+        return None;
+    }
+
+    let year = digits(&bytes[0..4])?;
+    let month = digits(&bytes[5..7])? as u32;
+    let day = digits(&bytes[8..10])? as u32;
+    let hour = digits(&bytes[11..13])?;
+    let minute = digits(&bytes[14..16])?;
+    let second = digits(&bytes[17..19])?;
+    if year < 1970
+        || !(1..=12).contains(&month)
+        || day == 0
+        || day > days_in_month(year, month)
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return None;
+    }
+
+    let midnight = Millis::from_utc_date(year as i64, month, day).get();
+    let offset = (hour * 3_600 + minute * 60 + second).checked_mul(1_000)?;
+    midnight.checked_add(offset).map(Millis)
+}
+
+fn digits(bytes: &[u8]) -> Option<u64> {
+    bytes.iter().try_fold(0_u64, |value, byte| {
+        byte.is_ascii_digit()
+            .then(|| value * 10 + u64::from(byte - b'0'))
+    })
+}
+
+fn days_in_month(year: u64, month: u32) -> u32 {
+    match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400)) => {
+            29
+        }
+        2 => 28,
+        _ => 0,
+    }
 }
 
 fn utc_day(at: Millis) -> Millis {
@@ -285,20 +351,43 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_realistic_retail_feeds_and_filters_before_storage() {
-        let commodities = "itemId,marketValue,minBuyout,quantity,historical,recent,updatedAt\n190311,123456,120000,17,110000,121000,1724133600\n190312,9,8,1,7,8,1724133600\n";
-        let region_items = "itemId,marketValue,historical,avgSalePrice,saleRate,soldPerDay,updatedAt\n190311,123456,110000,119000,0.12345,42,1724133600\n190312,9,7,8,0.5,1,1724133600\n";
-        let wanted = [ItemId(190311)];
+    fn parses_real_tsm_iso_8601_feeds_and_filters_before_storage() {
+        let commodities = "itemId,name,marketValue,minBuyout,recent,historical,updatedAt\n222505,Ironclaw Razorstone,32787241,39900000,39900000,1800400,2026-09-04T05:23:31Z\n241311,Haranir Phial of Finesse,198929,230000,230000,155500,2026-09-04T05:23:31Z\n";
+        let region_items = "itemId,name,marketValue,historical,avgSalePrice,saleRate,soldPerDay,updatedAt\n2824,Hurricane,157894953,169722325,9499050,0.013,0,2026-09-03T01:35:57Z\n";
+        let commodity_wanted = [ItemId(222505)];
+        let region_wanted = [ItemId(2824)];
 
-        let commodity = parse_commodities(commodities, Region::Eu, &wanted).unwrap();
-        let daily = parse_region_items(region_items, Region::Eu, &wanted).unwrap();
+        let commodity = parse_commodities(commodities, Region::Eu, &commodity_wanted).unwrap();
+        let daily = parse_region_items(region_items, Region::Eu, &region_wanted).unwrap();
 
         assert_eq!(commodity.len(), 1);
-        assert_eq!(commodity[0].min_buyout, Copper(120000));
-        assert_eq!(commodity[0].observed_at, Millis(1_724_133_600_000));
+        assert_eq!(commodity[0].min_buyout, Copper(39_900_000));
+        assert_eq!(commodity[0].observed_at, Millis(1_788_499_411_000));
         assert_eq!(daily.len(), 1);
-        assert_eq!(daily[0].sale_rate_bp, 1235);
-        assert_eq!(daily[0].sold_per_day, 42);
+        assert_eq!(daily[0].sale_rate_bp, 130);
+        assert_eq!(daily[0].sold_per_day, 0);
+        assert_eq!(daily[0].day, Millis(1_788_393_600_000));
+    }
+
+    #[test]
+    fn accepts_unix_seconds_and_milliseconds_updated_at() {
+        let seconds = vec!["1724133600".to_string()];
+        let milliseconds = vec!["1724133600000".to_string()];
+
+        assert_eq!(timestamp(&seconds, 0).unwrap(), Millis(1_724_133_600_000));
+        assert_eq!(
+            timestamp(&milliseconds, 0).unwrap(),
+            Millis(1_724_133_600_000)
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_updated_at_with_its_value() {
+        let row = vec!["2026-09-04 05:23:31Z".to_string()];
+        let error = timestamp(&row, 0).unwrap_err().to_string();
+
+        assert!(error.contains("updatedAt is invalid"));
+        assert!(error.contains("\"2026-09-04 05:23:31Z\""));
     }
 
     #[test]
