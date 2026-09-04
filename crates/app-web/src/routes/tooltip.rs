@@ -15,8 +15,8 @@
 
 use std::collections::BTreeMap;
 
-use app_core::market::{Catalog, CatalogItem, ItemId};
 use app_core::locale::Locale;
+use app_core::market::{Catalog, CatalogItem, ItemId};
 use app_core::repo::Store;
 use app_core::service::{Freshness, ItemTooltipService};
 use app_core::{AppError, Ports};
@@ -27,6 +27,7 @@ use axum::response::Html;
 use cluster_core::Millis;
 
 use crate::error::WebResult;
+use crate::i18n::filters;
 use crate::prefs::MarketPrefs;
 use crate::render::page;
 use crate::views::TooltipView;

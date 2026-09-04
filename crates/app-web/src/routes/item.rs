@@ -575,10 +575,9 @@ async fn build<E: Ports>(
             .map(|(slot, (rank, _))| crate::views::SeriesKey {
                 colour: crate::chart::series_colour(slot),
                 label: if entry.ranks.len() > 1 {
-                    crate::i18n::translate(locale, "Rank {}")
-                        .replacen("{}", &rank.to_string(), 1)
+                    crate::i18n::translate(locale, "Rank {}").replacen("{}", &rank.to_string(), 1)
                 } else {
-                    "Price".into()
+                    crate::i18n::translate(locale, "Price").into()
                 },
             })
             .collect(),
