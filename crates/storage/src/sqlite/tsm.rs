@@ -6,7 +6,7 @@ use app_core::repo::TsmRepository;
 use cluster_core::Millis;
 use sqlx::{Pool, Row, Sqlite};
 
-use super::map_err;
+use super::{map_err, write_guard};
 
 #[derive(Clone)]
 pub struct SqliteTsm {
@@ -21,6 +21,7 @@ impl SqliteTsm {
 
 impl TsmRepository for SqliteTsm {
     async fn record_region_daily(&self, samples: &[TsmRegionDaily]) -> RepoResult<u64> {
+        let _write = write_guard("TSM regional daily").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let mut written = 0;
         for sample in samples {
@@ -56,6 +57,7 @@ impl TsmRepository for SqliteTsm {
     }
 
     async fn record_commodity_samples(&self, samples: &[TsmCommoditySample]) -> RepoResult<u64> {
+        let _write = write_guard("TSM commodity snapshot").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let mut written = 0;
         for sample in samples {

@@ -4,7 +4,7 @@ use app_core::repo::{TokenPriceRepository, WowTokenPrice};
 use cluster_core::Millis;
 use sqlx::Row;
 
-use super::{corrupt, map_err, prices::SqlitePrices};
+use super::{corrupt, map_err, prices::SqlitePrices, write_guard};
 
 fn from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<WowTokenPrice> {
     let region: String = row.get("region");
@@ -17,6 +17,7 @@ fn from_row(row: &sqlx::sqlite::SqliteRow) -> RepoResult<WowTokenPrice> {
 
 impl TokenPriceRepository for SqlitePrices {
     async fn record(&self, token: &WowTokenPrice) -> RepoResult<bool> {
+        let _write = write_guard("WoW Token snapshot").await;
         let result = sqlx::query(
             "INSERT INTO wow_token_prices (region, observed_at, price)
              VALUES (?, ?, ?)

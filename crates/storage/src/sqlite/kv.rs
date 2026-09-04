@@ -2,7 +2,7 @@ use app_core::error::RepoResult;
 use app_core::repo::KeyValueStore;
 use sqlx::{Pool, Row, Sqlite};
 
-use super::map_err;
+use super::{map_err, write_guard};
 
 #[derive(Clone)]
 pub struct SqliteKv {
@@ -26,6 +26,7 @@ impl KeyValueStore for SqliteKv {
     }
 
     async fn put(&self, key: &str, value: &[u8]) -> RepoResult<()> {
+        let _write = write_guard("key-value update").await;
         sqlx::query(
             "INSERT INTO kv(key, value, updated_at) VALUES(?, ?, ?)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
@@ -40,6 +41,7 @@ impl KeyValueStore for SqliteKv {
     }
 
     async fn delete(&self, key: &str) -> RepoResult<()> {
+        let _write = write_guard("key-value delete").await;
         sqlx::query("DELETE FROM kv WHERE key = ?")
             .bind(key)
             .execute(&self.pool)

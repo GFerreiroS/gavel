@@ -3,7 +3,7 @@ use app_core::repo::EventRepository;
 use cluster_core::{ClusterEvent, EventRecord, Millis};
 use sqlx::{Pool, Row, Sqlite};
 
-use super::{corrupt, map_err};
+use super::{corrupt, map_err, write_guard};
 
 #[derive(Clone)]
 pub struct SqliteEvents {
@@ -18,6 +18,7 @@ impl SqliteEvents {
 
 impl EventRepository for SqliteEvents {
     async fn append(&self, record: &EventRecord) -> RepoResult<()> {
+        let _write = write_guard("cluster event").await;
         let payload =
             serde_json::to_string(&record.event).map_err(|e| corrupt("event payload", e))?;
         // Events are replayed on restart, so a duplicate seq is a no-op rather
@@ -67,6 +68,7 @@ impl EventRepository for SqliteEvents {
     }
 
     async fn prune_before(&self, before: Millis) -> RepoResult<u64> {
+        let _write = write_guard("cluster event pruning").await;
         let result = sqlx::query("DELETE FROM cluster_events WHERE at < ?")
             .bind(before.get() as i64)
             .execute(&self.pool)

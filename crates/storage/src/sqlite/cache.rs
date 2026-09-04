@@ -3,7 +3,7 @@ use app_core::repo::CacheStore;
 use cluster_core::Millis;
 use sqlx::{Pool, Row, Sqlite};
 
-use super::map_err;
+use super::{map_err, write_guard};
 
 /// Keys per statement. Well under SQLite's parameter limit on every build,
 /// and large enough that a full catalogue is one or two round trips.
@@ -68,6 +68,7 @@ impl CacheStore for SqliteCache {
     }
 
     async fn put(&self, key: &str, value: &[u8], expires_at: Millis) -> RepoResult<()> {
+        let _write = write_guard("cache update").await;
         sqlx::query(
             "INSERT INTO cache(key, value, expires_at) VALUES(?, ?, ?)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at",
@@ -82,6 +83,7 @@ impl CacheStore for SqliteCache {
     }
 
     async fn purge_expired(&self, now: Millis) -> RepoResult<u64> {
+        let _write = write_guard("cache pruning").await;
         let result = sqlx::query("DELETE FROM cache WHERE expires_at <= ?")
             .bind(now.get() as i64)
             .execute(&self.pool)

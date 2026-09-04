@@ -19,11 +19,72 @@ mod wow_token;
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::LazyLock;
+use std::time::Instant;
 
 use app_core::error::{RepoError, RepoResult};
 use app_core::repo::Store;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{Pool, Sqlite};
+
+/// SQLite has one writer even in WAL mode.  The database itself has a busy
+/// timeout as a last line of defence (for another process, for example), but
+/// the server's own collectors must never race each other into that timeout.
+///
+/// Tokio's mutex is FIFO, so a large snapshot cannot starve a token, TSM, or
+/// read-model write behind a stream of later collection tasks.
+static WRITE_GATE: LazyLock<tokio::sync::Mutex<()>> = LazyLock::new(|| tokio::sync::Mutex::new(()));
+
+pub(crate) struct WriteGuard {
+    _guard: tokio::sync::MutexGuard<'static, ()>,
+    operation: &'static str,
+    acquired_at: Instant,
+}
+
+impl Drop for WriteGuard {
+    fn drop(&mut self) {
+        let held = self.acquired_at.elapsed();
+        if held >= std::time::Duration::from_secs(1) {
+            tracing::info!(
+                writer = self.operation,
+                held_ms = held.as_millis(),
+                "SQLite write transaction completed"
+            );
+        } else {
+            tracing::debug!(
+                writer = self.operation,
+                held_ms = held.as_millis(),
+                "SQLite write transaction completed"
+            );
+        }
+    }
+}
+
+/// Take the process-wide, FIFO writer permit immediately before starting a
+/// SQLite write transaction.  Keep reads and CPU work outside this guard.
+pub(crate) async fn write_guard(operation: &'static str) -> WriteGuard {
+    let queued_at = Instant::now();
+    let guard = WRITE_GATE.lock().await;
+    let queued = queued_at.elapsed();
+    if queued >= std::time::Duration::from_secs(1) {
+        tracing::info!(
+            writer = operation,
+            queued_ms = queued.as_millis(),
+            "SQLite writer waited for the application write gate"
+        );
+    } else {
+        tracing::debug!(
+            writer = operation,
+            queued_ms = queued.as_millis(),
+            "SQLite writer acquired the application write gate"
+        );
+    }
+    WriteGuard {
+        _guard: guard,
+        operation,
+        acquired_at: Instant::now(),
+    }
+}
 
 pub use cache::SqliteCache;
 pub use cluster::SqliteClusterStore;
@@ -81,7 +142,11 @@ impl SqliteConfig {
             // second visitor queue behind the first. Writes still serialise on
             // SQLite's one writer, which is what `busy_timeout` is for.
             max_connections: 8,
-            busy_timeout_ms: 5_000,
+            // A process-wide FIFO gate serialises our own writers.  Thirty
+            // seconds remains for an outside SQLite client or a future writer
+            // that forgot the gate: waiting is recoverable; dropping a
+            // collection is not.
+            busy_timeout_ms: 30_000,
             max_lifetime_ms: None,
         }
     }

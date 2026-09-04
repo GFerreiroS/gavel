@@ -7,7 +7,7 @@ use cluster_core::{
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Pool, Row, Sqlite};
 
-use super::{corrupt, map_err};
+use super::{corrupt, map_err, write_guard};
 
 #[derive(Clone)]
 pub struct SqliteJobs {
@@ -21,6 +21,7 @@ impl SqliteJobs {
 
     /// Atomically reserve `count` ids and return the last one allocated.
     async fn reserve(&self, name: &str, count: u64) -> RepoResult<u64> {
+        let _write = write_guard("cluster id reservation").await;
         let row =
             sqlx::query("UPDATE sequences SET value = value + ? WHERE name = ? RETURNING value")
                 .bind(count as i64)
@@ -80,6 +81,7 @@ impl JobRepository for SqliteJobs {
 
     /// A job and its tasks appear together or not at all.
     async fn create_job(&self, job: &Job, tasks: &[Task]) -> RepoResult<()> {
+        let _write = write_guard("cluster job creation").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
 
         let spec_json = serde_json::to_string(&job.spec).map_err(|e| corrupt("job spec", e))?;
@@ -125,6 +127,7 @@ impl JobRepository for SqliteJobs {
     }
 
     async fn save_job(&self, job: &Job) -> RepoResult<()> {
+        let _write = write_guard("cluster job update").await;
         sqlx::query(
             "UPDATE jobs SET state = ?, tasks_completed = ?, tasks_failed = ?, finished_at = ?
              WHERE id = ?",
@@ -141,6 +144,7 @@ impl JobRepository for SqliteJobs {
     }
 
     async fn save_task(&self, task: &Task) -> RepoResult<()> {
+        let _write = write_guard("cluster task update").await;
         sqlx::query(
             "UPDATE tasks SET state = ?, assigned_to = ?, attempt = ?, output = ?, updated_at = ?
              WHERE id = ?",
@@ -158,6 +162,7 @@ impl JobRepository for SqliteJobs {
     }
 
     async fn record_failure(&self, failure: &TaskAttempt) -> RepoResult<()> {
+        let _write = write_guard("cluster task failure").await;
         sqlx::query(
             "INSERT INTO task_failures(task_id, job_id, node_id, attempt, at, reason, detail)
              VALUES(?, ?, ?, ?, ?, ?, ?)",
@@ -268,6 +273,7 @@ impl JobRepository for SqliteJobs {
     }
 
     async fn prune_terminal_before(&self, before: Millis) -> RepoResult<u64> {
+        let _write = write_guard("cluster job pruning").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         sqlx::query(
             "DELETE FROM task_failures WHERE job_id IN (

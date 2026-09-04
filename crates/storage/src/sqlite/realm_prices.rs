@@ -14,7 +14,7 @@ use cluster_core::Millis;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Pool, Row, Sqlite, Transaction};
 
-use super::{corrupt, map_err};
+use super::{corrupt, map_err, write_guard};
 
 #[derive(Clone)]
 pub struct SqliteRealmPrices {
@@ -110,6 +110,7 @@ impl RealmPriceRepository for SqliteRealmPrices {
         observed_at: Millis,
         ladders: &[(ItemId, String, Ladder)],
     ) -> RepoResult<(u64, u64)> {
+        let _write = write_guard("realm snapshot").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         // This is the durable evidence that the realm was fetched.  It stays
         // append-only even while Slice A still writes every state row: later
@@ -279,6 +280,7 @@ impl RealmPriceRepository for SqliteRealmPrices {
         if samples.is_empty() {
             return Ok(0);
         }
+        let _write = write_guard("realm samples").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let mut variants = BTreeMap::new();
         let mut written = 0u64;
@@ -319,6 +321,7 @@ impl RealmPriceRepository for SqliteRealmPrices {
         if ladders.is_empty() {
             return Ok(0);
         }
+        let _write = write_guard("realm ladders").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let mut variants = BTreeMap::new();
         let mut written = 0u64;
@@ -413,6 +416,7 @@ impl RealmPriceRepository for SqliteRealmPrices {
     }
 
     async fn prune_ladders_before(&self, before: Millis) -> RepoResult<u64> {
+        let _write = write_guard("realm ladder pruning").await;
         let result = sqlx::query("DELETE FROM realm_price_ladders WHERE observed_at < ?")
             .bind(before.get() as i64)
             .execute(&self.pool)
@@ -695,6 +699,7 @@ impl RealmPriceRepository for SqliteRealmPrices {
                 ));
         }
 
+        let _write = write_guard("realm daily rollups").await;
         let mut tx = self.pool.begin().await.map_err(map_err)?;
         let mut count = 0;
 
@@ -751,6 +756,7 @@ impl RealmPriceRepository for SqliteRealmPrices {
     /// a realm switched off in the admin page stays off when the upstream
     /// index mentions it again tomorrow.
     async fn record_realm(&self, realm: &Realm) -> RepoResult<()> {
+        let _write = write_guard("realm directory").await;
         sqlx::query(
             "INSERT INTO realms (realm_id, region, name, members, locale, enabled)
              VALUES (?, ?, ?, ?, ?, ?)
@@ -777,6 +783,7 @@ impl RealmPriceRepository for SqliteRealmPrices {
         realm: RealmId,
         enabled: bool,
     ) -> RepoResult<()> {
+        let _write = write_guard("realm enabled state").await;
         sqlx::query("UPDATE realms SET enabled = ? WHERE realm_id = ? AND region = ?")
             .bind(enabled as i64)
             .bind(realm.get() as i64)
