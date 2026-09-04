@@ -620,8 +620,15 @@ impl RealmPriceRepository for SqliteRealmPrices {
                     expanded.min_price, expanded.median_price, expanded.max_price, expanded.listings
                FROM expanded
               WHERE expanded.listings > 0
-              ORDER BY expanded.item_id, expanded.region, expanded.realm_id, expanded.variant_id, expanded.observed_at"
-        ).bind(day_start.0 as i64).bind(day_end.0 as i64).fetch_all(&self.pool).await.map_err(map_err)?;
+             UNION ALL
+             SELECT samples.item_id, samples.region, samples.realm_id, samples.variant_id, samples.observed_at,
+                    samples.min_price, samples.median_price, samples.max_price, samples.listings
+               FROM realm_price_samples AS samples
+              WHERE samples.observed_at >= ? AND samples.observed_at < ?
+                AND NOT EXISTS (SELECT 1 FROM collection_snapshots AS snapshots WHERE snapshots.region = samples.region
+                                  AND snapshots.realm_id = samples.realm_id AND snapshots.observed_at = samples.observed_at)
+              ORDER BY item_id, region, realm_id, variant_id, observed_at"
+        ).bind(day_start.0 as i64).bind(day_end.0 as i64).bind(day_start.0 as i64).bind(day_end.0 as i64).fetch_all(&self.pool).await.map_err(map_err)?;
 
         let mut grouped: std::collections::BTreeMap<
             (u32, String, u32, u32),

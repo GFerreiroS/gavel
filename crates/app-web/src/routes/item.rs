@@ -212,7 +212,7 @@ async fn build<E: Ports>(
 
     // The published state of this market, and every window of it. Two reads,
     // and neither reduces anything: this handler does not call `analyse`, does
-    // not read an observation, and since Phase 6 does not downsample either.
+    // not read an observation, and since Phase 6 does not reduce history either.
     let key = catalog.market_of_key(region, item);
     let state = model
         .market(key)

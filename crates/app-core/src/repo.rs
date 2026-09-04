@@ -472,7 +472,7 @@ pub trait RealmPriceRepository: Send + Sync + 'static {
     fn realms(&self) -> impl Future<Output = RepoResult<Vec<Realm>>> + Send;
 
     /// Collapse each day of history older than `before` into one row per
-    /// (item, realm, variant). See [`PriceRepository::downsample_before`].
+    /// (item, realm, variant).
     fn build_daily_rollups(
         &self,
         day_start: Millis,

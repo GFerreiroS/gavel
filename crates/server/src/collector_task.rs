@@ -731,12 +731,12 @@ async fn warm_tooltips<E: Ports>(env: &E) {
 /// Compute perpetual daily read models for finished days.
 async fn build_daily_rollups<E: Ports>(env: &E) {
     // Compute up to yesterday (the most recently finished day).
-    let current_day = (env.now().get() / 86400000) * 86400000;
+    let yesterday = ((env.now().get() / 86400000) - 1) * 86400000;
 
     match env
         .store()
         .prices()
-        .build_daily_rollups(Millis(current_day))
+        .build_daily_rollups(Millis(yesterday))
         .await
     {
         Ok(0) => {}
@@ -746,7 +746,7 @@ async fn build_daily_rollups<E: Ports>(env: &E) {
     match env
         .store()
         .realm_prices()
-        .build_daily_rollups(Millis(current_day))
+        .build_daily_rollups(Millis(yesterday))
         .await
     {
         Ok(0) => {}

@@ -2,7 +2,7 @@
 //!
 //! CLAUDE.md §16's Phase 6: "Fixed-resolution chart series for each named
 //! window; SVG rendering may stay server-side, but series reduction does not
-//! happen during the request." The item page used to call `downsample` on
+//! happen during the request." The item page used to reduce history on
 //! every view -- a small reduction, but a reduction, and the one the phase
 //! names.
 //!

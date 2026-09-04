@@ -113,7 +113,10 @@ impl DailyRollup {
         };
 
         use crate::market::engine::Insufficient;
-        if let Err(e) = gates.admit(rollup.observed_buckets, Some(24)) {
+        if let Err(e) = gates.admit(
+            rollup.observed_buckets,
+            Some((rollup.observed_buckets * 100) / 24),
+        ) {
             rollup.insufficient = Some(match e {
                 Insufficient::NotEnoughHistory { .. } => "not enough history".into(),
                 Insufficient::TooManyGaps { .. } => "too many gaps".into(),

@@ -635,16 +635,20 @@ async fn old_history_builds_daily_rollups() {
         listings: 12,
     };
 
-    // Three snapshots on day 10, one on day 11.
-    prices
-        .record_samples(&[
-            sample(10 * DAY, 900, 400),
-            sample(10 * DAY + 3_600_000, 700, 600),
-            sample(10 * DAY + 7_200_000, 800, 500),
-            sample(11 * DAY + 3_600_000, 1_000, 100),
-        ])
-        .await
-        .unwrap();
+    let mut well_observed = Vec::new();
+    for i in 0..12 {
+        well_observed.push(sample(12 * DAY + i * 3_600_000, 1000 + i * 10, 500));
+    }
+
+    let mut samples = vec![
+        sample(10 * DAY, 900, 400),
+        sample(10 * DAY + 3_600_000, 700, 600),
+        sample(10 * DAY + 7_200_000, 800, 500),
+        sample(11 * DAY + 3_600_000, 1_000, 100),
+    ];
+    samples.extend(well_observed);
+
+    prices.record_samples(&samples).await.unwrap();
 
     // Build daily rollups for day 10.
     assert_eq!(
@@ -653,13 +657,53 @@ async fn old_history_builds_daily_rollups() {
         "one item region day processed"
     );
 
-    let history = prices.history(item, Region::Eu, Millis(0)).await.unwrap();
-    assert_eq!(history.len(), 4, "all original rows are untouched");
+    // Build daily rollups for day 12.
+    assert_eq!(
+        prices.build_daily_rollups(Millis(12 * DAY)).await.unwrap(),
+        1,
+        "one item region day processed for well-observed day"
+    );
 
-    // Running it again finds nothing left to do.
+    let history = prices.history(item, Region::Eu, Millis(0)).await.unwrap();
+    assert_eq!(history.len(), 16, "all original rows are untouched");
+
+    // Re-running overwrites idempotently, returning the same group count.
     assert_eq!(
         prices.build_daily_rollups(Millis(10 * DAY)).await.unwrap(),
         1
+    );
+
+    let row_sparse =
+        sqlx::query("SELECT median_price, insufficient FROM price_daily WHERE day = ?")
+            .bind(10 * DAY as i64)
+            .fetch_one(store.pool())
+            .await
+            .unwrap();
+    use sqlx::Row;
+    assert_eq!(
+        row_sparse.get::<i64, _>("median_price"),
+        0,
+        "sparse day has no stats"
+    );
+    assert!(
+        row_sparse
+            .get::<Option<String>, _>("insufficient")
+            .is_some(),
+        "sparse day marked insufficient"
+    );
+
+    let row_well = sqlx::query("SELECT median_price, insufficient FROM price_daily WHERE day = ?")
+        .bind(12 * DAY as i64)
+        .fetch_one(store.pool())
+        .await
+        .unwrap();
+    assert!(
+        row_well.get::<i64, _>("median_price") > 0,
+        "well-observed day has stats"
+    );
+    assert!(
+        row_well.get::<Option<String>, _>("insufficient").is_none(),
+        "well-observed day is not insufficient"
     );
 }
 
